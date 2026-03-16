@@ -34,9 +34,11 @@ from tsinfer.ancestors import infer_ancestors
 from tsinfer.config import AncestorsConfig, Config, MatchConfig, Source
 from tsinfer.grouping import (
     HaplotypeMetadata,
+    MatchJob,
     collect_haplotype_metadata,
     compute_groups,
     compute_groups_json,
+    compute_match_jobs,
     find_groups,
     group_ancestors_by_linesweep,
     merge_overlapping_ancestors,
@@ -343,33 +345,48 @@ class TestCollectHaplotypeMetadata:
         cfg = _make_cfg(sample_store, ancestor_store)
         meta = collect_haplotype_metadata(cfg)
         assert isinstance(meta, HaplotypeMetadata)
+        n = len(meta.times)
         assert meta.times.ndim == 1
         assert meta.is_ancestor.ndim == 1
         assert meta.start_positions.ndim == 1
         assert meta.end_positions.ndim == 1
-        assert len(meta.times) == len(meta.is_ancestor)
+        assert len(meta.is_ancestor) == n
+        assert len(meta.source) == n
+        assert len(meta.sample_id) == n
+        assert len(meta.ploidy_index) == n
 
     def test_virtual_root_is_first(self):
         sample_store, ancestor_store = _build_stores()
         cfg = _make_cfg(sample_store, ancestor_store)
         meta = collect_haplotype_metadata(cfg)
-        # Virtual root: time=1.0, is_ancestor=True
         assert meta.times[0] == 1.0
         assert meta.is_ancestor[0] is True or meta.is_ancestor[0] == True  # noqa: E712
+        assert meta.source[0] == "ancestors"
+        assert meta.sample_id[0] == "virtual_root"
+        assert meta.ploidy_index[0] == 0
 
     def test_correct_counts(self):
         sample_store, ancestor_store = _build_stores()
         cfg = _make_cfg(sample_store, ancestor_store)
         meta = collect_haplotype_metadata(cfg)
-        # 2 samples, ploidy=1, plus ancestors + virtual root
         num_anc = int(np.sum(meta.is_ancestor))
         num_samp = len(meta.times) - num_anc
         assert num_anc >= 1  # at least the virtual root
         assert num_samp == 2  # 2 haploid samples
 
-    def test_no_genotype_access(self):
-        """Verify metadata loading works even when call_genotype data is corrupted."""
+    def test_sample_identity(self):
+        sample_store, ancestor_store = _build_stores()
+        cfg = _make_cfg(sample_store, ancestor_store)
+        meta = collect_haplotype_metadata(cfg)
+        # Sample haplotypes should have source="test"
+        sample_indices = [i for i in range(len(meta.times)) if not meta.is_ancestor[i]]
+        for i in sample_indices:
+            assert meta.source[i] == "test"
+            assert meta.sample_id[i].startswith("sample_")
+            assert meta.ploidy_index[i] == 0  # haploid
 
+    def test_no_genotype_access(self):
+        """Metadata loading works even when call_genotype data is unused."""
         sample_store = make_sample_vcz(
             genotypes=np.array([[[0], [1]], [[1], [0]]], dtype=np.int8),
             positions=np.array([100, 200], dtype=np.int32),
@@ -379,8 +396,6 @@ class TestCollectHaplotypeMetadata:
         )
         anc_cfg = AncestorsConfig(path=None, sources=["test"])
         ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
-        # Corrupt genotype data in sample store — metadata loading should still work
-        # because collect_haplotype_metadata only reads shape metadata, not data
         cfg = _make_cfg(sample_store, ancestor_store)
         meta = collect_haplotype_metadata(cfg)
         assert len(meta.times) > 0
@@ -415,20 +430,80 @@ class TestComputeGroupsFromGrouping:
 # ---------------------------------------------------------------------------
 
 
-class TestComputeGroupsJsonFromGrouping:
-    def test_returns_valid_json(self):
+class TestComputeMatchJobs:
+    def test_returns_match_jobs(self):
         sample_store, ancestor_store = _build_stores()
         cfg = _make_cfg(sample_store, ancestor_store)
-        result = json.loads(compute_groups_json(cfg))
-        assert result["num_haplotypes"] > 0
-        assert result["num_groups"] > 0
-        assert len(result["groups"]) == result["num_groups"]
+        jobs = compute_match_jobs(cfg)
+        assert len(jobs) > 0
+        assert all(isinstance(j, MatchJob) for j in jobs)
+
+    def test_virtual_root_is_first(self):
+        sample_store, ancestor_store = _build_stores()
+        cfg = _make_cfg(sample_store, ancestor_store)
+        jobs = compute_match_jobs(cfg)
+        assert jobs[0].haplotype_index == 0
+        assert jobs[0].source == "ancestors"
+        assert jobs[0].sample_id == "virtual_root"
+        assert jobs[0].group == 0
 
     def test_all_indices_covered(self):
         sample_store, ancestor_store = _build_stores()
         cfg = _make_cfg(sample_store, ancestor_store)
-        result = json.loads(compute_groups_json(cfg))
-        all_indices = set()
-        for g in result["groups"]:
-            all_indices.update(g["haplotype_indices"])
-        assert all_indices == set(range(result["num_haplotypes"]))
+        jobs = compute_match_jobs(cfg)
+        all_indices = {j.haplotype_index for j in jobs}
+        assert all_indices == set(range(len(jobs)))
+
+    def test_jobs_have_all_fields(self):
+        sample_store, ancestor_store = _build_stores()
+        cfg = _make_cfg(sample_store, ancestor_store)
+        jobs = compute_match_jobs(cfg)
+        for j in jobs:
+            assert isinstance(j.haplotype_index, int)
+            assert isinstance(j.source, str)
+            assert isinstance(j.sample_id, str)
+            assert isinstance(j.ploidy_index, int)
+            assert isinstance(j.time, float)
+            assert isinstance(j.start_position, int)
+            assert isinstance(j.end_position, int)
+            assert isinstance(j.group, int)
+
+    def test_ordered_by_group(self):
+        sample_store, ancestor_store = _build_stores()
+        cfg = _make_cfg(sample_store, ancestor_store)
+        jobs = compute_match_jobs(cfg)
+        groups = [j.group for j in jobs]
+        assert groups == sorted(groups)
+
+
+class TestComputeGroupsJsonFromGrouping:
+    def test_returns_valid_json_array(self):
+        sample_store, ancestor_store = _build_stores()
+        cfg = _make_cfg(sample_store, ancestor_store)
+        records = json.loads(compute_groups_json(cfg))
+        assert isinstance(records, list)
+        assert len(records) > 0
+
+    def test_records_have_match_job_fields(self):
+        sample_store, ancestor_store = _build_stores()
+        cfg = _make_cfg(sample_store, ancestor_store)
+        records = json.loads(compute_groups_json(cfg))
+        expected_keys = {
+            "haplotype_index",
+            "source",
+            "sample_id",
+            "ploidy_index",
+            "time",
+            "start_position",
+            "end_position",
+            "group",
+        }
+        for rec in records:
+            assert set(rec.keys()) == expected_keys
+
+    def test_all_indices_covered(self):
+        sample_store, ancestor_store = _build_stores()
+        cfg = _make_cfg(sample_store, ancestor_store)
+        records = json.loads(compute_groups_json(cfg))
+        all_indices = {r["haplotype_index"] for r in records}
+        assert all_indices == set(range(len(records)))

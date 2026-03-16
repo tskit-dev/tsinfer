@@ -36,6 +36,7 @@ from .config import Config
 from .grouping import (
     compute_groups,
     compute_groups_json,  # noqa: F401 — re-export
+    compute_match_jobs,  # noqa: F401 — re-export
 )
 from .matching import _ts_from_tsb
 
@@ -245,12 +246,21 @@ def _collect_haplotypes(cfg: Config):
 
 
 def _load_groups(path) -> list[list[int]]:
-    """Read a groups JSON file and return ordered list of haplotype index lists."""
+    """
+    Read a groups JSON file and return ordered list of haplotype index lists.
+
+    The file is a flat JSON array of objects, each with ``haplotype_index``
+    and ``group`` fields.  Objects are expected to be sorted by group.
+    """
     import json
+    from collections import defaultdict
     from pathlib import Path
 
-    data = json.loads(Path(path).read_text())
-    return [g["haplotype_indices"] for g in data["groups"]]
+    records = json.loads(Path(path).read_text())
+    groups_dict: dict[int, list[int]] = defaultdict(list)
+    for rec in records:
+        groups_dict[rec["group"]].append(rec["haplotype_index"])
+    return [groups_dict[k] for k in sorted(groups_dict)]
 
 
 def _build_individual_metadata(cfg, node_metadata, individual_sample_indices, ploidy):
