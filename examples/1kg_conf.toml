@@ -1,0 +1,28 @@
+
+# wget https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000G_2504_high_coverage/working/20220422_3202_phased_SNV_INDEL_SV/1kGP_high_coverage_Illumina.chr20.filtered.SNV_INDEL_SV_phased_panel.vcf.gz
+# wget https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000G_2504_high_coverage/working/20220422_3202_phased_SNV_INDEL_SV/1kGP_high_coverage_Illumina.chr20.filtered.SNV_INDEL_SV_phased_panel.vcf.gz.tbi
+# vcf2zarr explode 1kGP_high_coverage_Illumina.chr20.filtered.SNV_INDEL_SV_phased_panel.vcf.gz 1kgp_chr20.icf -p 4
+# vcf2zarr encode 1kgp_chr20.icf 1kgp_chr20.vcz -p 4
+[[source]]
+name = "1kgp_chr20"
+path = "data/1kgp_chr20.vcz"
+# First 5Mb for development
+regions = "chr20:1-5000000"
+
+# wget https://ftp.ensembl.org/pub/release-115/variation/vcf/homo_sapiens/homo_sapiens-chr20.vcf.gz
+# wget https://ftp.ensembl.org/pub/release-115/variation/vcf/homo_sapiens/homo_sapiens-chr20.vcf.gz.csi
+# vcf2zarr explode homo_sapiens-chr20.vcf.gz homo_sapiens-chr20.icf -p 4
+# vcf2zarr encode homo_sapiens-chr20.icf homo_sapiens-chr20.vcz -p 4
+
+[ancestral_state]
+path = "data/homo_sapiens-chr20.vcz"
+field = "variant_AA"
+
+[ancestors]
+path = "data/ancestors.vcz"          # output path for the ancestor store
+sources = ["1kgp_chr20"]             # which source(s) to build from
+max_gap_length = 500_000             
+genotype_encoding = "one_bit"
+# samples_chunk_size  = 1000         # default: 1000 (ancestor dimension)
+# variants_chunk_size = 1000         # default: 1000 (site dimension)
+
