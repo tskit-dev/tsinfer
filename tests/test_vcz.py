@@ -27,7 +27,14 @@ import pytest
 import zarr
 from helpers import make_sample_vcz
 
-from tsinfer.vcz import num_contigs, open_store, resolve_field, sequence_length
+from tsinfer.grouping import MatchJob
+from tsinfer.vcz import (
+    HaplotypeReader,
+    num_contigs,
+    open_store,
+    resolve_field,
+    sequence_length,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -285,3 +292,228 @@ class TestConvenienceAccessors:
         gt = np.zeros((1, 1, 1), dtype=np.int8)
         store = make_sample_vcz(gt, [10], [["A", "T"]], ["A"], sequence_length=999_999)
         assert sequence_length(store) == 999_999
+
+
+# ---------------------------------------------------------------------------
+# HaplotypeReader
+# ---------------------------------------------------------------------------
+
+
+def _make_ancestor_and_sample_stores():
+    """Build minimal ancestor and sample VCZ stores for HaplotypeReader tests."""
+    from helpers import make_ancestor_vcz
+
+    positions = np.array([100, 200, 300], dtype=np.int32)
+    # 2 ancestors: ancestor_0 = [0, 1, 0], ancestor_1 = [1, 0, 1]
+    anc_gt = np.array([[[0], [1]], [[1], [0]], [[0], [1]]], dtype=np.int8)
+    anc_store = make_ancestor_vcz(
+        genotypes=anc_gt,
+        positions=positions,
+        alleles=np.array([["A", "T"], ["C", "G"], ["A", "C"]]),
+        times=np.array([0.8, 0.6]),
+        focal_positions=np.array([[100, -2], [300, -2]], dtype=np.int32),
+        sequence_intervals=np.array([[100, 300]], dtype=np.int32),
+    )
+
+    # Sample store: 2 samples, haploid, at the same 3 positions
+    # sample_0: A, G, C → gt [0, 1, 1]
+    # sample_1: T, C, A → gt [1, 0, 0]
+    sample_gt = np.array([[[0], [1]], [[1], [0]], [[1], [0]]], dtype=np.int8)
+    from tsinfer.config import Source
+
+    sample_store = make_sample_vcz(
+        genotypes=sample_gt,
+        positions=positions,
+        alleles=np.array([["A", "T"], ["C", "G"], ["A", "C"]]),
+        ancestral_state=np.array(["A", "C", "A"]),
+        sequence_length=1000,
+    )
+    source = Source(path=sample_store, name="test")
+    return anc_store, sample_store, source, positions
+
+
+class TestHaplotypeReader:
+    def test_virtual_root_returns_zeros(self):
+        anc_store, sample_store, source, positions = _make_ancestor_and_sample_stores()
+        reader = HaplotypeReader(anc_store, {"test": source}, positions)
+        job = MatchJob(
+            haplotype_index=0,
+            source="ancestors",
+            sample_id="virtual_root",
+            ploidy_index=0,
+            time=1.0,
+            start_position=100,
+            end_position=300,
+            group=0,
+        )
+        hap = reader.read_haplotype(job)
+        np.testing.assert_array_equal(hap, [0, 0, 0])
+
+    def test_ancestor_haplotype(self):
+        anc_store, sample_store, source, positions = _make_ancestor_and_sample_stores()
+        reader = HaplotypeReader(anc_store, {"test": source}, positions)
+        # ancestor_0 has genotype [0, 1, 0]
+        job = MatchJob(
+            haplotype_index=1,
+            source="ancestors",
+            sample_id="ancestor_0",
+            ploidy_index=0,
+            time=0.8,
+            start_position=100,
+            end_position=300,
+            group=1,
+        )
+        hap = reader.read_haplotype(job)
+        np.testing.assert_array_equal(hap, [0, 1, 0])
+
+    def test_ancestor_haplotype_second(self):
+        anc_store, sample_store, source, positions = _make_ancestor_and_sample_stores()
+        reader = HaplotypeReader(anc_store, {"test": source}, positions)
+        # ancestor_1 has genotype [1, 0, 1]
+        job = MatchJob(
+            haplotype_index=2,
+            source="ancestors",
+            sample_id="ancestor_1",
+            ploidy_index=0,
+            time=0.6,
+            start_position=100,
+            end_position=300,
+            group=2,
+        )
+        hap = reader.read_haplotype(job)
+        np.testing.assert_array_equal(hap, [1, 0, 1])
+
+    def test_sample_haplotype_encoding(self):
+        anc_store, sample_store, source, positions = _make_ancestor_and_sample_stores()
+        reader = HaplotypeReader(anc_store, {"test": source}, positions)
+        # sample_0: gt [0, 1, 1] → encoded [0=anc, 1=derived, 1=derived]
+        job = MatchJob(
+            haplotype_index=3,
+            source="test",
+            sample_id="sample_0",
+            ploidy_index=0,
+            time=0.0,
+            start_position=100,
+            end_position=300,
+            group=3,
+        )
+        hap = reader.read_haplotype(job)
+        np.testing.assert_array_equal(hap, [0, 1, 1])
+
+    def test_sample_haplotype_second(self):
+        anc_store, sample_store, source, positions = _make_ancestor_and_sample_stores()
+        reader = HaplotypeReader(anc_store, {"test": source}, positions)
+        # sample_1: gt [1, 0, 0] → encoded [1=derived, 0=anc, 0=anc]
+        job = MatchJob(
+            haplotype_index=4,
+            source="test",
+            sample_id="sample_1",
+            ploidy_index=0,
+            time=0.0,
+            start_position=100,
+            end_position=300,
+            group=3,
+        )
+        hap = reader.read_haplotype(job)
+        np.testing.assert_array_equal(hap, [1, 0, 0])
+
+    def test_missing_genotype_encoded_as_minus_one(self):
+        """Missing genotypes (-1 in call_genotype) should encode as -1."""
+        from helpers import make_ancestor_vcz
+
+        from tsinfer.config import Source
+
+        positions = np.array([100, 200], dtype=np.int32)
+        anc_store = make_ancestor_vcz(
+            genotypes=np.array([[[0]], [[0]]], dtype=np.int8),
+            positions=positions,
+            alleles=np.array([["A", "T"], ["A", "T"]]),
+            times=np.array([0.8]),
+            focal_positions=np.array([[100]], dtype=np.int32),
+            sequence_intervals=np.array([[100, 200]], dtype=np.int32),
+        )
+        # Sample with missing data at site 0
+        sample_gt = np.array([[[-1]], [[0]]], dtype=np.int8)
+        sample_store = make_sample_vcz(
+            genotypes=sample_gt,
+            positions=positions,
+            alleles=np.array([["A", "T"], ["A", "T"]]),
+            ancestral_state=np.array(["A", "A"]),
+            sequence_length=1000,
+        )
+        source = Source(path=sample_store, name="test")
+        reader = HaplotypeReader(anc_store, {"test": source}, positions)
+        job = MatchJob(
+            haplotype_index=2,
+            source="test",
+            sample_id="sample_0",
+            ploidy_index=0,
+            time=0.0,
+            start_position=100,
+            end_position=200,
+            group=2,
+        )
+        hap = reader.read_haplotype(job)
+        assert hap[0] == -1
+        assert hap[1] == 0
+
+    def test_multiple_sources(self):
+        """HaplotypeReader handles multiple source names correctly."""
+        from helpers import make_ancestor_vcz
+
+        from tsinfer.config import Source
+
+        positions = np.array([100, 200], dtype=np.int32)
+        anc_store = make_ancestor_vcz(
+            genotypes=np.array([[[0]], [[0]]], dtype=np.int8),
+            positions=positions,
+            alleles=np.array([["A", "T"], ["A", "T"]]),
+            times=np.array([0.8]),
+            focal_positions=np.array([[100]], dtype=np.int32),
+            sequence_intervals=np.array([[100, 200]], dtype=np.int32),
+        )
+        # Two different sample stores
+        store_a = make_sample_vcz(
+            genotypes=np.array([[[0]], [[1]]], dtype=np.int8),
+            positions=positions,
+            alleles=np.array([["A", "T"], ["A", "T"]]),
+            ancestral_state=np.array(["A", "A"]),
+            sequence_length=1000,
+        )
+        store_b = make_sample_vcz(
+            genotypes=np.array([[[1]], [[0]]], dtype=np.int8),
+            positions=positions,
+            alleles=np.array([["A", "T"], ["A", "T"]]),
+            ancestral_state=np.array(["A", "A"]),
+            sequence_length=1000,
+        )
+        sources = {
+            "src_a": Source(path=store_a, name="src_a"),
+            "src_b": Source(path=store_b, name="src_b"),
+        }
+        reader = HaplotypeReader(anc_store, sources, positions)
+
+        job_a = MatchJob(
+            haplotype_index=2,
+            source="src_a",
+            sample_id="sample_0",
+            ploidy_index=0,
+            time=0.0,
+            start_position=100,
+            end_position=200,
+            group=2,
+        )
+        job_b = MatchJob(
+            haplotype_index=3,
+            source="src_b",
+            sample_id="sample_0",
+            ploidy_index=0,
+            time=0.0,
+            start_position=100,
+            end_position=200,
+            group=2,
+        )
+        hap_a = reader.read_haplotype(job_a)
+        hap_b = reader.read_haplotype(job_b)
+        np.testing.assert_array_equal(hap_a, [0, 1])
+        np.testing.assert_array_equal(hap_b, [1, 0])

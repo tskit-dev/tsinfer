@@ -22,8 +22,10 @@ High-level pipeline: match, post_process, run.
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import tskit
@@ -34,7 +36,7 @@ from . import vcz as vcz_mod
 from .ancestors import infer_ancestors
 from .config import Config
 from .grouping import (
-    compute_groups,
+    MatchJob,
     compute_groups_json,  # noqa: F401 — re-export
     compute_match_jobs,  # noqa: F401 — re-export
 )
@@ -44,228 +46,28 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class _HaplotypeData:
-    positions: np.ndarray
-    haplotypes: np.ndarray
-    times: np.ndarray
-    is_ancestor: np.ndarray
-    start_positions: np.ndarray
-    end_positions: np.ndarray
-    metadata: list[dict]
-    create_individuals: np.ndarray
-    ploidy: int
-    seq_intervals: np.ndarray
-    seq_len: float
-
-
-@dataclass
 class _IndividualMetadataResult:
     metadata: list[dict] | None
     population_indices: list[int] | None
     population_names: list[str] | None
 
 
-def _collect_haplotypes(cfg: Config):
-    """
-    Load ancestor VCZ and all sample sources; return arrays needed by the
-    match loop.
-    """
-    # --- Load ancestors ---
-    anc_store = vcz_mod.open_store(cfg.ancestors.path)
-    positions = np.asarray(anc_store["variant_position"][:], dtype=np.int32)
-    num_sites = len(positions)
-    seq_intervals = np.asarray(anc_store["sequence_intervals"][:], dtype=np.int32)
-
-    anc_gt = np.asarray(anc_store["call_genotype"][:, :, 0], dtype=np.int8)
-    num_anc = anc_gt.shape[1]
-    anc_times = np.asarray(anc_store["sample_time"][:], dtype=np.float64)
-    anc_start = np.asarray(anc_store["sample_start_position"][:], dtype=np.int32)
-    anc_end = np.asarray(anc_store["sample_end_position"][:], dtype=np.int32)
-    anc_ids = [str(x) for x in anc_store["sample_id"][:].tolist()]
-
-    anc_haplotypes = anc_gt.T  # (num_anc, num_sites)
-
-    # Prepend the virtual root (all-ancestral haplotype, time=1.0).
-    # The ancestor VCZ no longer contains it; it is a matching concern.
-    virtual_hap = np.zeros((1, num_sites), dtype=np.int8)
-    if num_sites > 0:
-        virtual_start = np.array([int(positions[0])], dtype=np.int32)
-        virtual_end = np.array([int(positions[-1])], dtype=np.int32)
-    else:
-        virtual_start = np.zeros(1, dtype=np.int32)
-        virtual_end = np.zeros(1, dtype=np.int32)
-
-    anc_haplotypes = np.concatenate([virtual_hap, anc_haplotypes], axis=0)
-    anc_times = np.concatenate([np.array([1.0], dtype=np.float64), anc_times])
-    anc_start = np.concatenate([virtual_start, anc_start])
-    anc_end = np.concatenate([virtual_end, anc_end])
-
-    total_anc = num_anc + 1  # including virtual root
-    anc_metadata = [{"source": "ancestors", "sample_id": "virtual_root"}]
-    anc_metadata.extend(
-        {"source": "ancestors", "sample_id": anc_ids[i]} for i in range(num_anc)
-    )
-    anc_is_ancestor = np.ones(total_anc, dtype=bool)
-    anc_create_ind = np.zeros(total_anc, dtype=bool)
-
-    # --- Load sample sources ---
-    sample_haplotypes_list = []
-    sample_times_list = []
-    sample_start_list = []
-    sample_end_list = []
-    sample_metadata_list = []
-    sample_create_ind_list = []
-    ploidy = 1
-    seq_len = None
-
-    for source_name in cfg.match.sources:
-        source = cfg.sources[source_name]
-        store = vcz_mod.open_store(source.path)
-
-        call_gt = np.asarray(store["call_genotype"][:], dtype=np.int8)
-        num_src_sites, num_samples, src_ploidy = call_gt.shape
-        ploidy = src_ploidy
-
-        samples_selection = vcz_mod.resolve_samples_selection(store, source.samples)
-        if samples_selection is not None:
-            call_gt = call_gt[:, samples_selection, :]
-            num_samples = len(samples_selection)
-
-        num_hap = num_samples * src_ploidy
-
-        # Load sample_time, then filter to selected samples
-        all_num_samples = store["call_genotype"].shape[1]
-        sample_time_arr = vcz_mod.resolve_field(
-            store, source.sample_time, "sample_id", all_num_samples, fill_value=0
-        )
-        if sample_time_arr is None:
-            sample_time_arr = np.zeros(num_samples, dtype=np.float64)
-        else:
-            sample_time_arr = np.asarray(sample_time_arr, dtype=np.float64)
-            if samples_selection is not None:
-                sample_time_arr = sample_time_arr[samples_selection]
-
-        raw_ids = store["sample_id"][:]
-        if samples_selection is not None:
-            raw_ids = raw_ids[samples_selection]
-        sample_ids = [str(x) for x in raw_ids.tolist()]
-
-        src_positions = np.asarray(store["variant_position"][:], dtype=np.int32)
-        src_alleles = np.asarray(store["variant_allele"][:])
-        if "variant_ancestral_allele" in store:
-            src_anc_state = np.asarray(store["variant_ancestral_allele"][:])
-        else:
-            src_anc_state = np.array([str(a[0]) for a in src_alleles], dtype=object)
-
-        src_anc_idx = np.full(num_src_sites, -1, dtype=np.int8)
-        for i in range(num_src_sites):
-            for j, a in enumerate(src_alleles[i].tolist()):
-                if a and str(a) == str(src_anc_state[i]):
-                    src_anc_idx[i] = j
-                    break
-
-        src_pos_to_idx = {int(p): i for i, p in enumerate(src_positions.tolist())}
-        call_gt_flat = call_gt.reshape(num_src_sites, num_hap)
-
-        hap_matrix = np.full((num_sites, num_hap), np.int8(-1), dtype=np.int8)
-        for site_idx, pos in enumerate(positions.tolist()):
-            if pos in src_pos_to_idx:
-                src_idx = src_pos_to_idx[pos]
-                ai = int(src_anc_idx[src_idx])
-                if ai < 0:
-                    continue
-                gt_row = call_gt_flat[src_idx]
-                hap_matrix[site_idx] = np.where(
-                    gt_row < 0,
-                    np.int8(-1),
-                    np.where(gt_row == ai, np.int8(0), np.int8(1)),
-                ).astype(np.int8)
-
-        hap_t = hap_matrix.T
-        hap_times = np.repeat(sample_time_arr, src_ploidy)
-        hap_start = np.full(num_hap, int(positions[0]), dtype=np.int32)
-        hap_end = np.full(num_hap, int(positions[-1]), dtype=np.int32)
-
-        for i in range(num_samples):
-            for p in range(src_ploidy):
-                sample_metadata_list.append(
-                    {
-                        "source": source.name,
-                        "sample_id": sample_ids[i],
-                        "ploidy_index": p,
-                    }
-                )
-
-        sample_haplotypes_list.append(hap_t)
-        sample_times_list.append(hap_times)
-        sample_start_list.append(hap_start)
-        sample_end_list.append(hap_end)
-        sample_create_ind_list.append(np.ones(num_hap, dtype=bool))
-
-        if seq_len is None:
-            seq_len = float(vcz_mod.sequence_length(store))
-
-    # --- Concatenate ---
-    if sample_haplotypes_list:
-        all_haplotypes = np.concatenate(
-            [anc_haplotypes] + sample_haplotypes_list, axis=0
-        )
-        all_times = np.concatenate([anc_times] + sample_times_list)
-        all_start = np.concatenate([anc_start] + sample_start_list)
-        all_end = np.concatenate([anc_end] + sample_end_list)
-        all_metadata = anc_metadata + sample_metadata_list
-        all_is_ancestor = np.concatenate(
-            [anc_is_ancestor] + [np.zeros(len(t), dtype=bool) for t in sample_times_list]
-        )
-        all_create_ind = np.concatenate([anc_create_ind] + sample_create_ind_list)
-    else:
-        all_haplotypes = anc_haplotypes
-        all_times = anc_times
-        all_start = anc_start
-        all_end = anc_end
-        all_metadata = anc_metadata
-        all_is_ancestor = anc_is_ancestor
-        all_create_ind = anc_create_ind
-
-    if seq_len is None:
-        seq_len = float(np.max(seq_intervals)) if len(seq_intervals) > 0 else 1.0
-
-    return _HaplotypeData(
-        positions=positions,
-        haplotypes=all_haplotypes,
-        times=all_times,
-        is_ancestor=all_is_ancestor,
-        start_positions=all_start,
-        end_positions=all_end,
-        metadata=all_metadata,
-        create_individuals=all_create_ind,
-        ploidy=ploidy,
-        seq_intervals=seq_intervals,
-        seq_len=float(seq_len),
-    )
-
-
-def _load_groups(path) -> list[list[int]]:
-    """
-    Read a groups JSON file and return ordered list of haplotype index lists.
-
-    The file is a flat JSON array of objects, each with ``haplotype_index``
-    and ``group`` fields.  Objects are expected to be sorted by group.
-    """
-    import json
-    from collections import defaultdict
-    from pathlib import Path
-
+def _load_match_jobs(path) -> list[MatchJob]:
+    """Read a groups JSON file and return a list of MatchJob objects."""
     records = json.loads(Path(path).read_text())
-    groups_dict: dict[int, list[int]] = defaultdict(list)
-    for rec in records:
-        groups_dict[rec["group"]].append(rec["haplotype_index"])
-    return [groups_dict[k] for k in sorted(groups_dict)]
+    return [MatchJob(**rec) for rec in records]
 
 
-def _build_individual_metadata(cfg, node_metadata, individual_sample_indices, ploidy):
+def _build_individual_metadata(cfg, individual_jobs, ploidy):
     """
     Build individual metadata and population assignments from config.
+
+    Parameters
+    ----------
+    cfg : Config
+    individual_jobs : list[MatchJob]
+        One MatchJob per individual (the first haplotype of each).
+    ploidy : int
 
     Returns an _IndividualMetadataResult with:
     - metadata: list of dicts, one per individual
@@ -273,7 +75,7 @@ def _build_individual_metadata(cfg, node_metadata, individual_sample_indices, pl
     - population_names: list of unique population names (or None)
     """
     ind_meta_cfg = cfg.individual_metadata
-    num_individuals = len(individual_sample_indices)
+    num_individuals = len(individual_jobs)
 
     if num_individuals == 0:
         return _IndividualMetadataResult(
@@ -285,71 +87,63 @@ def _build_individual_metadata(cfg, node_metadata, individual_sample_indices, pl
     pop_names = None
 
     # For each individual, find its source and sample index
-    for ind_idx in range(num_individuals):
-        hap_idx = individual_sample_indices[ind_idx]
-        hap_meta = node_metadata[hap_idx]
+    for job in individual_jobs:
+        source_name = job.source
+        sample_id = job.sample_id
         ind_md = {}
 
-        if hap_meta is not None:
-            source_name = hap_meta.get("source", "")
-            sample_id = hap_meta.get("sample_id", "")
+        if ind_meta_cfg is not None and ind_meta_cfg.fields:
+            if source_name and source_name in cfg.sources:
+                source = cfg.sources[source_name]
+                store = vcz_mod.open_store(source.path)
 
-            if ind_meta_cfg is not None and ind_meta_cfg.fields:
-                # Look up fields from VCZ store
-                if source_name and source_name in cfg.sources:
-                    source = cfg.sources[source_name]
-                    store = vcz_mod.open_store(source.path)
+                raw_ids = store["sample_id"][:]
+                sample_ids = [str(x) for x in raw_ids.tolist()]
+                try:
+                    sample_idx = sample_ids.index(sample_id)
+                except ValueError:
+                    sample_idx = -1
 
-                    raw_ids = store["sample_id"][:]
-                    sample_ids = [str(x) for x in raw_ids.tolist()]
-                    try:
-                        sample_idx = sample_ids.index(sample_id)
-                    except ValueError:
-                        sample_idx = -1
-
-                    if sample_idx >= 0:
-                        for field_name, array_name in ind_meta_cfg.fields.items():
-                            if array_name in store:
-                                val = store[array_name][sample_idx]
-                                # Convert numpy types to Python types
-                                if hasattr(val, "item"):
-                                    val = val.item()
-                                elif hasattr(val, "tolist"):
-                                    val = val.tolist()
-                                ind_md[field_name] = val
+                if sample_idx >= 0:
+                    for field_name, array_name in ind_meta_cfg.fields.items():
+                        if array_name in store:
+                            val = store[array_name][sample_idx]
+                            # Convert numpy types to Python types
+                            if hasattr(val, "item"):
+                                val = val.item()
+                            elif hasattr(val, "tolist"):
+                                val = val.tolist()
+                            ind_md[field_name] = val
 
         ind_metadata_list.append(ind_md)
 
     # Build populations if configured
     if ind_meta_cfg is not None and ind_meta_cfg.population:
         pop_values = []
-        for ind_idx in range(num_individuals):
-            hap_idx = individual_sample_indices[ind_idx]
-            hap_meta = node_metadata[hap_idx]
+        for job in individual_jobs:
+            source_name = job.source
+            sample_id = job.sample_id
             pop_val = None
 
-            if hap_meta is not None:
-                source_name = hap_meta.get("source", "")
-                sample_id = hap_meta.get("sample_id", "")
-                if source_name and source_name in cfg.sources:
-                    source = cfg.sources[source_name]
-                    store = vcz_mod.open_store(source.path)
-                    pop_field = ind_meta_cfg.population
+            if source_name and source_name in cfg.sources:
+                source = cfg.sources[source_name]
+                store = vcz_mod.open_store(source.path)
+                pop_field = ind_meta_cfg.population
 
-                    if pop_field in store:
-                        raw_ids = store["sample_id"][:]
-                        sample_ids = [str(x) for x in raw_ids.tolist()]
-                        try:
-                            sample_idx = sample_ids.index(sample_id)
-                        except ValueError:
-                            sample_idx = -1
-                        if sample_idx >= 0:
-                            val = store[pop_field][sample_idx]
-                            if hasattr(val, "item"):
-                                val = val.item()
-                            elif hasattr(val, "tolist"):
-                                val = val.tolist()
-                            pop_val = str(val)
+                if pop_field in store:
+                    raw_ids = store["sample_id"][:]
+                    sample_ids = [str(x) for x in raw_ids.tolist()]
+                    try:
+                        sample_idx = sample_ids.index(sample_id)
+                    except ValueError:
+                        sample_idx = -1
+                    if sample_idx >= 0:
+                        val = store[pop_field][sample_idx]
+                        if hasattr(val, "item"):
+                            val = val.item()
+                        elif hasattr(val, "tolist"):
+                            val = val.tolist()
+                        pop_val = str(val)
 
             pop_values.append(pop_val)
 
@@ -380,83 +174,84 @@ def match(
     """
     Run the unified match loop over all sources listed in cfg.match.
 
-    Collects haplotypes from the ancestor VCZ and all sample sources, then
-    matches them one at a time against the incrementally-built tree sequence.
+    Iterates over MatchJob objects, lazily reading one haplotype at a time
+    via HaplotypeReader, and matches each against the incrementally-built
+    tree sequence.
     """
     recombination_rate = kwargs.get("recombination_rate", cfg.match.recombination_rate)
     mismatch_ratio = kwargs.get("mismatch_ratio", cfg.match.mismatch_ratio)
     path_compression = kwargs.get("path_compression", cfg.match.path_compression)
 
-    logger.info("Collecting haplotypes")
-    hap_data = _collect_haplotypes(cfg)
+    # 1. Get ordered MatchJob list
+    if cfg.match.groups is not None:
+        jobs = _load_match_jobs(cfg.match.groups)
+    else:
+        jobs = compute_match_jobs(cfg)
 
-    positions = hap_data.positions
-    all_haplotypes = hap_data.haplotypes
-    all_times = hap_data.times
-    is_ancestor = hap_data.is_ancestor
-    node_metadata = hap_data.metadata
-    create_individuals = hap_data.create_individuals
-    ploidy = hap_data.ploidy
-    seq_intervals = hap_data.seq_intervals
-    seq_len = hap_data.seq_len
-
+    # 2. Load lightweight ancestor metadata (no genotypes)
+    anc_store = vcz_mod.open_store(cfg.ancestors.path)
+    positions = np.asarray(anc_store["variant_position"][:], dtype=np.int32)
+    seq_intervals = np.asarray(anc_store["sequence_intervals"][:], dtype=np.int32)
     num_sites = len(positions)
 
-    # Build TSB incrementally, matching one haplotype at a time
+    # Derive seq_len from first sample source (or seq_intervals fallback)
+    seq_len = None
+    for source_name in cfg.match.sources:
+        source = cfg.sources[source_name]
+        seq_len = float(vcz_mod.sequence_length(vcz_mod.open_store(source.path)))
+        break
+    if seq_len is None:
+        seq_len = float(np.max(seq_intervals)) if len(seq_intervals) > 0 else 1.0
+
+    # 3. Create lazy reader
+    reader = vcz_mod.HaplotypeReader(cfg.ancestors.path, cfg.sources, positions)
+
+    # 4. Build TSB
     num_alleles = [2] * num_sites
     tsb = _tsinfer.TreeSequenceBuilder(num_alleles)
-
     metadata = {"sequence_intervals": seq_intervals.tolist()}
 
     logger.info(
         "Match: %d haplotypes, %d sites, seq_len=%.0f",
-        len(all_haplotypes),
+        len(jobs),
         num_sites,
         seq_len,
     )
 
-    # Compute matching order from groups
-    if cfg.match.groups is not None:
-        groups = _load_groups(cfg.match.groups)
-    else:
-        groups = compute_groups(
-            all_times, is_ancestor, hap_data.start_positions, hap_data.end_positions
-        )
-        groups = [[int(x) for x in g] for g in groups]
-    order = [idx for group in groups for idx in group]
-
-    # Perturb times slightly for same-time ancestors so they have strictly
-    # decreasing times, allowing sequential parent-child relationships.
-    # The perturbation is tiny (1e-10 scale) so it doesn't affect the
-    # biological interpretation.
-    match_times = all_times.copy()
+    # 5. Perturb times
+    match_times = [j.time for j in jobs]
     eps = 1e-10
     seen_times = {}
-    for idx in order:
-        t = match_times[idx]
+    for i, t in enumerate(match_times):
         if t in seen_times:
             seen_times[t] += 1
-            match_times[idx] = t - eps * seen_times[t]
+            match_times[i] = t - eps * seen_times[t]
         else:
             seen_times[t] = 0
 
-    # Track individual creation and ordered node metadata
+    # 6. Derive ploidy from jobs
+    sample_jobs = [j for j in jobs if j.source != "ancestors"]
+    ploidy = (
+        max((j.ploidy_index for j in sample_jobs), default=0) + 1 if sample_jobs else 1
+    )
+
+    # 7. Match loop — iterate jobs, read haplotypes lazily
+    ordered_node_metadata = []
     individual_groups = []
     current_ind_nodes = []
-    ordered_node_metadata = []  # one per TSB node, in TSB insertion order
-    individual_sample_indices = []  # haplotype indices for first node of each individual
+    individual_jobs = []  # first job of each individual
 
-    match_iter = enumerate(order)
+    match_iter = enumerate(jobs)
     if progress:
         import tqdm
 
         match_iter = tqdm.tqdm(
-            match_iter, total=len(order), desc="Matching", unit="haplotypes"
+            match_iter, total=len(jobs), desc="Matching", unit="haplotypes"
         )
 
-    for step, idx in match_iter:
-        hap = all_haplotypes[idx]
-        time = float(match_times[idx])
+    for step, job in match_iter:
+        hap = reader.read_haplotype(job)
+        time = float(match_times[step])
 
         if step == 0:
             # Virtual root — add directly with no matching
@@ -493,8 +288,15 @@ def match(
             mutation_sites = np.where(mutation_mask)[0].astype(np.int32)
             mutation_state = hap_arr[mutation_sites].astype(np.int8)
 
+            node_meta = {
+                "source": job.source,
+                "sample_id": job.sample_id,
+            }
+            if job.source != "ancestors":
+                node_meta["ploidy_index"] = job.ploidy_index
+
             node_id = tsb.add_node(time)
-            ordered_node_metadata.append(node_metadata[idx])
+            ordered_node_metadata.append(node_meta)
 
             if len(left) > 0:
                 tsb.add_path(
@@ -512,11 +314,11 @@ def match(
                     derived_state=mutation_state.tolist(),
                 )
 
-        # Track individuals
-        if bool(create_individuals[idx]):
+        # Track individuals — samples only (ancestors never create individuals)
+        if job.source != "ancestors":
             current_ind_nodes.append(tsb.num_nodes - 1)
             if len(current_ind_nodes) == 1:
-                individual_sample_indices.append(idx)
+                individual_jobs.append(job)
             if len(current_ind_nodes) == ploidy:
                 individual_groups.append(current_ind_nodes)
                 current_ind_nodes = []
@@ -526,9 +328,7 @@ def match(
         individual_groups.append(current_ind_nodes)
 
     # Build individual metadata and populations
-    ind_result = _build_individual_metadata(
-        cfg, node_metadata, individual_sample_indices, ploidy
-    )
+    ind_result = _build_individual_metadata(cfg, individual_jobs, ploidy)
 
     logger.info(
         "Match complete: %d nodes, %d individuals",
