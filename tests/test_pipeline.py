@@ -38,7 +38,8 @@ from tsinfer.config import (
     PostProcessConfig,
     Source,
 )
-from tsinfer.pipeline import compute_groups_json, match, post_process, run
+from tsinfer.grouping import compute_groups_json
+from tsinfer.pipeline import match, post_process, run
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -541,3 +542,38 @@ class TestComputeGroupsJson:
             assert g["num_haplotypes"] == len(g["haplotype_indices"])
             assert len(g["is_ancestor"]) == len(g["haplotype_indices"])
             assert isinstance(g["time"], float)
+
+
+# ---------------------------------------------------------------------------
+# TestMatchWithGroups
+# ---------------------------------------------------------------------------
+
+
+class TestMatchWithGroups:
+    def test_match_with_groups_file(self, tmp_path):
+        """match() with cfg.match.groups set produces a valid tree sequence."""
+
+        sim_ts = _simulate(num_samples=4, random_seed=50)
+        sample_store = ts_to_sample_vcz(sim_ts)
+        anc_cfg = AncestorsConfig(path=None, sources=["test"])
+        ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
+        cfg = _make_config(sample_store, ancestor_store)
+
+        # Compute groups and write to file
+        groups_json = compute_groups_json(cfg)
+        groups_path = tmp_path / "groups.json"
+        groups_path.write_text(groups_json)
+
+        # Set groups path on config
+        cfg.match.groups = str(groups_path)
+        out_ts = match(cfg)
+        assert out_ts.num_nodes > 0
+        assert out_ts.num_edges > 0
+        assert out_ts.num_sites > 0
+
+    def test_match_without_groups_still_works(self):
+        """match() with cfg.match.groups=None computes groups internally."""
+        sim_ts = _simulate(num_samples=4, random_seed=51)
+        out_ts = _infer_and_match(sim_ts)
+        assert out_ts.num_nodes > 0
+        assert out_ts.num_edges > 0

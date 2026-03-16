@@ -19,15 +19,156 @@
 """
 Ancestor grouping by linesweep: groups ancestors for parallel matching
 using a linesweep + topological sort approach.
+
+Also provides lightweight metadata loading and the ``compute_groups`` /
+``compute_groups_json`` entry points so the module is self-contained.
 """
 
+from __future__ import annotations
+
+import json
 import logging
 import time as time_
+from dataclasses import dataclass
 
 import numba
 import numpy as np
 
+from . import vcz as vcz_mod
+from .config import Config
+
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Lightweight metadata loader
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class HaplotypeMetadata:
+    """Arrays needed by ``compute_groups`` — no genotype data."""
+
+    times: np.ndarray  # (n,) float64
+    is_ancestor: np.ndarray  # (n,) bool
+    start_positions: np.ndarray  # (n,) int32
+    end_positions: np.ndarray  # (n,) int32
+
+
+def collect_haplotype_metadata(cfg: Config) -> HaplotypeMetadata:
+    """
+    Load only the 1-D metadata arrays from the ancestor VCZ and sample
+    sources — no ``call_genotype`` data is read.
+    """
+    logger.info("Loading haplotype metadata (lightweight, no genotypes)")
+
+    # --- Ancestors ---
+    anc_store = vcz_mod.open_store(cfg.ancestors.path)
+    positions = np.asarray(anc_store["variant_position"][:], dtype=np.int32)
+
+    anc_times = np.asarray(anc_store["sample_time"][:], dtype=np.float64)
+    anc_start = np.asarray(anc_store["sample_start_position"][:], dtype=np.int32)
+    anc_end = np.asarray(anc_store["sample_end_position"][:], dtype=np.int32)
+    num_anc = len(anc_times)
+    logger.info("Loaded %d ancestors from %s", num_anc, cfg.ancestors.path)
+
+    # Virtual root
+    if len(positions) > 0:
+        virtual_start = np.array([int(positions[0])], dtype=np.int32)
+        virtual_end = np.array([int(positions[-1])], dtype=np.int32)
+    else:
+        virtual_start = np.zeros(1, dtype=np.int32)
+        virtual_end = np.zeros(1, dtype=np.int32)
+
+    anc_times = np.concatenate([np.array([1.0], dtype=np.float64), anc_times])
+    anc_start = np.concatenate([virtual_start, anc_start])
+    anc_end = np.concatenate([virtual_end, anc_end])
+    total_anc = num_anc + 1
+    anc_is_ancestor = np.ones(total_anc, dtype=bool)
+
+    # --- Sample sources ---
+    sample_times_list: list[np.ndarray] = []
+    sample_start_list: list[np.ndarray] = []
+    sample_end_list: list[np.ndarray] = []
+    sample_is_ancestor_list: list[np.ndarray] = []
+
+    for source_name in cfg.match.sources:
+        source = cfg.sources[source_name]
+        store = vcz_mod.open_store(source.path)
+
+        # Shape metadata only — no data loaded
+        gt_shape = store["call_genotype"].shape
+        num_samples = gt_shape[1]
+        ploidy = gt_shape[2]
+
+        samples_selection = vcz_mod.resolve_samples_selection(store, source.samples)
+        if samples_selection is not None:
+            num_samples = len(samples_selection)
+
+        num_hap = num_samples * ploidy
+        logger.info(
+            "Source '%s': %d samples, ploidy %d, %d haplotypes",
+            source_name,
+            num_samples,
+            ploidy,
+            num_hap,
+        )
+
+        # sample_time
+        all_num_samples = gt_shape[1]
+        sample_time_arr = vcz_mod.resolve_field(
+            store, source.sample_time, "sample_id", all_num_samples, fill_value=0
+        )
+        if sample_time_arr is None:
+            sample_time_arr = np.zeros(num_samples, dtype=np.float64)
+        else:
+            sample_time_arr = np.asarray(sample_time_arr, dtype=np.float64)
+            if samples_selection is not None:
+                sample_time_arr = sample_time_arr[samples_selection]
+
+        hap_times = np.repeat(sample_time_arr, ploidy)
+
+        # Default start/end from positions
+        if len(positions) > 0:
+            hap_start = np.full(num_hap, int(positions[0]), dtype=np.int32)
+            hap_end = np.full(num_hap, int(positions[-1]), dtype=np.int32)
+        else:
+            hap_start = np.zeros(num_hap, dtype=np.int32)
+            hap_end = np.zeros(num_hap, dtype=np.int32)
+
+        sample_times_list.append(hap_times)
+        sample_start_list.append(hap_start)
+        sample_end_list.append(hap_end)
+        sample_is_ancestor_list.append(np.zeros(num_hap, dtype=bool))
+
+    # --- Concatenate ---
+    if sample_times_list:
+        all_times = np.concatenate([anc_times] + sample_times_list)
+        all_start = np.concatenate([anc_start] + sample_start_list)
+        all_end = np.concatenate([anc_end] + sample_end_list)
+        all_is_ancestor = np.concatenate([anc_is_ancestor] + sample_is_ancestor_list)
+    else:
+        all_times = anc_times
+        all_start = anc_start
+        all_end = anc_end
+        all_is_ancestor = anc_is_ancestor
+
+    num_total = len(all_times)
+    num_ancestors = int(np.sum(all_is_ancestor))
+    num_samples = num_total - num_ancestors
+    logger.info(
+        "Collected metadata for %d haplotypes (%d ancestors, %d samples)",
+        num_total,
+        num_ancestors,
+        num_samples,
+    )
+
+    return HaplotypeMetadata(
+        times=all_times,
+        is_ancestor=all_is_ancestor,
+        start_positions=all_start,
+        end_positions=all_end,
+    )
 
 
 def merge_overlapping_ancestors(start, end, time):
@@ -207,3 +348,127 @@ def group_ancestors_by_linesweep(start, end, time):
         f"{np.median([len(ancestor_grouping[group]) for group in ancestor_grouping])}"
     )
     return ancestor_grouping
+
+
+# ---------------------------------------------------------------------------
+# compute_groups / compute_groups_json
+# ---------------------------------------------------------------------------
+
+
+def compute_groups(
+    times: np.ndarray,  # (n_haplotypes,) float64
+    is_ancestor: np.ndarray,  # (n_haplotypes,) bool
+    start_positions: np.ndarray,  # (n_haplotypes,) int32 — from sample_start_position
+    end_positions: np.ndarray,  # (n_haplotypes,) int32 — from sample_end_position
+) -> list[np.ndarray]:
+    """
+    Return an ordered list of haplotype-index arrays, oldest group first.
+
+    - Index 0 (virtual root) is always returned alone as groups[0].
+    - Remaining haplotypes are ordered by descending time.
+    - At the same time, ancestor groups come before sample groups.
+    - Same-time ancestors with overlapping intervals are placed in the SAME
+      group so they don't match against each other. Grouping is determined
+      by a linesweep + topological sort that respects time dependencies.
+    - Sample haplotypes are always grouped together by time (no interval
+      splitting), because samples are never used as copying parents.
+    """
+    times = np.asarray(times, dtype=np.float64)
+    is_ancestor = np.asarray(is_ancestor, dtype=bool)
+    start_positions = np.asarray(start_positions, dtype=np.int32)
+    end_positions = np.asarray(end_positions, dtype=np.int32)
+
+    # Group 0: virtual root is always index 0
+    groups = [np.array([0], dtype=np.int32)]
+
+    # Separate remaining ancestors and samples
+    anc_indices = np.where(is_ancestor)[0]
+    anc_indices = anc_indices[anc_indices != 0]  # exclude virtual root
+
+    sample_indices = np.where(~is_ancestor)[0]
+
+    # Ancestor groups via linesweep
+    if len(anc_indices) > 0:
+        anc_starts = start_positions[anc_indices]
+        anc_ends = end_positions[anc_indices]
+        anc_times = times[anc_indices]
+        ancestor_grouping = group_ancestors_by_linesweep(anc_starts, anc_ends, anc_times)
+        # ancestor_grouping: {group_id: [local_indices...]} ordered by group_id
+        for group_id in sorted(ancestor_grouping.keys()):
+            local_ids = ancestor_grouping[group_id]
+            global_ids = np.array(
+                [int(anc_indices[i]) for i in local_ids], dtype=np.int32
+            )
+            groups.append(global_ids)
+
+    # Sample groups: group by descending time
+    if len(sample_indices) > 0:
+        sample_times_set = sorted(set(times[sample_indices].tolist()), reverse=True)
+        for t in sample_times_set:
+            samp_at_t = sample_indices[np.isclose(times[sample_indices], t)]
+            if len(samp_at_t) > 0:
+                groups.append(samp_at_t.astype(np.int32))
+
+    return groups
+
+
+def compute_groups_json(cfg: Config) -> str:
+    """
+    Compute haplotype groups and return as a JSON string.
+
+    Loads only lightweight metadata (no genotypes) from the ancestor VCZ and
+    all sample sources, runs the grouping algorithm, and returns a JSON
+    description of the groups suitable for inspection or as input to
+    distributed matching.
+    """
+    import time
+
+    logger.info("Loading haplotype metadata")
+    t0 = time.monotonic()
+    hap_meta = collect_haplotype_metadata(cfg)
+    elapsed = time.monotonic() - t0
+    num_anc = int(np.sum(hap_meta.is_ancestor))
+    num_samples = len(hap_meta.times) - num_anc
+    logger.info(
+        "Loaded %d haplotypes (%d ancestors, %d samples) in %.2fs",
+        len(hap_meta.times),
+        num_anc,
+        num_samples,
+        elapsed,
+    )
+
+    logger.info("Computing groups")
+    t0 = time.monotonic()
+    groups = compute_groups(
+        hap_meta.times,
+        hap_meta.is_ancestor,
+        hap_meta.start_positions,
+        hap_meta.end_positions,
+    )
+    elapsed = time.monotonic() - t0
+    logger.info("Computed %d groups in %.2fs", len(groups), elapsed)
+
+    logger.info("Serialising JSON")
+    t0 = time.monotonic()
+    group_list = []
+    for i, group_indices in enumerate(groups):
+        indices = [int(x) for x in group_indices]
+        group_list.append(
+            {
+                "index": i,
+                "haplotype_indices": indices,
+                "num_haplotypes": len(indices),
+                "is_ancestor": [bool(hap_meta.is_ancestor[j]) for j in indices],
+                "time": float(np.max(hap_meta.times[group_indices])),
+            }
+        )
+
+    result = {
+        "num_haplotypes": len(hap_meta.times),
+        "num_groups": len(groups),
+        "groups": group_list,
+    }
+    json_str = json.dumps(result, indent=2)
+    elapsed = time.monotonic() - t0
+    logger.info("Serialised %d groups to JSON in %.2fs", len(groups), elapsed)
+    return json_str

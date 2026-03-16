@@ -139,11 +139,19 @@ def infer_ancestors_cmd(config, threads, force, progress, verbose):
 
 @main.command("match")
 @_config_arg
+@click.option(
+    "--groups",
+    type=click.Path(exists=True),
+    default=None,
+    help="Path to groups JSON from compute-groups.",
+)
 @_add_options(_runtime_options)
-def match_cmd(config, threads, force, progress, verbose):
+def match_cmd(config, groups, threads, force, progress, verbose):
     """Run the unified match loop (ancestors + samples)."""
     _setup_logging(verbose)
     cfg = Config.from_toml(config)
+    if groups is not None:
+        cfg.match.groups = groups
     _check_output(cfg.match.output, force)
 
     from .pipeline import match as pipeline_match
@@ -209,8 +217,16 @@ def run_cmd(config, threads, force, progress, verbose):
 
 @main.command("compute-groups")
 @_config_arg
+@click.option(
+    "-o",
+    "--output",
+    "output_file",
+    type=click.Path(),
+    default=None,
+    help="Write groups JSON to file (default: stdout).",
+)
 @_add_options(_runtime_options)
-def compute_groups_cmd(config, threads, force, progress, verbose):
+def compute_groups_cmd(config, output_file, threads, force, progress, verbose):
     """Compute the haplotype grouping and print as JSON."""
     _setup_logging(verbose)
     cfg = Config.from_toml(config)
@@ -218,7 +234,12 @@ def compute_groups_cmd(config, threads, force, progress, verbose):
     from .pipeline import compute_groups_json
 
     result = compute_groups_json(cfg)
-    click.echo(result)
+    if output_file:
+        _check_output(output_file, force)
+        Path(output_file).write_text(result)
+        logger.info("Wrote groups to %s", output_file)
+    else:
+        click.echo(result)
 
 
 # ---------------------------------------------------------------------------

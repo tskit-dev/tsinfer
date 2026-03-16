@@ -33,10 +33,11 @@ import _tsinfer
 from . import vcz as vcz_mod
 from .ancestors import infer_ancestors
 from .config import Config
-from .matching import (
-    _ts_from_tsb,
+from .grouping import (
     compute_groups,
+    compute_groups_json,  # noqa: F401 — re-export
 )
+from .matching import _ts_from_tsb
 
 logger = logging.getLogger(__name__)
 
@@ -243,36 +244,13 @@ def _collect_haplotypes(cfg: Config):
     )
 
 
-def _order_haplotypes(times, is_ancestor):
-    """
-    Return an ordering of haplotype indices for sequential matching.
+def _load_groups(path) -> list[list[int]]:
+    """Read a groups JSON file and return ordered list of haplotype index lists."""
+    import json
+    from pathlib import Path
 
-    Order: virtual root first (index 0), then all other haplotypes sorted
-    by descending time. Within the same time level, ancestors come before
-    samples. Ties within ancestors at the same time are broken by index
-    to ensure deterministic ordering.
-
-    The key constraint: the C ancestor matcher requires that node 0 (virtual
-    root) has at most one child. By processing one haplotype at a time in
-    strict time order, each haplotype becomes a child of a previously-added
-    node (never creating a polytomy at the root).
-    """
-    n = len(times)
-    if n == 0:
-        return []
-
-    # Virtual root is always first
-    order = [0]
-
-    # Sort remaining by (descending time, ancestors first, index)
-    remaining = []
-    for i in range(1, n):
-        # Sort key: (-time, not is_ancestor, index)
-        remaining.append((-times[i], not is_ancestor[i], i))
-    remaining.sort()
-
-    order.extend(idx for _, _, idx in remaining)
-    return order
+    data = json.loads(Path(path).read_text())
+    return [g["haplotype_indices"] for g in data["groups"]]
 
 
 def _build_individual_metadata(cfg, node_metadata, individual_sample_indices, ploidy):
@@ -383,68 +361,6 @@ def _build_individual_metadata(cfg, node_metadata, individual_sample_indices, pl
     )
 
 
-def compute_groups_json(cfg: Config) -> str:
-    """
-    Compute haplotype groups and return as a JSON string.
-
-    Loads haplotype metadata from the ancestor VCZ and all sample sources,
-    runs the grouping algorithm, and returns a JSON description of the
-    groups suitable for inspection or as input to distributed matching.
-    """
-    import json
-    import time
-
-    logger.info("Loading haplotype data")
-    t0 = time.monotonic()
-    hap_data = _collect_haplotypes(cfg)
-    elapsed = time.monotonic() - t0
-    num_anc = int(np.sum(hap_data.is_ancestor))
-    num_samples = len(hap_data.times) - num_anc
-    logger.info(
-        "Loaded %d haplotypes (%d ancestors, %d samples) in %.2fs",
-        len(hap_data.times),
-        num_anc,
-        num_samples,
-        elapsed,
-    )
-
-    logger.info("Computing groups")
-    t0 = time.monotonic()
-    groups = compute_groups(
-        hap_data.times,
-        hap_data.is_ancestor,
-        hap_data.start_positions,
-        hap_data.end_positions,
-    )
-    elapsed = time.monotonic() - t0
-    logger.info("Computed %d groups in %.2fs", len(groups), elapsed)
-
-    logger.info("Serialising JSON")
-    t0 = time.monotonic()
-    group_list = []
-    for i, group_indices in enumerate(groups):
-        indices = [int(x) for x in group_indices]
-        group_list.append(
-            {
-                "index": i,
-                "haplotype_indices": indices,
-                "num_haplotypes": len(indices),
-                "is_ancestor": [bool(hap_data.is_ancestor[j]) for j in indices],
-                "time": float(np.max(hap_data.times[group_indices])),
-            }
-        )
-
-    result = {
-        "num_haplotypes": len(hap_data.times),
-        "num_groups": len(groups),
-        "groups": group_list,
-    }
-    json_str = json.dumps(result, indent=2)
-    elapsed = time.monotonic() - t0
-    logger.info("Serialised %d groups to JSON in %.2fs", len(groups), elapsed)
-    return json_str
-
-
 def match(
     cfg: Config,
     reference_ts: tskit.TreeSequence | None = None,
@@ -489,8 +405,15 @@ def match(
         seq_len,
     )
 
-    # Compute matching order
-    order = _order_haplotypes(all_times, is_ancestor)
+    # Compute matching order from groups
+    if cfg.match.groups is not None:
+        groups = _load_groups(cfg.match.groups)
+    else:
+        groups = compute_groups(
+            all_times, is_ancestor, hap_data.start_positions, hap_data.end_positions
+        )
+        groups = [[int(x) for x in g] for g in groups]
+    order = [idx for group in groups for idx in group]
 
     # Perturb times slightly for same-time ancestors so they have strictly
     # decreasing times, allowing sequential parent-child relationships.
