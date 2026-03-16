@@ -127,6 +127,7 @@ class MatchConfig:
     path_compression: bool = True
     num_threads: int = 1
     reference_ts: str | Path | None = None
+    groups: str | Path | None = None
 
 
 @dataclass
@@ -216,6 +217,8 @@ class Config:
         lines.append(f"  num_threads = {self.match.num_threads}")
         if self.match.reference_ts is not None:
             lines.append(f"  reference_ts = {self.match.reference_ts}")
+        if self.match.groups is not None:
+            lines.append(f"  groups = {self.match.groups}")
         lines.append("")
 
         if self.post_process is not None:
@@ -280,6 +283,11 @@ class Config:
                 errors.append(
                     f"Match reference_ts path does not exist: {self.match.reference_ts}"
                 )
+
+        if self.match.groups is not None:
+            p = Path(str(self.match.groups))
+            if not p.exists():
+                errors.append(f"Match groups path does not exist: {self.match.groups}")
 
         if self.ancestral_state is not None:
             p = Path(str(self.ancestral_state.path))
@@ -380,6 +388,7 @@ def _parse_match(raw: dict, base: Path) -> MatchConfig:
         raise ValueError("Config must contain a [match] section")
     try:
         ref_ts = entry.get("reference_ts")
+        groups = entry.get("groups")
         return MatchConfig(
             sources=list(entry["sources"]),
             output=_resolve_path(entry["output"], base),
@@ -388,6 +397,7 @@ def _parse_match(raw: dict, base: Path) -> MatchConfig:
             path_compression=bool(entry.get("path_compression", True)),
             num_threads=int(entry.get("num_threads", 1)),
             reference_ts=_resolve_path(ref_ts, base),
+            groups=_resolve_path(groups, base),
         )
     except KeyError as e:
         raise ValueError(f"[match] missing required key: {e}") from e

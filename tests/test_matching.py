@@ -1050,3 +1050,23 @@ class TestMatcherExtendCycle:
         )
         assert "sequence_intervals" in ts2.metadata
         assert ts2.metadata["sequence_intervals"] == [[10, 51]]
+
+
+# ---------------------------------------------------------------------------
+# TestComputeGroupsReExport
+# ---------------------------------------------------------------------------
+
+
+class TestComputeGroupsReExport:
+    """Verify that compute_groups is still importable from tsinfer.matching."""
+
+    def test_backward_compat_import(self):
+        from tsinfer.matching import compute_groups as cg
+
+        assert callable(cg)
+
+    def test_same_function(self):
+        from tsinfer.grouping import compute_groups as cg_grouping
+        from tsinfer.matching import compute_groups as cg_matching
+
+        assert cg_grouping is cg_matching

@@ -30,7 +30,7 @@ import tskit
 
 import _tsinfer
 
-from .grouping import group_ancestors_by_linesweep
+from .grouping import compute_groups  # noqa: F401 — re-export for backward compat
 
 logger = logging.getLogger(__name__)
 
@@ -182,63 +182,6 @@ def _ts_from_tsb(
     tables.build_index()
     tables.compute_mutation_parents()
     return tables.tree_sequence()
-
-
-def compute_groups(
-    times: np.ndarray,  # (n_haplotypes,) float64
-    is_ancestor: np.ndarray,  # (n_haplotypes,) bool
-    start_positions: np.ndarray,  # (n_haplotypes,) int32 — from sample_start_position
-    end_positions: np.ndarray,  # (n_haplotypes,) int32 — from sample_end_position
-) -> list[np.ndarray]:
-    """
-    Return an ordered list of haplotype-index arrays, oldest group first.
-
-    - Index 0 (virtual root) is always returned alone as groups[0].
-    - Remaining haplotypes are ordered by descending time.
-    - At the same time, ancestor groups come before sample groups.
-    - Same-time ancestors with overlapping intervals are placed in the SAME
-      group so they don't match against each other. Grouping is determined
-      by a linesweep + topological sort that respects time dependencies.
-    - Sample haplotypes are always grouped together by time (no interval
-      splitting), because samples are never used as copying parents.
-    """
-    times = np.asarray(times, dtype=np.float64)
-    is_ancestor = np.asarray(is_ancestor, dtype=bool)
-    start_positions = np.asarray(start_positions, dtype=np.int32)
-    end_positions = np.asarray(end_positions, dtype=np.int32)
-
-    # Group 0: virtual root is always index 0
-    groups = [np.array([0], dtype=np.int32)]
-
-    # Separate remaining ancestors and samples
-    anc_indices = np.where(is_ancestor)[0]
-    anc_indices = anc_indices[anc_indices != 0]  # exclude virtual root
-
-    sample_indices = np.where(~is_ancestor)[0]
-
-    # Ancestor groups via linesweep
-    if len(anc_indices) > 0:
-        anc_starts = start_positions[anc_indices]
-        anc_ends = end_positions[anc_indices]
-        anc_times = times[anc_indices]
-        ancestor_grouping = group_ancestors_by_linesweep(anc_starts, anc_ends, anc_times)
-        # ancestor_grouping: {group_id: [local_indices...]} ordered by group_id
-        for group_id in sorted(ancestor_grouping.keys()):
-            local_ids = ancestor_grouping[group_id]
-            global_ids = np.array(
-                [int(anc_indices[i]) for i in local_ids], dtype=np.int32
-            )
-            groups.append(global_ids)
-
-    # Sample groups: group by descending time
-    if len(sample_indices) > 0:
-        sample_times_set = sorted(set(times[sample_indices].tolist()), reverse=True)
-        for t in sample_times_set:
-            samp_at_t = sample_indices[np.isclose(times[sample_indices], t)]
-            if len(samp_at_t) > 0:
-                groups.append(samp_at_t.astype(np.int32))
-
-    return groups
 
 
 def make_root_ts(

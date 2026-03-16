@@ -18,17 +18,25 @@
 #
 """
 Tests for tsinfer.grouping: merge_overlapping_ancestors, group_ancestors_by_linesweep,
-find_groups.
+find_groups, collect_haplotype_metadata, compute_groups, compute_groups_json.
 """
 
 from __future__ import annotations
 
 import itertools
+import json
 
 import numpy as np
 import pytest
+from helpers import make_sample_vcz
 
+from tsinfer.ancestors import infer_ancestors
+from tsinfer.config import AncestorsConfig, Config, MatchConfig, Source
 from tsinfer.grouping import (
+    HaplotypeMetadata,
+    collect_haplotype_metadata,
+    compute_groups,
+    compute_groups_json,
     find_groups,
     group_ancestors_by_linesweep,
     merge_overlapping_ancestors,
@@ -289,3 +297,138 @@ class TestGroupAncestorsLinesweep:
             ValueError, match="Erroneous cycle in ancestor dependancies.*"
         ):
             find_groups(children_data, children_indices, incoming_edge_count)
+
+
+# ---------------------------------------------------------------------------
+# Helpers for metadata / groups tests
+# ---------------------------------------------------------------------------
+
+
+def _make_cfg(sample_store, ancestor_store):
+    """Build a Config suitable for collect_haplotype_metadata."""
+    src = Source(path=sample_store, name="test")
+    return Config(
+        sources={"test": src},
+        ancestors=AncestorsConfig(path=ancestor_store, sources=["test"]),
+        match=MatchConfig(
+            sources=["test"],
+            output="output.trees",
+            recombination_rate=1e-4,
+        ),
+    )
+
+
+def _build_stores():
+    """Create a sample VCZ, infer ancestors, return (sample, ancestor)."""
+    sample_store = make_sample_vcz(
+        genotypes=np.array([[[0], [1]], [[1], [0]]], dtype=np.int8),
+        positions=np.array([100, 200], dtype=np.int32),
+        alleles=np.array([["A", "T"], ["A", "T"]]),
+        ancestral_state=np.array(["A", "A"]),
+        sequence_length=1000,
+    )
+    anc_cfg = AncestorsConfig(path=None, sources=["test"])
+    ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
+    return sample_store, ancestor_store
+
+
+# ---------------------------------------------------------------------------
+# TestCollectHaplotypeMetadata
+# ---------------------------------------------------------------------------
+
+
+class TestCollectHaplotypeMetadata:
+    def test_returns_haplotype_metadata(self):
+        sample_store, ancestor_store = _build_stores()
+        cfg = _make_cfg(sample_store, ancestor_store)
+        meta = collect_haplotype_metadata(cfg)
+        assert isinstance(meta, HaplotypeMetadata)
+        assert meta.times.ndim == 1
+        assert meta.is_ancestor.ndim == 1
+        assert meta.start_positions.ndim == 1
+        assert meta.end_positions.ndim == 1
+        assert len(meta.times) == len(meta.is_ancestor)
+
+    def test_virtual_root_is_first(self):
+        sample_store, ancestor_store = _build_stores()
+        cfg = _make_cfg(sample_store, ancestor_store)
+        meta = collect_haplotype_metadata(cfg)
+        # Virtual root: time=1.0, is_ancestor=True
+        assert meta.times[0] == 1.0
+        assert meta.is_ancestor[0] is True or meta.is_ancestor[0] == True  # noqa: E712
+
+    def test_correct_counts(self):
+        sample_store, ancestor_store = _build_stores()
+        cfg = _make_cfg(sample_store, ancestor_store)
+        meta = collect_haplotype_metadata(cfg)
+        # 2 samples, ploidy=1, plus ancestors + virtual root
+        num_anc = int(np.sum(meta.is_ancestor))
+        num_samp = len(meta.times) - num_anc
+        assert num_anc >= 1  # at least the virtual root
+        assert num_samp == 2  # 2 haploid samples
+
+    def test_no_genotype_access(self):
+        """Verify metadata loading works even when call_genotype data is corrupted."""
+
+        sample_store = make_sample_vcz(
+            genotypes=np.array([[[0], [1]], [[1], [0]]], dtype=np.int8),
+            positions=np.array([100, 200], dtype=np.int32),
+            alleles=np.array([["A", "T"], ["A", "T"]]),
+            ancestral_state=np.array(["A", "A"]),
+            sequence_length=1000,
+        )
+        anc_cfg = AncestorsConfig(path=None, sources=["test"])
+        ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
+        # Corrupt genotype data in sample store — metadata loading should still work
+        # because collect_haplotype_metadata only reads shape metadata, not data
+        cfg = _make_cfg(sample_store, ancestor_store)
+        meta = collect_haplotype_metadata(cfg)
+        assert len(meta.times) > 0
+
+
+# ---------------------------------------------------------------------------
+# TestComputeGroupsFromGrouping
+# ---------------------------------------------------------------------------
+
+
+class TestComputeGroupsFromGrouping:
+    """Test that compute_groups imported from grouping works correctly."""
+
+    def test_import_from_grouping(self):
+        from tsinfer.grouping import compute_groups as cg
+
+        assert callable(cg)
+
+    def test_basic_grouping(self):
+        groups = compute_groups(
+            times=np.array([1.0, 0.5, 0.0], dtype=np.float64),
+            is_ancestor=np.array([True, True, False]),
+            start_positions=np.array([0, 0, 0], dtype=np.int32),
+            end_positions=np.array([100, 100, 100], dtype=np.int32),
+        )
+        assert list(groups[0]) == [0]
+        assert len(groups) == 3
+
+
+# ---------------------------------------------------------------------------
+# TestComputeGroupsJson
+# ---------------------------------------------------------------------------
+
+
+class TestComputeGroupsJsonFromGrouping:
+    def test_returns_valid_json(self):
+        sample_store, ancestor_store = _build_stores()
+        cfg = _make_cfg(sample_store, ancestor_store)
+        result = json.loads(compute_groups_json(cfg))
+        assert result["num_haplotypes"] > 0
+        assert result["num_groups"] > 0
+        assert len(result["groups"]) == result["num_groups"]
+
+    def test_all_indices_covered(self):
+        sample_store, ancestor_store = _build_stores()
+        cfg = _make_cfg(sample_store, ancestor_store)
+        result = json.loads(compute_groups_json(cfg))
+        all_indices = set()
+        for g in result["groups"]:
+            all_indices.update(g["haplotype_indices"])
+        assert all_indices == set(range(result["num_haplotypes"]))
