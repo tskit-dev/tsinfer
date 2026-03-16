@@ -168,7 +168,8 @@ class TestComputeGroups:
     2. Remaining haplotypes are ordered by descending time.
     3. At the same time, ancestor groups come before sample groups.
     4. Same-time ancestors with NON-OVERLAPPING intervals can share a group.
-    5. Same-time ancestors with OVERLAPPING intervals must be in separate groups.
+    5. Same-time ancestors with OVERLAPPING intervals are in the SAME group
+       (so they don't match against each other).
     6. Samples are always grouped together by time (no interval splitting).
     """
 
@@ -293,7 +294,7 @@ class TestComputeGroups:
     def test_two_same_time_ancestors_overlapping(self):
         """
         Two ancestors at time 0.5, both spanning the full range → overlap
-        → must be in SEPARATE groups.
+        → must be in SAME group (so they don't match against each other).
 
         idx 0 (root):  |================================|
         idx 1 (t=0.5): |================================|
@@ -309,13 +310,11 @@ class TestComputeGroups:
         groups = compute_groups(
             gi.times, gi.is_ancestor, gi.start_positions, gi.end_positions
         )
-        # Root alone, then two separate ancestor groups
+        # Root alone, then one group with both ancestors
         assert list(groups[0]) == [0]
         t05_groups = [g for g in groups[1:] if set(g).issubset({1, 2})]
-        assert len(t05_groups) == 2
-        assert set(t05_groups[0]) | set(t05_groups[1]) == {1, 2}
-        assert len(t05_groups[0]) == 1
-        assert len(t05_groups[1]) == 1
+        assert len(t05_groups) == 1
+        assert set(t05_groups[0]) == {1, 2}
 
     def test_two_same_time_ancestors_disjoint(self):
         """
@@ -379,7 +378,7 @@ class TestComputeGroups:
                         0            49 50             100
 
         start=0,end=50 and start=49,end=100: overlap at position 49.
-        → SEPARATE groups.
+        → SAME group (so they don't match against each other).
         """
         gi = self._make_inputs(
             [1.0, 0.5, 0.5],
@@ -392,7 +391,8 @@ class TestComputeGroups:
         )
         assert list(groups[0]) == [0]
         t05_groups = [g for g in groups[1:] if set(g).issubset({1, 2})]
-        assert len(t05_groups) == 2
+        assert len(t05_groups) == 1
+        assert set(t05_groups[0]) == {1, 2}
 
     def test_three_same_time_ancestors_all_disjoint(self):
         """
@@ -430,8 +430,8 @@ class TestComputeGroups:
                         0       25  35   50  55         100
 
         Overlaps: 1↔2 (25..35), 2↔3 (50..55). No overlap 1↔3.
-        → 1 and 3 can share a group; 2 must be separate.
-        → Two groups: {1, 3} and {2}.
+        → All three are transitively connected via overlap at the same time
+        → SAME group (so they don't match against each other).
         """
         gi = self._make_inputs(
             [1.0, 0.5, 0.5, 0.5],
@@ -444,17 +444,12 @@ class TestComputeGroups:
         )
         assert list(groups[0]) == [0]
         t05_groups = [g for g in groups[1:] if set(g).issubset({1, 2, 3})]
-        # Should be exactly 2 groups
-        assert len(t05_groups) == 2
-        group_sets = [set(g) for g in t05_groups]
-        # {1,3} can share (non-overlapping); {2} must be alone
-        assert {2} in group_sets
-        other = [s for s in group_sets if s != {2}][0]
-        assert other == {1, 3}
+        assert len(t05_groups) == 1
+        assert set(t05_groups[0]) == {1, 2, 3}
 
     def test_three_same_time_ancestors_all_overlapping(self):
         """
-        Three ancestors at time 0.5, all pairwise overlapping → three groups.
+        Three ancestors at time 0.5, all pairwise overlapping → SAME group.
 
         idx 0 (root):  |================================|
         idx 1 (t=0.5): |======================|
@@ -462,7 +457,7 @@ class TestComputeGroups:
         idx 3 (t=0.5):           |======================|
                         0   10  20                 80  90 100
 
-        All three overlap each other → each needs its own group.
+        All three overlap each other at the same time → one group.
         """
         gi = self._make_inputs(
             [1.0, 0.5, 0.5, 0.5],
@@ -475,9 +470,8 @@ class TestComputeGroups:
         )
         assert list(groups[0]) == [0]
         t05_groups = [g for g in groups[1:] if set(g).issubset({1, 2, 3})]
-        assert len(t05_groups) == 3
-        for g in t05_groups:
-            assert len(g) == 1
+        assert len(t05_groups) == 1
+        assert set(t05_groups[0]) == {1, 2, 3}
 
     def test_same_time_ancestors_at_multiple_time_levels(self):
         """
@@ -562,7 +556,7 @@ class TestComputeGroups:
         idx 2 (t=0.5):          |===========|
                         0      20          60          100
 
-        → SEPARATE groups (2 is inside 1).
+        → SAME group (so they don't match against each other).
         """
         gi = self._make_inputs(
             [1.0, 0.5, 0.5],
@@ -575,7 +569,8 @@ class TestComputeGroups:
         )
         assert list(groups[0]) == [0]
         t05_groups = [g for g in groups[1:] if set(g).issubset({1, 2})]
-        assert len(t05_groups) == 2
+        assert len(t05_groups) == 1
+        assert set(t05_groups[0]) == {1, 2}
 
     def test_empty_interval_ancestor(self):
         """
