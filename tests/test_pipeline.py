@@ -38,7 +38,7 @@ from tsinfer.config import (
     PostProcessConfig,
     Source,
 )
-from tsinfer.pipeline import match, post_process, run
+from tsinfer.pipeline import compute_groups_json, match, post_process, run
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -467,3 +467,77 @@ class TestPipelineProgress:
         cfg = _make_config(sample_store, ancestor_store)
         out_ts = match(cfg, progress=True)
         assert out_ts.num_nodes > 0
+
+
+# ---------------------------------------------------------------------------
+# TestComputeGroupsJson
+# ---------------------------------------------------------------------------
+
+
+class TestComputeGroupsJson:
+    def test_basic(self):
+        """compute_groups_json returns valid JSON with correct structure."""
+        import json
+
+        sim_ts = _simulate(num_samples=4, random_seed=40)
+        sample_store = ts_to_sample_vcz(sim_ts)
+        anc_cfg = AncestorsConfig(path=None, sources=["test"])
+        ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
+        cfg = _make_config(sample_store, ancestor_store)
+        result = json.loads(compute_groups_json(cfg))
+        assert result["num_haplotypes"] > 0
+        assert result["num_groups"] > 0
+        assert len(result["groups"]) == result["num_groups"]
+
+    def test_virtual_root_is_first_group(self):
+        """Group 0 should be the virtual root."""
+        import json
+
+        sim_ts = _simulate(num_samples=4, random_seed=41)
+        sample_store = ts_to_sample_vcz(sim_ts)
+        anc_cfg = AncestorsConfig(path=None, sources=["test"])
+        ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
+        cfg = _make_config(sample_store, ancestor_store)
+        result = json.loads(compute_groups_json(cfg))
+        group0 = result["groups"][0]
+        assert group0["haplotype_indices"] == [0]
+        assert group0["is_ancestor"] == [True]
+        assert group0["time"] == 1.0
+
+    def test_all_indices_covered(self):
+        """Union of all group indices should be {0, ..., num_haplotypes-1}."""
+        import json
+
+        sim_ts = _simulate(num_samples=6, random_seed=42)
+        sample_store = ts_to_sample_vcz(sim_ts)
+        anc_cfg = AncestorsConfig(path=None, sources=["test"])
+        ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
+        cfg = _make_config(sample_store, ancestor_store)
+        result = json.loads(compute_groups_json(cfg))
+        all_indices = set()
+        for g in result["groups"]:
+            all_indices.update(g["haplotype_indices"])
+        assert all_indices == set(range(result["num_haplotypes"]))
+
+    def test_hand_constructed(self):
+        """compute_groups_json with a hand-constructed VCZ."""
+        import json
+
+        sample_store = make_sample_vcz(
+            genotypes=np.array([[[0], [1]], [[1], [0]]], dtype=np.int8),
+            positions=np.array([100, 200], dtype=np.int32),
+            alleles=np.array([["A", "T"], ["A", "T"]]),
+            ancestral_state=np.array(["A", "A"]),
+            sequence_length=1000,
+        )
+        anc_cfg = AncestorsConfig(path=None, sources=["test"])
+        ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
+        cfg = _make_config(sample_store, ancestor_store)
+        result = json.loads(compute_groups_json(cfg))
+        assert result["num_haplotypes"] > 0
+        assert result["num_groups"] > 0
+        # Verify group fields
+        for g in result["groups"]:
+            assert g["num_haplotypes"] == len(g["haplotype_indices"])
+            assert len(g["is_ancestor"]) == len(g["haplotype_indices"])
+            assert isinstance(g["time"], float)
