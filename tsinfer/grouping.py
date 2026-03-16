@@ -53,6 +53,23 @@ class HaplotypeMetadata:
     is_ancestor: np.ndarray  # (n,) bool
     start_positions: np.ndarray  # (n,) int32
     end_positions: np.ndarray  # (n,) int32
+    source: list[str]  # (n,) source name per haplotype
+    sample_id: list[str]  # (n,) sample ID per haplotype
+    ploidy_index: list[int]  # (n,) ploidy index per haplotype
+
+
+@dataclass
+class MatchJob:
+    """One row of the compute-groups output — one per haplotype."""
+
+    haplotype_index: int
+    source: str
+    sample_id: str
+    ploidy_index: int
+    time: float
+    start_position: int
+    end_position: int
+    group: int
 
 
 def collect_haplotype_metadata(cfg: Config) -> HaplotypeMetadata:
@@ -86,11 +103,20 @@ def collect_haplotype_metadata(cfg: Config) -> HaplotypeMetadata:
     total_anc = num_anc + 1
     anc_is_ancestor = np.ones(total_anc, dtype=bool)
 
+    # Per-haplotype identity for ancestors
+    anc_ids = [str(x) for x in anc_store["sample_id"][:].tolist()]
+    anc_source: list[str] = ["ancestors"] * total_anc
+    anc_sample_id: list[str] = ["virtual_root"] + anc_ids
+    anc_ploidy_index: list[int] = [0] * total_anc
+
     # --- Sample sources ---
     sample_times_list: list[np.ndarray] = []
     sample_start_list: list[np.ndarray] = []
     sample_end_list: list[np.ndarray] = []
     sample_is_ancestor_list: list[np.ndarray] = []
+    sample_source_list: list[str] = []
+    sample_sample_id_list: list[str] = []
+    sample_ploidy_index_list: list[int] = []
 
     for source_name in cfg.match.sources:
         source = cfg.sources[source_name]
@@ -128,6 +154,19 @@ def collect_haplotype_metadata(cfg: Config) -> HaplotypeMetadata:
 
         hap_times = np.repeat(sample_time_arr, ploidy)
 
+        # sample_id
+        raw_ids = store["sample_id"][:]
+        if samples_selection is not None:
+            raw_ids = raw_ids[samples_selection]
+        sample_ids = [str(x) for x in raw_ids.tolist()]
+
+        # Per-haplotype identity
+        for i in range(num_samples):
+            for p in range(ploidy):
+                sample_source_list.append(source.name)
+                sample_sample_id_list.append(sample_ids[i])
+                sample_ploidy_index_list.append(p)
+
         # Default start/end from positions
         if len(positions) > 0:
             hap_start = np.full(num_hap, int(positions[0]), dtype=np.int32)
@@ -147,11 +186,17 @@ def collect_haplotype_metadata(cfg: Config) -> HaplotypeMetadata:
         all_start = np.concatenate([anc_start] + sample_start_list)
         all_end = np.concatenate([anc_end] + sample_end_list)
         all_is_ancestor = np.concatenate([anc_is_ancestor] + sample_is_ancestor_list)
+        all_source = anc_source + sample_source_list
+        all_sample_id = anc_sample_id + sample_sample_id_list
+        all_ploidy_index = anc_ploidy_index + sample_ploidy_index_list
     else:
         all_times = anc_times
         all_start = anc_start
         all_end = anc_end
         all_is_ancestor = anc_is_ancestor
+        all_source = anc_source
+        all_sample_id = anc_sample_id
+        all_ploidy_index = anc_ploidy_index
 
     num_total = len(all_times)
     num_ancestors = int(np.sum(all_is_ancestor))
@@ -168,6 +213,9 @@ def collect_haplotype_metadata(cfg: Config) -> HaplotypeMetadata:
         is_ancestor=all_is_ancestor,
         start_positions=all_start,
         end_positions=all_end,
+        source=all_source,
+        sample_id=all_sample_id,
+        ploidy_index=all_ploidy_index,
     )
 
 
@@ -412,14 +460,15 @@ def compute_groups(
     return groups
 
 
-def compute_groups_json(cfg: Config) -> str:
+def compute_match_jobs(cfg: Config) -> list[MatchJob]:
     """
-    Compute haplotype groups and return as a JSON string.
+    Compute haplotype groups and return a flat list of :class:`MatchJob`.
 
-    Loads only lightweight metadata (no genotypes) from the ancestor VCZ and
-    all sample sources, runs the grouping algorithm, and returns a JSON
-    description of the groups suitable for inspection or as input to
-    distributed matching.
+    Each haplotype gets exactly one ``MatchJob`` with its identity
+    (source, sample_id, ploidy_index), position range, time, and assigned
+    group index.  The list is ordered by group (oldest first), then by
+    haplotype index within each group — the same order the match loop
+    processes them.
     """
     import time
 
@@ -448,27 +497,46 @@ def compute_groups_json(cfg: Config) -> str:
     elapsed = time.monotonic() - t0
     logger.info("Computed %d groups in %.2fs", len(groups), elapsed)
 
-    logger.info("Serialising JSON")
-    t0 = time.monotonic()
-    group_list = []
-    for i, group_indices in enumerate(groups):
-        indices = [int(x) for x in group_indices]
-        group_list.append(
-            {
-                "index": i,
-                "haplotype_indices": indices,
-                "num_haplotypes": len(indices),
-                "is_ancestor": [bool(hap_meta.is_ancestor[j]) for j in indices],
-                "time": float(np.max(hap_meta.times[group_indices])),
-            }
-        )
+    # Build flat list ordered by (group, haplotype_index)
+    jobs: list[MatchJob] = []
+    for group_idx, group_indices in enumerate(groups):
+        for idx in group_indices:
+            idx = int(idx)
+            jobs.append(
+                MatchJob(
+                    haplotype_index=idx,
+                    source=hap_meta.source[idx],
+                    sample_id=hap_meta.sample_id[idx],
+                    ploidy_index=hap_meta.ploidy_index[idx],
+                    time=float(hap_meta.times[idx]),
+                    start_position=int(hap_meta.start_positions[idx]),
+                    end_position=int(hap_meta.end_positions[idx]),
+                    group=group_idx,
+                )
+            )
 
-    result = {
-        "num_haplotypes": len(hap_meta.times),
-        "num_groups": len(groups),
-        "groups": group_list,
-    }
-    json_str = json.dumps(result, indent=2)
+    return jobs
+
+
+def compute_groups_json(cfg: Config) -> str:
+    """
+    Compute haplotype groups and return as a JSON string.
+
+    The output is a flat JSON array of objects, one per haplotype, ordered
+    by group then haplotype index.  Each object has the fields of
+    :class:`MatchJob` — suitable for loading into pandas with
+    ``pd.read_json`` or ``pd.DataFrame``.
+    """
+    import dataclasses
+    import time
+
+    t0 = time.monotonic()
+    jobs = compute_match_jobs(cfg)
     elapsed = time.monotonic() - t0
-    logger.info("Serialised %d groups to JSON in %.2fs", len(groups), elapsed)
+
+    logger.info("Serialising %d match jobs to JSON", len(jobs))
+    t0 = time.monotonic()
+    json_str = json.dumps([dataclasses.asdict(j) for j in jobs], indent=2)
+    elapsed = time.monotonic() - t0
+    logger.info("Serialised in %.2fs", elapsed)
     return json_str

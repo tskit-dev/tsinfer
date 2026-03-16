@@ -477,7 +477,7 @@ class TestPipelineProgress:
 
 class TestComputeGroupsJson:
     def test_basic(self):
-        """compute_groups_json returns valid JSON with correct structure."""
+        """compute_groups_json returns a flat JSON array of records."""
         import json
 
         sim_ts = _simulate(num_samples=4, random_seed=40)
@@ -485,13 +485,12 @@ class TestComputeGroupsJson:
         anc_cfg = AncestorsConfig(path=None, sources=["test"])
         ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
         cfg = _make_config(sample_store, ancestor_store)
-        result = json.loads(compute_groups_json(cfg))
-        assert result["num_haplotypes"] > 0
-        assert result["num_groups"] > 0
-        assert len(result["groups"]) == result["num_groups"]
+        records = json.loads(compute_groups_json(cfg))
+        assert isinstance(records, list)
+        assert len(records) > 0
 
-    def test_virtual_root_is_first_group(self):
-        """Group 0 should be the virtual root."""
+    def test_virtual_root_is_first_record(self):
+        """First record should be the virtual root in group 0."""
         import json
 
         sim_ts = _simulate(num_samples=4, random_seed=41)
@@ -499,14 +498,15 @@ class TestComputeGroupsJson:
         anc_cfg = AncestorsConfig(path=None, sources=["test"])
         ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
         cfg = _make_config(sample_store, ancestor_store)
-        result = json.loads(compute_groups_json(cfg))
-        group0 = result["groups"][0]
-        assert group0["haplotype_indices"] == [0]
-        assert group0["is_ancestor"] == [True]
-        assert group0["time"] == 1.0
+        records = json.loads(compute_groups_json(cfg))
+        rec0 = records[0]
+        assert rec0["haplotype_index"] == 0
+        assert rec0["time"] == 1.0
+        assert rec0["group"] == 0
+        assert rec0["sample_id"] == "virtual_root"
 
     def test_all_indices_covered(self):
-        """Union of all group indices should be {0, ..., num_haplotypes-1}."""
+        """All haplotype indices should appear exactly once."""
         import json
 
         sim_ts = _simulate(num_samples=6, random_seed=42)
@@ -514,11 +514,9 @@ class TestComputeGroupsJson:
         anc_cfg = AncestorsConfig(path=None, sources=["test"])
         ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
         cfg = _make_config(sample_store, ancestor_store)
-        result = json.loads(compute_groups_json(cfg))
-        all_indices = set()
-        for g in result["groups"]:
-            all_indices.update(g["haplotype_indices"])
-        assert all_indices == set(range(result["num_haplotypes"]))
+        records = json.loads(compute_groups_json(cfg))
+        all_indices = {r["haplotype_index"] for r in records}
+        assert all_indices == set(range(len(records)))
 
     def test_hand_constructed(self):
         """compute_groups_json with a hand-constructed VCZ."""
@@ -534,14 +532,22 @@ class TestComputeGroupsJson:
         anc_cfg = AncestorsConfig(path=None, sources=["test"])
         ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
         cfg = _make_config(sample_store, ancestor_store)
-        result = json.loads(compute_groups_json(cfg))
-        assert result["num_haplotypes"] > 0
-        assert result["num_groups"] > 0
-        # Verify group fields
-        for g in result["groups"]:
-            assert g["num_haplotypes"] == len(g["haplotype_indices"])
-            assert len(g["is_ancestor"]) == len(g["haplotype_indices"])
-            assert isinstance(g["time"], float)
+        records = json.loads(compute_groups_json(cfg))
+        assert len(records) > 0
+        expected_keys = {
+            "haplotype_index",
+            "source",
+            "sample_id",
+            "ploidy_index",
+            "time",
+            "start_position",
+            "end_position",
+            "group",
+        }
+        for rec in records:
+            assert set(rec.keys()) == expected_keys
+            assert isinstance(rec["time"], float)
+            assert isinstance(rec["group"], int)
 
 
 # ---------------------------------------------------------------------------

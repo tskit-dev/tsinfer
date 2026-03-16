@@ -378,20 +378,15 @@ class TestComputeGroups:
         with tempfile.TemporaryDirectory() as tmp_dir:
             sample_path = _write_sample_vcz_to_disk(tmp_dir)
             config_path = _write_run_config(tmp_dir, sample_path)
-            # First run infer-ancestors to create the ancestor VCZ
             result = runner.invoke(main, ["infer-ancestors", config_path])
             assert result.exit_code == 0, result.output
-            # Now compute-groups
             result = runner.invoke(main, ["compute-groups", config_path])
             assert result.exit_code == 0, result.output
-            data = json.loads(result.output)
-            assert "num_haplotypes" in data
-            assert "num_groups" in data
-            assert "groups" in data
-            assert isinstance(data["groups"], list)
-            assert len(data["groups"]) == data["num_groups"]
+            records = json.loads(result.output)
+            assert isinstance(records, list)
+            assert len(records) > 0
 
-    def test_group_structure(self):
+    def test_record_structure(self):
         runner = CliRunner()
         with tempfile.TemporaryDirectory() as tmp_dir:
             sample_path = _write_sample_vcz_to_disk(tmp_dir)
@@ -399,22 +394,26 @@ class TestComputeGroups:
             runner.invoke(main, ["infer-ancestors", config_path])
             result = runner.invoke(main, ["compute-groups", config_path])
             assert result.exit_code == 0, result.output
-            data = json.loads(result.output)
-            # First group should be the virtual root
-            group0 = data["groups"][0]
-            assert group0["index"] == 0
-            assert group0["haplotype_indices"] == [0]
-            assert group0["is_ancestor"] == [True]
-            assert group0["time"] == 1.0
-            # Each group has required fields
-            for g in data["groups"]:
-                assert "index" in g
-                assert "haplotype_indices" in g
-                assert "num_haplotypes" in g
-                assert "is_ancestor" in g
-                assert "time" in g
-                assert g["num_haplotypes"] == len(g["haplotype_indices"])
-                assert len(g["is_ancestor"]) == len(g["haplotype_indices"])
+            records = json.loads(result.output)
+            # First record should be the virtual root
+            rec0 = records[0]
+            assert rec0["haplotype_index"] == 0
+            assert rec0["time"] == 1.0
+            assert rec0["group"] == 0
+            assert rec0["sample_id"] == "virtual_root"
+            # Every record has the expected keys
+            expected_keys = {
+                "haplotype_index",
+                "source",
+                "sample_id",
+                "ploidy_index",
+                "time",
+                "start_position",
+                "end_position",
+                "group",
+            }
+            for rec in records:
+                assert set(rec.keys()) == expected_keys
 
     def test_all_haplotypes_accounted_for(self):
         runner = CliRunner()
@@ -424,11 +423,9 @@ class TestComputeGroups:
             runner.invoke(main, ["infer-ancestors", config_path])
             result = runner.invoke(main, ["compute-groups", config_path])
             assert result.exit_code == 0, result.output
-            data = json.loads(result.output)
-            all_indices = set()
-            for g in data["groups"]:
-                all_indices.update(g["haplotype_indices"])
-            assert all_indices == set(range(data["num_haplotypes"]))
+            records = json.loads(result.output)
+            all_indices = {r["haplotype_index"] for r in records}
+            assert all_indices == set(range(len(records)))
 
     def test_output_flag(self):
         """--output writes groups JSON to file."""
@@ -443,8 +440,9 @@ class TestComputeGroups:
             )
             assert result.exit_code == 0, result.output
             assert Path(output_path).exists()
-            data = json.loads(Path(output_path).read_text())
-            assert "num_groups" in data
+            records = json.loads(Path(output_path).read_text())
+            assert isinstance(records, list)
+            assert len(records) > 0
 
     def test_output_flag_force(self):
         """--output with existing file requires --force."""
