@@ -473,6 +473,10 @@ def _process_interval(
     future_meta = {}
     n_ancestors = len(ancestor_descriptors)
     n_consumed = 0
+    # Pre-allocate reusable output arrays to avoid per-ancestor allocation.
+    # _finish_ancestor copies out the active fragment, so the array can be
+    # recycled immediately after draining.
+    _free_arrays = [np.empty(n_ab_sites, dtype=np.int8) for _ in range(max_queued)]
     pbar = tqdm_mod.tqdm(
         total=n_ancestors,
         desc=f"Interval {i_idx}: ancestors",
@@ -524,6 +528,9 @@ def _process_interval(
             )
             t_finish += time.monotonic() - t0
 
+            # Return array to pool for reuse
+            _free_arrays.append(a)
+
             t0 = time.monotonic()
             writer.add_ancestor(ancestor)
             t_write += time.monotonic() - t0
@@ -536,7 +543,8 @@ def _process_interval(
             _drain_completed(future_meta)
         t0 = time.monotonic()
         focal_arr = np.asarray(focal_sites, dtype=np.int32)
-        a = np.full(n_ab_sites, np.int8(-1), dtype=np.int8)
+        a = _free_arrays.pop()
+        a[:] = np.int8(-1)
         future = executor.submit(
             _call_make_ancestor,
             ab,
