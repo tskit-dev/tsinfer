@@ -440,14 +440,31 @@ class AncestorWriter:
     ):
         self._num_sites = num_sites
         self._chunk_size = samples_chunk_size
-        self._buffer = []
         self._focal_positions_acc = []
         self._num_flushed = 0
         # For out-of-order insertion: pending ancestors keyed by index,
-        # drained into _buffer in contiguous order.
+        # drained in contiguous order.
         self._pending = {}
         self._next_index = 0
         self._compressor = compressor
+
+        # --- Pre-allocated genotype buffer pool ---
+        # queue_size buffers can be in the write queue / writer thread,
+        # plus 1 active buffer being filled by add_ancestor.
+        self._queue_size = 2
+        num_bufs = self._queue_size + 1
+        self._free_bufs = queue.Queue()
+        for _ in range(num_bufs - 1):
+            self._free_bufs.put(
+                np.full((num_sites, samples_chunk_size, 1), np.int8(-1), dtype=np.int8)
+            )
+        self._gt_buf = np.full(
+            (num_sites, samples_chunk_size, 1), np.int8(-1), dtype=np.int8
+        )
+        self._chunk_count = 0  # ancestors written into current chunk
+        self._meta_times = []
+        self._meta_starts = []
+        self._meta_ends = []
 
         # --- Build the zarr group and write fixed arrays ---
         self._root = open_group(store)
@@ -533,7 +550,7 @@ class AncestorWriter:
         # Chunks are queued from the main thread and written to zarr
         # asynchronously so that the main thread can continue submitting
         # ancestor-building work without blocking on I/O.
-        self._write_queue = queue.Queue(maxsize=2)
+        self._write_queue = queue.Queue(maxsize=self._queue_size)
         self._write_error = None
         self._writer_thread = threading.Thread(target=self._writer_loop, daemon=True)
         self._writer_thread.start()
@@ -552,12 +569,17 @@ class AncestorWriter:
         self._pending[ancestor.index] = ancestor
         while self._next_index in self._pending:
             anc = self._pending.pop(self._next_index)
-            self._buffer.append(anc)
+            slot = self._chunk_count
+            self._gt_buf[anc.start_site_idx : anc.end_site_idx, slot, 0] = anc.haplotype
+            self._meta_times.append(anc.time)
+            self._meta_starts.append(anc.start_position)
+            self._meta_ends.append(anc.end_position)
             self._focal_positions_acc.append(
                 np.asarray(anc.focal_positions, dtype=np.int32)
             )
+            self._chunk_count += 1
             self._next_index += 1
-            if len(self._buffer) >= self._chunk_size:
+            if self._chunk_count >= self._chunk_size:
                 self._enqueue_flush()
 
     # -----------------------------------------------------------------
@@ -568,48 +590,92 @@ class AncestorWriter:
             raise self._write_error
 
     def _enqueue_flush(self):
-        """Assemble chunk arrays from the buffer and enqueue for writing."""
-        n = len(self._buffer)
-        ns = self._num_sites
+        """Enqueue the current genotype buffer for writing."""
+        t0 = _time.monotonic()
+        n = self._chunk_count
 
-        gt_chunk = np.full((ns, n, 1), np.int8(-1), dtype=np.int8)
-        times = np.empty(n, dtype=np.float64)
-        starts = np.empty(n, dtype=np.int32)
-        ends = np.empty(n, dtype=np.int32)
+        # Slice if partial chunk; use full buffer if complete
+        if n < self._chunk_size:
+            gt_data = self._gt_buf[:, :n, :]
+        else:
+            gt_data = self._gt_buf
 
-        for j, anc in enumerate(self._buffer):
-            gt_chunk[anc.start_site_idx : anc.end_site_idx, j, 0] = anc.haplotype
-            times[j] = anc.time
-            starts[j] = anc.start_position
-            ends[j] = anc.end_position
+        times = np.array(self._meta_times, dtype=np.float64)
+        starts = np.array(self._meta_starts, dtype=np.int32)
+        ends = np.array(self._meta_ends, dtype=np.int32)
+        t_assemble = _time.monotonic() - t0
 
-        self._buffer.clear()
+        t0 = _time.monotonic()
         # blocks if the writer thread is still working on the previous chunk
-        self._write_queue.put((gt_chunk, times, starts, ends, n))
+        self._write_queue.put((gt_data, times, starts, ends, n))
+        t_enqueue = _time.monotonic() - t0
+
+        # Grab a fresh buffer from the free-list (blocks until writer returns one)
+        self._gt_buf = self._free_bufs.get()
+        self._chunk_count = 0
+        self._meta_times.clear()
+        self._meta_starts.clear()
+        self._meta_ends.clear()
+
         self._num_flushed += n
+        gt_mb = gt_data.nbytes / (1024 * 1024)
+        logger.debug(
+            "Enqueue: %d ancestors (%.1fMiB), assemble=%.3fs enqueue=%.3fs",
+            n,
+            gt_mb,
+            t_assemble,
+            t_enqueue,
+        )
 
     def _writer_loop(self):
         """Background thread: consume chunks from the queue and write to zarr."""
+        n_flushes = 0
+        t_gt_total = 0.0
+        t_meta_total = 0.0
         try:
             while True:
                 item = self._write_queue.get()
                 if item is None:
                     break
                 gt_chunk, times, starts, ends, n = item
-                t0 = _time.monotonic()
 
+                t0 = _time.monotonic()
                 self._root["call_genotype"].append(gt_chunk, axis=1)
+                t_gt = _time.monotonic() - t0
+
+                t0 = _time.monotonic()
                 self._root["sample_time"].append(times)
                 self._root["sample_start_position"].append(starts)
                 self._root["sample_end_position"].append(ends)
+                t_meta = _time.monotonic() - t0
 
-                elapsed = _time.monotonic() - t0
-                gt_chunk_mb = gt_chunk.nbytes / (1024 * 1024)
+                # Return the buffer to the free-list for reuse.
+                # For partial chunks, gt_chunk is a slice (view) of the
+                # underlying buffer — use .base to get the owning array.
+                buf = gt_chunk if gt_chunk.base is None else gt_chunk.base
+                buf[:] = np.int8(-1)
+                self._free_bufs.put(buf)
+
+                t_gt_total += t_gt
+                t_meta_total += t_meta
+                n_flushes += 1
+
+                gt_mb = gt_chunk.nbytes / (1024 * 1024)
                 logger.debug(
-                    "Writer: flushed %d ancestors in %.3fs (%.1fMiB)",
+                    "Writer: flushed %d ancestors in %.3fs "
+                    "(gt=%.3fs meta=%.3fs, %.1fMiB)",
                     n,
-                    elapsed,
-                    gt_chunk_mb,
+                    t_gt + t_meta,
+                    t_gt,
+                    t_meta,
+                    gt_mb,
+                )
+            if n_flushes > 0:
+                logger.info(
+                    "Writer totals: %d flushes, gt=%.3fs meta=%.3fs",
+                    n_flushes,
+                    t_gt_total,
+                    t_meta_total,
                 )
         except Exception as e:
             self._write_error = e
@@ -618,7 +684,7 @@ class AncestorWriter:
 
     def finalize(self):
         """Flush remaining buffer and write final arrays.  Returns the Group."""
-        if self._buffer:
+        if self._chunk_count > 0:
             self._enqueue_flush()
         # Signal the writer thread to exit and wait for it
         self._write_queue.put(None)
