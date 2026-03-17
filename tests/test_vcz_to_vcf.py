@@ -21,6 +21,8 @@ Validate that make_sample_vcz and ts_to_sample_vcz produce correct VCZ by
 converting to VCF text via vcztools and comparing against expected output.
 """
 
+import sys
+
 import bio2zarr.tskit as bzt
 import msprime
 import numpy as np
@@ -381,7 +383,7 @@ class TestAncestorVczToVcf:
         infer_ancestors(Source(path=store, name="test"), cfg)
 
         result = subprocess.run(
-            [".venv/bin/python", "-m", "vcztools", "view", str(anc_path)],
+            [sys.executable, "-m", "vcztools", "view", str(anc_path)],
             capture_output=True,
             text=True,
         )
