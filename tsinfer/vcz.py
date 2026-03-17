@@ -394,349 +394,680 @@ def _build_output_alleles(alleles, anc_indices, num_sites):
 
 
 # ---------------------------------------------------------------------------
-# Ancestor writing
+# Ancestor writing — two-queue pipeline
 # ---------------------------------------------------------------------------
+
+
+@dataclass
+class _WorkItem:
+    """Work item for the worker thread pool."""
+
+    ab: Any  # _tsinfer.AncestorBuilder
+    focal_sites: np.ndarray
+    anc_time: float
+    ancestor_index: int  # global index across all intervals
+    expected_count: int  # expected ancestors in this chunk
+    local_mask: np.ndarray
+    final_positions: np.ndarray
+
+
+class ChunkBuffer:
+    """
+    Thread-safe buffer for one sample-chunk of ancestor data.
+
+    Each worker writes to a distinct ``slot`` (column), so data arrays have
+    no races.  Only ``filled_count`` increment + completion check needs a lock.
+    """
+
+    __slots__ = (
+        "chunk_idx",
+        "gt_buf",
+        "times",
+        "starts",
+        "ends",
+        "focal_positions",
+        "expected_count",
+        "filled_count",
+        "_lock",
+    )
+
+    def __init__(self, num_sites: int, chunk_size: int):
+        self.chunk_idx: int = -1
+        self.gt_buf = np.full((num_sites, chunk_size, 1), np.int8(-1), dtype=np.int8)
+        self.times = np.zeros(chunk_size, dtype=np.float64)
+        self.starts = np.zeros(chunk_size, dtype=np.int32)
+        self.ends = np.zeros(chunk_size, dtype=np.int32)
+        self.focal_positions: list = [None] * chunk_size
+        self.expected_count: int = -1  # -1 = unknown
+        self.filled_count: int = 0
+        self._lock = threading.Lock()
+
+    def record_fill(self) -> bool:
+        """Increment filled_count; return True if chunk is complete."""
+        with self._lock:
+            self.filled_count += 1
+            return self.expected_count >= 0 and self.filled_count == self.expected_count
+
+    def seal(self, expected_count: int) -> bool:
+        """Set expected_count; return True if already complete."""
+        with self._lock:
+            self.expected_count = expected_count
+            return self.filled_count == self.expected_count
+
+    def reset(self, chunk_size: int):
+        """Reset buffer for reuse."""
+        self.chunk_idx = -1
+        self.gt_buf[:] = np.int8(-1)
+        self.times[:] = 0
+        self.starts[:] = 0
+        self.ends[:] = 0
+        self.focal_positions = [None] * chunk_size
+        self.expected_count = -1
+        self.filled_count = 0
+
+
+class ChunkBufferPool:
+    """Pool of pre-allocated ChunkBuffer objects."""
+
+    def __init__(self, num_buffers: int, num_sites: int, chunk_size: int):
+        self._chunk_size = chunk_size
+        self._free: queue.Queue = queue.Queue()
+        for _ in range(num_buffers):
+            self._free.put(ChunkBuffer(num_sites, chunk_size))
+
+    def acquire(self, chunk_idx: int, expected_count: int) -> ChunkBuffer:
+        """Get a buffer from the pool (blocks if empty)."""
+        buf = self._free.get()
+        buf.chunk_idx = chunk_idx
+        if expected_count >= 0:
+            buf.expected_count = expected_count
+        return buf
+
+    def release(self, buf: ChunkBuffer):
+        """Return a buffer to the pool after resetting it."""
+        buf.reset(self._chunk_size)
+        self._free.put(buf)
+
+
+class ActiveChunkRegistry:
+    """
+    Thread-safe registry of in-flight ChunkBuffers keyed by chunk index.
+
+    Handles concurrent access from multiple worker threads that may
+    need the same chunk buffer simultaneously.
+    """
+
+    def __init__(self, pool: ChunkBufferPool):
+        self._pool = pool
+        self._active: dict[int, ChunkBuffer] = {}
+        self._creating: set[int] = set()
+        self._lock = threading.Lock()
+        self._cond = threading.Condition(self._lock)
+
+    def get_or_create(self, chunk_idx: int, expected_count: int) -> ChunkBuffer:
+        with self._cond:
+            if chunk_idx in self._active:
+                return self._active[chunk_idx]
+            # Wait if another thread is creating this chunk
+            while chunk_idx in self._creating:
+                self._cond.wait()
+            # Re-check after waking
+            if chunk_idx in self._active:
+                return self._active[chunk_idx]
+            self._creating.add(chunk_idx)
+
+        # Acquire from pool outside the lock (may block)
+        buf = self._pool.acquire(chunk_idx, expected_count)
+
+        with self._cond:
+            self._creating.discard(chunk_idx)
+            self._active[chunk_idx] = buf
+            self._cond.notify_all()
+            return buf
+
+    def remove(self, chunk_idx: int) -> ChunkBuffer:
+        with self._lock:
+            return self._active.pop(chunk_idx)
+
+    def pop_remaining(self) -> list[ChunkBuffer]:
+        """Remove and return all remaining active buffers."""
+        with self._lock:
+            bufs = list(self._active.values())
+            self._active.clear()
+            return bufs
+
+
+@dataclass
+class PipelineStats:
+    """Timing statistics collected across all threads of an AncestorWriter."""
+
+    # Worker-side (summed across all worker threads)
+    worker_make_ancestor: float = 0.0  # time in C make_ancestor
+    worker_make_min: float = float("inf")
+    worker_make_max: float = 0.0
+    worker_buf_fill: float = 0.0  # writing fragment + metadata into ChunkBuffer
+    worker_registry_wait: float = 0.0  # waiting in get_or_create
+    worker_count: int = 0  # total ancestors processed by workers
+
+    # Writer-side (summed across all writer threads)
+    writer_zarr: float = 0.0  # time writing to zarr
+    writer_release: float = 0.0  # pool.release (reset + enqueue)
+    writer_chunks: int = 0  # chunks flushed
+
+    # Main-thread submit
+    submit_put: float = 0.0  # blocked on work_queue.put
+    submit_count: int = 0
+
+    # Finalize
+    finalize_worker_join: float = 0.0
+    finalize_seal: float = 0.0
+    finalize_writer_join: float = 0.0
 
 
 class AncestorWriter:
     """
-    Streams ancestors to a zarr Group, flushing by sample-chunk.
+    Two-queue ancestor writing pipeline for a single interval.
 
-    Fixed (site-dimensioned) arrays are written at construction time.
-    Ancestor-dimensioned arrays (``call_genotype``, ``sample_time``,
-    ``sample_start_position``, ``sample_end_position``) are appended
-    in chunks of *chunk_size* ancestors.  ``sample_focal_positions`` and
-    ``sample_id`` are written once at :meth:`finalize` because the
-    second dimension of focal_positions is only known after all
-    ancestors have been generated.
+    Worker threads pop from work_queue, call make_ancestor, and write
+    into ChunkBuffers.  When a chunk is complete, it is pushed to
+    write_queue for writer threads to flush to zarr via ``.blocks[]``.
+
+    The zarr group and fixed arrays are created at construction time.
+    Per-interval instances resize arrays incrementally and detect
+    partial last chunks from previous intervals.
 
     Parameters
     ----------
+    zarr_root : zarr.Group
+        The zarr group (already containing fixed arrays).
     num_sites : int
-        Number of inference sites (variants axis).
-    positions, alleles, anc_indices, seq_intervals :
-        Site-dimensioned data written once at init.
-    store : str, Path, or None
-        Backing store — ``None`` for in-memory, or a filesystem path.
-    samples_chunk_size : int
-        Number of ancestors to buffer before flushing to zarr.
-    variants_chunk_size : int
-        Chunk size along the variants axis for ``call_genotype``.
+        Number of inference sites.
+    chunk_size : int
+        Samples chunk size.
+    n_ancestors : int
+        Number of ancestors to be written in this interval.
+    num_threads : int
+        Number of worker threads (0 = synchronous).
+    write_threads : int
+        Number of writer threads.
+    compressor : codec or None
+        Compressor for zarr arrays.
     """
 
     def __init__(
         self,
+        zarr_root,
         num_sites,
-        positions,
-        alleles,
-        anc_indices,
-        seq_intervals,
-        store=None,
-        samples_chunk_size=1000,
-        variants_chunk_size=1000,
-        contig_id="1",
-        contig_length=0,
+        chunk_size,
+        n_ancestors,
+        num_threads=0,
+        write_threads=4,
         compressor=None,
     ):
+        self._root = zarr_root
         self._num_sites = num_sites
-        self._chunk_size = samples_chunk_size
-        self._focal_positions_acc = []
-        self._num_flushed = 0
-        # For out-of-order insertion: pending ancestors keyed by index,
-        # drained in contiguous order.
-        self._pending = {}
-        self._next_index = 0
+        self._chunk_size = chunk_size
+        self._n_ancestors = n_ancestors
+        self._num_threads = num_threads
+        self._write_threads = max(1, write_threads)
         self._compressor = compressor
 
-        # --- Pre-allocated genotype buffer pool ---
-        # queue_size buffers can be in the write queue / writer thread,
-        # plus 1 active buffer being filled by add_ancestor.
-        self._queue_size = 2
-        num_bufs = self._queue_size + 1
-        self._free_bufs = queue.Queue()
-        for _ in range(num_bufs - 1):
-            self._free_bufs.put(
-                np.full((num_sites, samples_chunk_size, 1), np.int8(-1), dtype=np.int8)
+        # Timing stats — aggregated from all threads
+        self._stats = PipelineStats()
+        self._stats_lock = threading.Lock()
+
+        # Determine existing samples and partial chunk state
+        existing_samples = self._root["call_genotype"].shape[1]
+        self._base_index = existing_samples
+        partial_count = existing_samples % chunk_size if existing_samples > 0 else 0
+
+        # Resize zarr arrays for this interval's ancestors
+        new_total = existing_samples + n_ancestors
+        if n_ancestors > 0:
+            self._root["call_genotype"].resize((num_sites, new_total, 1))
+            self._root["sample_time"].resize((new_total,))
+            self._root["sample_start_position"].resize((new_total,))
+            self._root["sample_end_position"].resize((new_total,))
+
+        # Compute buffer pool size
+        max_queued = max(8 * max(num_threads, 1), 1)
+        max_active_chunks = (max_queued + max(num_threads, 1)) // chunk_size + 1
+        num_buffers = max(4, max_active_chunks + self._write_threads + 3)
+
+        self._pool = ChunkBufferPool(num_buffers, num_sites, chunk_size)
+        self._registry = ActiveChunkRegistry(self._pool)
+
+        # Load partial chunk from previous interval if needed
+        if partial_count > 0:
+            partial_ci = existing_samples // chunk_size
+            buf = self._pool.acquire(partial_ci, expected_count=-1)
+            start = partial_ci * chunk_size
+            end = existing_samples
+            buf.gt_buf[:, :partial_count, :] = np.asarray(
+                self._root["call_genotype"][:, start:end, :]
             )
-        self._gt_buf = np.full(
-            (num_sites, samples_chunk_size, 1), np.int8(-1), dtype=np.int8
-        )
-        self._chunk_count = 0  # ancestors written into current chunk
-        self._meta_times = []
-        self._meta_starts = []
-        self._meta_ends = []
-
-        # --- Build the zarr group and write fixed arrays ---
-        self._root = open_group(store)
-        vchunks = variants_chunk_size
-
-        _arr(
-            self._root,
-            "variant_position",
-            positions,
-            ["variants"],
-            chunks=(vchunks,),
-            compressor=compressor,
-        )
-
-        out_alleles = _build_output_alleles(alleles, anc_indices, num_sites)
-        ckw = {}
-        if compressor is not None:
-            ckw["compressor"] = compressor
-        va = self._root.create_array(
-            "variant_allele",
-            shape=out_alleles.shape,
-            dtype=_VLEN_STR,
-            chunks=(vchunks, out_alleles.shape[1]),
-            **ckw,
-        )
-        va[:] = out_alleles
-        va.attrs["_ARRAY_DIMENSIONS"] = ["variants", "alleles"]
-
-        _arr(
-            self._root,
-            "sequence_intervals",
-            seq_intervals,
-            ["intervals", "coords"],
-            compressor=compressor,
-        )
-
-        # Contig metadata — required for vcztools compatibility
-        _str_array(
-            self._root,
-            "contig_id",
-            np.array([contig_id]),
-            ["contigs"],
-            compressor=compressor,
-        )
-        _arr(
-            self._root,
-            "contig_length",
-            np.array([contig_length], dtype=np.int64),
-            ["contigs"],
-            compressor=compressor,
-        )
-        _arr(
-            self._root,
-            "variant_contig",
-            np.zeros(num_sites, dtype=np.int8),
-            ["variants"],
-            chunks=(vchunks,),
-            compressor=compressor,
-        )
-
-        # --- Ancestor-dimensioned arrays: start empty, append by chunk ---
-        gt = self._root.create_array(
-            "call_genotype",
-            shape=(num_sites, 0, 1),
-            dtype=np.int8,
-            chunks=(variants_chunk_size, samples_chunk_size, 1),
-            **ckw,
-        )
-        gt.attrs["_ARRAY_DIMENSIONS"] = ["variants", "samples", "ploidy"]
-
-        for name in ("sample_time", "sample_start_position", "sample_end_position"):
-            dt = np.float64 if name == "sample_time" else np.int32
-            a = self._root.create_array(
-                name,
-                shape=(0,),
-                dtype=dt,
-                chunks=(samples_chunk_size,),
-                **ckw,
+            buf.times[:partial_count] = np.asarray(self._root["sample_time"][start:end])
+            buf.starts[:partial_count] = np.asarray(
+                self._root["sample_start_position"][start:end]
             )
-            a.attrs["_ARRAY_DIMENSIONS"] = ["samples"]
+            buf.ends[:partial_count] = np.asarray(
+                self._root["sample_end_position"][start:end]
+            )
+            buf.focal_positions[:partial_count] = [None] * partial_count
+            buf.filled_count = partial_count
+            self._registry._active[partial_ci] = buf
 
-        # --- Background writer thread ---
-        # Chunks are queued from the main thread and written to zarr
-        # asynchronously so that the main thread can continue submitting
-        # ancestor-building work without blocking on I/O.
-        self._write_queue = queue.Queue(maxsize=self._queue_size)
+        # Queues
+        self._work_queue: queue.Queue = queue.Queue(maxsize=max(max_queued, 1))
+        self._write_queue: queue.Queue = queue.Queue()
+
+        # Focal positions collected by writer threads
+        self._focal_by_chunk: dict[int, list] = {}
+        self._focal_lock = threading.Lock()
+
+        # Error propagation
         self._write_error = None
-        self._writer_thread = threading.Thread(target=self._writer_loop, daemon=True)
-        self._writer_thread.start()
+        self._worker_error = None
 
-    # -----------------------------------------------------------------
+        # Start threads
+        self._worker_threads = []
+        n_workers = max(num_threads, 1)
+        for _ in range(n_workers):
+            t = threading.Thread(target=self._worker_loop, daemon=True)
+            t.start()
+            self._worker_threads.append(t)
 
-    def add_ancestor(self, ancestor):
-        """
-        Add an :class:`~tsinfer.ancestors.Ancestor` to the writer.
+        self._writer_threads_list = []
+        for _ in range(self._write_threads):
+            t = threading.Thread(target=self._writer_loop, daemon=True)
+            t.start()
+            self._writer_threads_list.append(t)
 
-        Ancestors may arrive out of order (when built in parallel).
-        They are buffered by index and drained into the write buffer
-        in sequential order.
-        """
-        self._check_writer_error()
-        self._pending[ancestor.index] = ancestor
-        while self._next_index in self._pending:
-            anc = self._pending.pop(self._next_index)
-            slot = self._chunk_count
-            self._gt_buf[anc.start_site_idx : anc.end_site_idx, slot, 0] = anc.haplotype
-            self._meta_times.append(anc.time)
-            self._meta_starts.append(anc.start_position)
-            self._meta_ends.append(anc.end_position)
-            self._focal_positions_acc.append(
-                np.asarray(anc.focal_positions, dtype=np.int32)
-            )
-            self._chunk_count += 1
-            self._next_index += 1
-            if self._chunk_count >= self._chunk_size:
-                self._enqueue_flush()
-
-    # -----------------------------------------------------------------
-
-    def _check_writer_error(self):
-        """Re-raise any exception from the writer thread."""
+    def _check_errors(self):
         if self._write_error is not None:
             raise self._write_error
+        if self._worker_error is not None:
+            raise self._worker_error
 
-    def _enqueue_flush(self):
-        """Enqueue the current genotype buffer for writing."""
-        t0 = _time.monotonic()
-        n = self._chunk_count
+    @property
+    def stats(self) -> PipelineStats:
+        return self._stats
 
-        # Slice if partial chunk; use full buffer if complete
-        if n < self._chunk_size:
-            gt_data = self._gt_buf[:, :n, :]
-        else:
-            gt_data = self._gt_buf
+    def submit(
+        self,
+        ab,
+        focal_sites,
+        anc_time,
+        ancestor_local_index,
+        local_mask,
+        final_positions,
+    ):
+        """Submit a work item for ancestor building."""
+        self._check_errors()
+        ancestor_index = self._base_index + ancestor_local_index
+        chunk_idx = ancestor_index // self._chunk_size
+        # Determine expected_count for this chunk
+        total_samples = self._base_index + self._n_ancestors
+        chunk_start = chunk_idx * self._chunk_size
+        chunk_end = min(chunk_start + self._chunk_size, total_samples)
+        expected_count = chunk_end - chunk_start
 
-        times = np.array(self._meta_times, dtype=np.float64)
-        starts = np.array(self._meta_starts, dtype=np.int32)
-        ends = np.array(self._meta_ends, dtype=np.int32)
-        t_assemble = _time.monotonic() - t0
-
-        t0 = _time.monotonic()
-        # blocks if the writer thread is still working on the previous chunk
-        self._write_queue.put((gt_data, times, starts, ends, n))
-        t_enqueue = _time.monotonic() - t0
-
-        # Grab a fresh buffer from the free-list (blocks until writer returns one)
-        self._gt_buf = self._free_bufs.get()
-        self._chunk_count = 0
-        self._meta_times.clear()
-        self._meta_starts.clear()
-        self._meta_ends.clear()
-
-        self._num_flushed += n
-        gt_mb = gt_data.nbytes / (1024 * 1024)
-        logger.debug(
-            "Enqueue: %d ancestors (%.1fMiB), assemble=%.3fs enqueue=%.3fs",
-            n,
-            gt_mb,
-            t_assemble,
-            t_enqueue,
+        item = _WorkItem(
+            ab=ab,
+            focal_sites=focal_sites,
+            anc_time=anc_time,
+            ancestor_index=ancestor_index,
+            expected_count=expected_count,
+            local_mask=local_mask,
+            final_positions=final_positions,
         )
+        t0 = _time.monotonic()
+        self._work_queue.put(item)
+        dt = _time.monotonic() - t0
+        with self._stats_lock:
+            self._stats.submit_put += dt
+            self._stats.submit_count += 1
 
-    def _writer_loop(self):
-        """Background thread: consume chunks from the queue and write to zarr."""
-        n_flushes = 0
-        t_gt_total = 0.0
-        t_meta_total = 0.0
+    def _worker_loop(self):
+        """Worker thread: pop work items, build ancestors, fill chunk buffers."""
+        local_array = None
+        # Thread-local accumulators — merged into shared stats at exit
+        t_make = 0.0
+        t_make_min = float("inf")
+        t_make_max = 0.0
+        t_buf_fill = 0.0
+        t_registry = 0.0
+        n_processed = 0
         try:
             while True:
-                item = self._write_queue.get()
+                item = self._work_queue.get()
                 if item is None:
                     break
-                gt_chunk, times, starts, ends, n = item
+
+                # Get or create thread-local output array
+                n_local = len(item.local_mask)
+                if local_array is None or len(local_array) != n_local:
+                    local_array = np.empty(n_local, dtype=np.int8)
 
                 t0 = _time.monotonic()
-                self._root["call_genotype"].append(gt_chunk, axis=1)
-                t_gt = _time.monotonic() - t0
+                start_local, end_local = item.ab.make_ancestor(
+                    item.focal_sites, local_array
+                )
+                dt = _time.monotonic() - t0
+                t_make += dt
+                if dt < t_make_min:
+                    t_make_min = dt
+                if dt > t_make_max:
+                    t_make_max = dt
+
+                fragment = local_array[start_local:end_local].copy()
+
+                # Map to global coordinates
+                start_site_idx = int(item.local_mask[start_local])
+                end_site_idx = int(item.local_mask[end_local - 1]) + 1
+                start_pos = int(item.final_positions[start_site_idx])
+                end_pos = int(item.final_positions[end_site_idx - 1])
+                focal_global = item.local_mask[item.focal_sites]
+                focal_pos = item.final_positions[focal_global]
+
+                # Get or create chunk buffer
+                chunk_idx = item.ancestor_index // self._chunk_size
+                slot = item.ancestor_index % self._chunk_size
 
                 t0 = _time.monotonic()
-                self._root["sample_time"].append(times)
-                self._root["sample_start_position"].append(starts)
-                self._root["sample_end_position"].append(ends)
-                t_meta = _time.monotonic() - t0
+                buf = self._registry.get_or_create(chunk_idx, item.expected_count)
+                t_registry += _time.monotonic() - t0
 
-                # Return the buffer to the free-list for reuse.
-                # For partial chunks, gt_chunk is a slice (view) of the
-                # underlying buffer — use .base to get the owning array.
-                buf = gt_chunk if gt_chunk.base is None else gt_chunk.base
-                buf[:] = np.int8(-1)
-                self._free_bufs.put(buf)
+                # Fill buffer slot
+                t0 = _time.monotonic()
+                buf.gt_buf[start_site_idx:end_site_idx, slot, 0] = fragment
+                buf.times[slot] = item.anc_time
+                buf.starts[slot] = start_pos
+                buf.ends[slot] = end_pos
+                buf.focal_positions[slot] = np.asarray(focal_pos, dtype=np.int32)
+                t_buf_fill += _time.monotonic() - t0
 
-                t_gt_total += t_gt
-                t_meta_total += t_meta
-                n_flushes += 1
+                n_processed += 1
+                if buf.record_fill():
+                    self._registry.remove(chunk_idx)
+                    self._write_queue.put(buf)
+        except Exception as e:
+            self._worker_error = e
+        finally:
+            with self._stats_lock:
+                self._stats.worker_make_ancestor += t_make
+                if t_make_min < self._stats.worker_make_min:
+                    self._stats.worker_make_min = t_make_min
+                if t_make_max > self._stats.worker_make_max:
+                    self._stats.worker_make_max = t_make_max
+                self._stats.worker_buf_fill += t_buf_fill
+                self._stats.worker_registry_wait += t_registry
+                self._stats.worker_count += n_processed
 
-                gt_mb = gt_chunk.nbytes / (1024 * 1024)
-                logger.debug(
-                    "Writer: flushed %d ancestors in %.3fs "
-                    "(gt=%.3fs meta=%.3fs, %.1fMiB)",
-                    n,
-                    t_gt + t_meta,
-                    t_gt,
-                    t_meta,
-                    gt_mb,
-                )
-            if n_flushes > 0:
-                logger.info(
-                    "Writer totals: %d flushes, gt=%.3fs meta=%.3fs",
-                    n_flushes,
-                    t_gt_total,
-                    t_meta_total,
-                )
+    def _writer_loop(self):
+        """Writer thread: pop completed chunks, write to zarr via .blocks[]."""
+        # Thread-local accumulators
+        t_zarr = 0.0
+        t_release = 0.0
+        n_chunks = 0
+        try:
+            while True:
+                buf = self._write_queue.get()
+                if buf is None:
+                    break
+
+                ci = buf.chunk_idx
+                n = buf.expected_count
+
+                # Write to zarr
+                t0 = _time.monotonic()
+                col_start = ci * self._chunk_size
+                col_end = col_start + n
+                self._root["call_genotype"][:, col_start:col_end, :] = buf.gt_buf[
+                    :, :n, :
+                ]
+                self._root["sample_time"][col_start:col_end] = buf.times[:n]
+                self._root["sample_start_position"][col_start:col_end] = buf.starts[:n]
+                self._root["sample_end_position"][col_start:col_end] = buf.ends[:n]
+                t_zarr += _time.monotonic() - t0
+
+                # Collect focal positions
+                focals = [buf.focal_positions[s] for s in range(n)]
+                with self._focal_lock:
+                    self._focal_by_chunk[ci] = focals
+
+                t0 = _time.monotonic()
+                self._pool.release(buf)
+                t_release += _time.monotonic() - t0
+
+                n_chunks += 1
         except Exception as e:
             self._write_error = e
-
-    # -----------------------------------------------------------------
+        finally:
+            with self._stats_lock:
+                self._stats.writer_zarr += t_zarr
+                self._stats.writer_release += t_release
+                self._stats.writer_chunks += n_chunks
 
     def finalize(self):
-        """Flush remaining buffer and write final arrays.  Returns the Group."""
-        if self._chunk_count > 0:
-            self._enqueue_flush()
-        # Signal the writer thread to exit and wait for it
-        self._write_queue.put(None)
-        self._writer_thread.join()
-        self._check_writer_error()
-        num_anc = self._num_flushed
-        focal_mb = sum(fp.nbytes for fp in self._focal_positions_acc) / (1024 * 1024)
-        logger.debug(
-            "Finalizing AncestorWriter: %d ancestors total; "
-            "focal_acc=%.1fMiB (%d entries) pending=%d",
-            num_anc,
-            focal_mb,
-            len(self._focal_positions_acc),
-            len(self._pending),
-        )
+        """
+        Drain all queues, join threads, return focal positions for
+        this interval's ancestors.
 
+        Returns list of (np.ndarray | None) — one per ancestor in this
+        interval.  None entries correspond to ancestors from a previous
+        interval's partial chunk reload.
+        """
+        # Send sentinel to each worker and join
         t0 = _time.monotonic()
+        for _ in self._worker_threads:
+            self._work_queue.put(None)
+        for t in self._worker_threads:
+            t.join()
+        self._stats.finalize_worker_join = _time.monotonic() - t0
 
-        # sample_id — trivial, write once
-        ckw = {}
-        if self._compressor is not None:
-            ckw["compressor"] = self._compressor
-        ids = np.array([f"a{i}" for i in range(num_anc)])
-        id_arr = self._root.create_array(
-            "sample_id",
-            shape=ids.shape,
-            dtype=_VLEN_STR,
+        self._check_errors()
+
+        # Seal any remaining active chunks (last chunk of interval)
+        t0 = _time.monotonic()
+        remaining = self._registry.pop_remaining()
+        for buf in remaining:
+            total_samples = self._base_index + self._n_ancestors
+            chunk_start = buf.chunk_idx * self._chunk_size
+            chunk_end = min(chunk_start + self._chunk_size, total_samples)
+            expected = chunk_end - chunk_start
+            if buf.seal(expected):
+                self._write_queue.put(buf)
+            else:
+                # Not yet complete — shouldn't happen if all workers
+                # finished, but handle gracefully
+                logger.warning(
+                    "Chunk %d not complete at finalize: filled=%d expected=%d",
+                    buf.chunk_idx,
+                    buf.filled_count,
+                    expected,
+                )
+                # Force it through
+                buf.expected_count = buf.filled_count
+                self._write_queue.put(buf)
+        self._stats.finalize_seal = _time.monotonic() - t0
+
+        # Send sentinel to each writer and join
+        t0 = _time.monotonic()
+        for _ in self._writer_threads_list:
+            self._write_queue.put(None)
+        for t in self._writer_threads_list:
+            t.join()
+        self._stats.finalize_writer_join = _time.monotonic() - t0
+
+        self._check_errors()
+
+        # Reassemble focal positions in order
+        focal_list = []
+        if self._focal_by_chunk:
+            min_ci = min(self._focal_by_chunk)
+            max_ci = max(self._focal_by_chunk)
+            for ci in range(min_ci, max_ci + 1):
+                if ci in self._focal_by_chunk:
+                    focal_list.extend(self._focal_by_chunk[ci])
+
+        # Strip out entries from previous interval's partial chunk
+        # (those are None placeholders) and entries beyond our range
+        result = []
+        for i, fp in enumerate(focal_list):
+            # Compute the global index of this entry
+            ci_start = (
+                min(self._focal_by_chunk) * self._chunk_size
+                if self._focal_by_chunk
+                else self._base_index
+            )
+            global_idx = ci_start + i
+            if (
+                global_idx >= self._base_index
+                and global_idx < self._base_index + self._n_ancestors
+                and fp is not None
+            ):
+                result.append(fp)
+
+        return result
+
+
+def setup_ancestor_zarr(
+    num_sites,
+    positions,
+    alleles,
+    anc_indices,
+    seq_intervals,
+    store=None,
+    samples_chunk_size=1000,
+    variants_chunk_size=1000,
+    contig_id="1",
+    contig_length=0,
+    compressor=None,
+):
+    """
+    Create and return a zarr Group with fixed (site-dimensioned) arrays
+    and empty ancestor-dimensioned arrays, ready for AncestorWriter.
+    """
+    root = open_group(store)
+    vchunks = variants_chunk_size
+    ckw = {}
+    if compressor is not None:
+        ckw["compressor"] = compressor
+
+    _arr(
+        root,
+        "variant_position",
+        positions,
+        ["variants"],
+        chunks=(vchunks,),
+        compressor=compressor,
+    )
+
+    out_alleles = _build_output_alleles(alleles, anc_indices, num_sites)
+    va = root.create_array(
+        "variant_allele",
+        shape=out_alleles.shape,
+        dtype=_VLEN_STR,
+        chunks=(vchunks, out_alleles.shape[1]),
+        **ckw,
+    )
+    va[:] = out_alleles
+    va.attrs["_ARRAY_DIMENSIONS"] = ["variants", "alleles"]
+
+    _arr(
+        root,
+        "sequence_intervals",
+        seq_intervals,
+        ["intervals", "coords"],
+        compressor=compressor,
+    )
+
+    _str_array(
+        root,
+        "contig_id",
+        np.array([contig_id]),
+        ["contigs"],
+        compressor=compressor,
+    )
+    _arr(
+        root,
+        "contig_length",
+        np.array([contig_length], dtype=np.int64),
+        ["contigs"],
+        compressor=compressor,
+    )
+    _arr(
+        root,
+        "variant_contig",
+        np.zeros(num_sites, dtype=np.int8),
+        ["variants"],
+        chunks=(vchunks,),
+        compressor=compressor,
+    )
+
+    # Ancestor-dimensioned arrays: start empty
+    gt = root.create_array(
+        "call_genotype",
+        shape=(num_sites, 0, 1),
+        dtype=np.int8,
+        chunks=(variants_chunk_size, samples_chunk_size, 1),
+        fill_value=np.int8(-1),
+        **ckw,
+    )
+    gt.attrs["_ARRAY_DIMENSIONS"] = ["variants", "samples", "ploidy"]
+
+    for name in ("sample_time", "sample_start_position", "sample_end_position"):
+        dt = np.float64 if name == "sample_time" else np.int32
+        a = root.create_array(
+            name,
+            shape=(0,),
+            dtype=dt,
+            chunks=(samples_chunk_size,),
             **ckw,
         )
-        id_arr[:] = ids
-        id_arr.attrs["_ARRAY_DIMENSIONS"] = ["samples"]
+        a.attrs["_ARRAY_DIMENSIONS"] = ["samples"]
 
-        # sample_focal_positions — variable-width, write once
-        if num_anc > 0:
-            max_focal = max(len(fp) for fp in self._focal_positions_acc)
-            max_focal = max(max_focal, 1)
-        else:
-            max_focal = 1
-        fp_data = np.full((num_anc, max_focal), -2, dtype=np.int32)
-        for j, fp in enumerate(self._focal_positions_acc):
-            fp_data[j, : len(fp)] = fp
-        _arr(
-            self._root,
-            "sample_focal_positions",
-            fp_data,
-            ["samples", "focal_alleles"],
-            compressor=self._compressor,
-        )
+    return root
 
-        elapsed = _time.monotonic() - t0
-        logger.debug("Finalize complete in %.3fs", elapsed)
-        return self._root
+
+def finalize_ancestor_zarr(root, focal_positions_acc, compressor=None):
+    """
+    Write sample_id and sample_focal_positions to a completed ancestor
+    zarr group.  Returns the Group.
+    """
+    num_anc = root["call_genotype"].shape[1]
+    ckw = {}
+    if compressor is not None:
+        ckw["compressor"] = compressor
+
+    ids = np.array([f"a{i}" for i in range(num_anc)])
+    id_arr = root.create_array(
+        "sample_id",
+        shape=ids.shape,
+        dtype=_VLEN_STR,
+        **ckw,
+    )
+    id_arr[:] = ids
+    id_arr.attrs["_ARRAY_DIMENSIONS"] = ["samples"]
+
+    if num_anc > 0 and len(focal_positions_acc) > 0:
+        max_focal = max(len(fp) for fp in focal_positions_acc)
+        max_focal = max(max_focal, 1)
+    else:
+        max_focal = 1
+    fp_data = np.full((num_anc, max_focal), -2, dtype=np.int32)
+    for j, fp in enumerate(focal_positions_acc):
+        fp_data[j, : len(fp)] = fp
+    _arr(
+        root,
+        "sample_focal_positions",
+        fp_data,
+        ["samples", "focal_alleles"],
+        compressor=compressor,
+    )
+
+    return root
 
 
 # ---------------------------------------------------------------------------

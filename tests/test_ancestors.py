@@ -31,14 +31,15 @@ import zarr
 from helpers import make_sample_vcz
 
 from tsinfer.ancestors import (
-    Ancestor,
     compute_inference_sites,
     compute_sequence_intervals,
     infer_ancestors,
 )
 from tsinfer.config import AncestorsConfig, AncestralState, Source
 from tsinfer.vcz import (
-    AncestorWriter,
+    ActiveChunkRegistry,
+    ChunkBuffer,
+    ChunkBufferPool,
     iter_genotypes,
     open_group,
     write_empty_ancestor_vcz,
@@ -1084,166 +1085,150 @@ class TestAncestorWriterChunking:
                 assert gt_out[pos_to_idx[int(fp)], j] == 1
 
 
-class TestAncestorWriterIndexed:
-    """Test AncestorWriter's index parameter for out-of-order insertion."""
+class TestChunkBuffer:
+    """Test ChunkBuffer record_fill and seal logic."""
 
-    @staticmethod
-    def _make_writer(num_sites, samples_chunk_size=1000):
-        positions = np.arange(num_sites, dtype=np.int32) * 100
-        alleles = np.array([["A", "T"]] * num_sites)
-        anc_indices = np.zeros(num_sites, dtype=np.int8)
-        seq_intervals = np.array([[0, num_sites * 100]], dtype=np.int32)
-        return AncestorWriter(
-            num_sites,
-            positions,
-            alleles,
-            anc_indices,
-            seq_intervals,
-            store=None,
-            samples_chunk_size=samples_chunk_size,
-        )
+    def test_record_fill_not_complete_until_expected(self):
+        buf = ChunkBuffer(num_sites=3, chunk_size=4)
+        buf.expected_count = 3
+        assert not buf.record_fill()
+        assert not buf.record_fill()
+        assert buf.record_fill()  # 3rd fill → complete
 
-    @staticmethod
-    def _make_ancestor(index, num_sites, focal_idx, start_pos=0, end_pos=400):
-        """Create an Ancestor with derived allele at focal_idx, rest missing."""
-        # The fragment covers just the focal site (single-site fragment).
-        return Ancestor(
-            index=index,
-            time=float(index),
-            haplotype=np.array([1], dtype=np.int8),
-            focal_positions=np.array([focal_idx * 100], dtype=np.int32),
-            start_site_idx=focal_idx,
-            end_site_idx=focal_idx + 1,
-            start_position=start_pos,
-            end_position=end_pos,
-        )
+    def test_seal_sets_expected_count(self):
+        buf = ChunkBuffer(num_sites=3, chunk_size=4)
+        buf.filled_count = 2
+        assert not buf.seal(3)  # 2 != 3
+        buf.filled_count = 3
+        buf2 = ChunkBuffer(num_sites=3, chunk_size=4)
+        buf2.filled_count = 3
+        assert buf2.seal(3)  # 3 == 3
 
-    @staticmethod
-    def _compare_groups(a, b):
-        for name in (
-            "call_genotype",
-            "sample_time",
-            "sample_start_position",
-            "sample_end_position",
-            "sample_focal_positions",
-        ):
-            np.testing.assert_array_equal(
-                np.asarray(a[name][:]),
-                np.asarray(b[name][:]),
-                err_msg=f"Mismatch in {name}",
-            )
+    def test_reset_clears_state(self):
+        buf = ChunkBuffer(num_sites=2, chunk_size=3)
+        buf.chunk_idx = 5
+        buf.filled_count = 2
+        buf.expected_count = 3
+        buf.gt_buf[0, 0, 0] = 1
+        buf.focal_positions[0] = np.array([100], dtype=np.int32)
+        buf.reset(3)
+        assert buf.chunk_idx == -1
+        assert buf.filled_count == 0
+        assert buf.expected_count == -1
+        assert np.all(buf.gt_buf == -1)
+        assert all(fp is None for fp in buf.focal_positions)
 
-    def test_reversed_order(self):
-        """Ancestors inserted in reverse order produce same output as sequential."""
-        ns = 5
-        n_anc = 4
-        w_seq = self._make_writer(ns)
-        w_rev = self._make_writer(ns)
-        ancestors = [self._make_ancestor(i, ns, i % ns) for i in range(n_anc)]
-        for anc in ancestors:
-            w_seq.add_ancestor(anc)
-        for anc in reversed(ancestors):
-            w_rev.add_ancestor(anc)
-        self._compare_groups(w_seq.finalize(), w_rev.finalize())
 
-    def test_interleaved_order(self):
-        """Ancestors inserted in a shuffled order produce correct output."""
-        ns = 5
-        n_anc = 6
-        order = [3, 0, 5, 1, 4, 2]
-        w_seq = self._make_writer(ns)
-        w_shuf = self._make_writer(ns)
-        ancestors = [self._make_ancestor(i, ns, i % ns) for i in range(n_anc)]
-        for anc in ancestors:
-            w_seq.add_ancestor(anc)
-        for i in order:
-            w_shuf.add_ancestor(ancestors[i])
-        self._compare_groups(w_seq.finalize(), w_shuf.finalize())
+class TestChunkBufferPool:
+    """Test ChunkBufferPool acquire/release."""
 
-    @pytest.mark.parametrize("chunk_size", [1, 2, 3, 5])
-    def test_chunk_boundary_crossing(self, chunk_size):
-        """Out-of-order insertion with various chunk sizes that don't
-        evenly divide the ancestor count."""
-        ns = 4
-        n_anc = 7  # deliberately not divisible by most chunk sizes
-        order = [6, 2, 0, 4, 1, 5, 3]
-        w_seq = self._make_writer(ns, samples_chunk_size=chunk_size)
-        w_ooo = self._make_writer(ns, samples_chunk_size=chunk_size)
-        ancestors = [
-            self._make_ancestor(i, ns, i % ns, end_pos=300) for i in range(n_anc)
-        ]
-        for anc in ancestors:
-            w_seq.add_ancestor(anc)
-        for i in order:
-            w_ooo.add_ancestor(ancestors[i])
-        self._compare_groups(w_seq.finalize(), w_ooo.finalize())
+    def test_acquire_release_cycle(self):
+        pool = ChunkBufferPool(num_buffers=2, num_sites=3, chunk_size=4)
+        b1 = pool.acquire(chunk_idx=0, expected_count=4)
+        assert b1.chunk_idx == 0
+        b2 = pool.acquire(chunk_idx=1, expected_count=4)
+        assert b2.chunk_idx == 1
+        # Pool is now empty; release one and re-acquire
+        pool.release(b1)
+        b3 = pool.acquire(chunk_idx=2, expected_count=3)
+        assert b3.chunk_idx == 2
+        assert b3.filled_count == 0  # reset
+        pool.release(b2)
+        pool.release(b3)
+
+    def test_pool_resets_on_release(self):
+        pool = ChunkBufferPool(num_buffers=1, num_sites=2, chunk_size=3)
+        buf = pool.acquire(chunk_idx=0, expected_count=3)
+        buf.gt_buf[0, 0, 0] = 1
+        buf.filled_count = 2
+        pool.release(buf)
+        buf2 = pool.acquire(chunk_idx=1, expected_count=2)
+        assert buf2.filled_count == 0
+        assert np.all(buf2.gt_buf == -1)
+        pool.release(buf2)
+
+
+class TestActiveChunkRegistry:
+    """Test ActiveChunkRegistry get_or_create and remove."""
+
+    def test_get_or_create_returns_same_buffer(self):
+        pool = ChunkBufferPool(num_buffers=4, num_sites=3, chunk_size=4)
+        reg = ActiveChunkRegistry(pool)
+        b1 = reg.get_or_create(0, 4)
+        b2 = reg.get_or_create(0, 4)
+        assert b1 is b2
+
+    def test_remove_pops_buffer(self):
+        pool = ChunkBufferPool(num_buffers=4, num_sites=3, chunk_size=4)
+        reg = ActiveChunkRegistry(pool)
+        b1 = reg.get_or_create(0, 4)
+        removed = reg.remove(0)
+        assert removed is b1
+        # Getting again should create a new buffer
+        b3 = reg.get_or_create(0, 4)
+        assert b3 is not b1
+
+    def test_pop_remaining(self):
+        pool = ChunkBufferPool(num_buffers=4, num_sites=3, chunk_size=4)
+        reg = ActiveChunkRegistry(pool)
+        reg.get_or_create(0, 4)
+        reg.get_or_create(1, 4)
+        remaining = reg.pop_remaining()
+        assert len(remaining) == 2
+
+
+class TestDeadlockRegression:
+    """Regression test: small chunk sizes must not deadlock."""
 
     @pytest.mark.parametrize("chunk_size", [1, 2, 3])
-    def test_multi_interval_simulation(self, chunk_size):
-        """Simulate two intervals with non-aligned ancestor counts,
-        inserting out of order within each interval but sequentially
-        across intervals (as the real code does)."""
-        ns = 4
-        # Interval 0: 3 ancestors (indices 0, 1, 2)
-        # Interval 1: 5 ancestors (indices 3, 4, 5, 6, 7)
-        # Total: 8 ancestors, chunk boundary at various points
-        n_anc = 8
-        interval_0_order = [2, 0, 1]
-        interval_1_order = [5, 3, 7, 4, 6]
-        w_seq = self._make_writer(ns, samples_chunk_size=chunk_size)
-        w_ooo = self._make_writer(ns, samples_chunk_size=chunk_size)
-        ancestors = [
-            self._make_ancestor(i, ns, i % ns, end_pos=300) for i in range(n_anc)
-        ]
-        for anc in ancestors:
-            w_seq.add_ancestor(anc)
-        for i in interval_0_order:
-            w_ooo.add_ancestor(ancestors[i])
-        for i in interval_1_order:
-            w_ooo.add_ancestor(ancestors[i])
-        self._compare_groups(w_seq.finalize(), w_ooo.finalize())
+    @pytest.mark.parametrize("num_threads", [0, 2])
+    def test_small_chunk_no_deadlock(self, chunk_size, num_threads):
+        """Small chunk sizes with multiple intervals must complete."""
+        gt = _haploid_store(
+            [[0, 1], [0, 1], [0, 1], [0, 1]],
+            positions=[100, 200, 800_000, 900_000],
+            alleles=[["A", "T"]] * 4,
+            anc_states=["A", "A", "A", "A"],
+            seq_len=1_000_000,
+        )
+        anc = infer_ancestors(
+            _src(gt),
+            _cfg(samples_chunk_size=chunk_size, max_gap_length=500_000),
+            num_threads=num_threads,
+        )
+        assert anc["call_genotype"].shape[1] >= 1
 
-    def test_single_ancestor(self):
-        """Edge case: one ancestor with index=0."""
-        ns = 3
-        w = self._make_writer(ns)
-        anc = self._make_ancestor(0, ns, 0, end_pos=200)
-        w.add_ancestor(anc)
-        result = w.finalize()
-        assert result["call_genotype"].shape[1] == 1
+    @pytest.mark.parametrize("chunk_size", [1, 2])
+    def test_partial_chunk_reload(self, chunk_size):
+        """Multi-interval with small chunk sizes correctly handles
+        partial chunks at interval boundaries."""
+        # Two intervals, each producing ancestors.  The boundary between
+        # intervals may land in the middle of a chunk.
+        gt = _haploid_store(
+            [[0, 0, 1, 1], [0, 1, 0, 1], [0, 1, 0, 1], [0, 0, 1, 1]],
+            positions=[100, 200, 800_000, 900_000],
+            alleles=[["A", "T"]] * 4,
+            anc_states=["A", "A", "A", "A"],
+            seq_len=1_000_000,
+        )
+        anc = infer_ancestors(
+            _src(gt),
+            _cfg(samples_chunk_size=chunk_size, max_gap_length=500_000),
+        )
+        # Verify focal sites carry derived allele
+        gt_out = _anc_genotypes(anc)
+        focal_positions = np.asarray(anc["sample_focal_positions"][:])
+        anc_positions = np.asarray(anc["variant_position"][:])
+        pos_to_idx = {int(p): i for i, p in enumerate(anc_positions.tolist())}
 
-    def test_chunk_size_one_many_ancestors(self):
-        """chunk_size=1 forces a flush after every ancestor — stress test
-        that indices work when every ancestor is its own chunk."""
-        ns = 3
-        n_anc = 10
-        order = [7, 2, 9, 0, 5, 3, 8, 1, 6, 4]
-        w_seq = self._make_writer(ns, samples_chunk_size=1)
-        w_ooo = self._make_writer(ns, samples_chunk_size=1)
-        ancestors = [
-            self._make_ancestor(i, ns, i % ns, end_pos=200) for i in range(n_anc)
-        ]
-        for anc in ancestors:
-            w_seq.add_ancestor(anc)
-        for i in order:
-            w_ooo.add_ancestor(ancestors[i])
-        self._compare_groups(w_seq.finalize(), w_ooo.finalize())
-
-    def test_pending_not_drained_until_contiguous(self):
-        """If only index 1 is inserted (skipping 0), nothing should be
-        flushed until index 0 arrives."""
-        ns = 3
-        w = self._make_writer(ns, samples_chunk_size=1)
-        anc1 = self._make_ancestor(1, ns, 0, end_pos=200)
-        # Insert index 1 first — should not flush
-        w.add_ancestor(anc1)
-        assert w._num_flushed == 0
-        assert w._chunk_count == 0
-        assert len(w._pending) == 1
-        # Now insert index 0 — both should drain and flush
-        anc0 = self._make_ancestor(0, ns, 0, end_pos=200)
-        w.add_ancestor(anc0)
-        assert len(w._pending) == 0
+        for j in range(gt_out.shape[1]):
+            for fp in focal_positions[j]:
+                if int(fp) == -2:
+                    break
+                site_idx = pos_to_idx[int(fp)]
+                assert gt_out[site_idx, j] == 1, (
+                    f"Ancestor {j} should carry derived at focal site {fp}"
+                )
 
 
 class TestPerIntervalBuilder:
