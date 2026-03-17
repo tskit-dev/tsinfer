@@ -283,8 +283,10 @@ def _call_make_ancestor(ab, focal_sites_list, a):
     The output array *a* and the focal_sites list are prepared by the
     caller on the main thread to minimise GIL-held work here.
     """
+    t0 = time.monotonic()
     start_local, end_local = ab.make_ancestor(focal_sites_list, a)
-    return start_local, end_local
+    dt = time.monotonic() - t0
+    return start_local, end_local, dt
 
 
 def _finish_ancestor(
@@ -467,7 +469,7 @@ def _process_interval(
     # All Python post-processing (_finish_ancestor) runs on the main
     # thread when draining, to avoid GIL contention.
     max_queued = max(8 * num_threads, 1)
-    # Map future → (anc_time, ancestor_index) for main-thread finishing
+    # Map future → (anc_time, ancestor_index, ...) for main-thread finishing
     future_meta = {}
     n_ancestors = len(ancestor_descriptors)
     n_consumed = 0
@@ -478,15 +480,38 @@ def _process_interval(
         disable=not progress,
     )
 
+    # Timing accumulators for diagnosing throughput bottlenecks.
+    # All times in seconds.
+    t_wait = 0.0  # blocked in concurrent.futures.wait()
+    t_finish = 0.0  # _finish_ancestor post-processing
+    t_write = 0.0  # writer.add_ancestor
+    t_submit = 0.0  # preparing + submitting futures
+    t_make_total = 0.0  # sum of per-call make_ancestor wall times
+    t_make_min = float("inf")
+    t_make_max = 0.0
+
     def _drain_completed(future_meta, pbar=pbar):
-        nonlocal n_consumed
+        nonlocal n_consumed, t_wait, t_finish, t_write, t_make_total
+        nonlocal t_make_min, t_make_max
+
+        t0 = time.monotonic()
         done, _pending = concurrent.futures.wait(
             future_meta.keys(),
             return_when=concurrent.futures.FIRST_COMPLETED,
         )
+        t_wait += time.monotonic() - t0
+
         for future in done:
-            start_local, end_local = future.result()
+            start_local, end_local, dt_make = future.result()
+            t_make_total += dt_make
+            if dt_make < t_make_min:
+                t_make_min = dt_make
+            if dt_make > t_make_max:
+                t_make_max = dt_make
+
             anc_time, anc_idx, a, focal_arr = future_meta.pop(future)
+
+            t0 = time.monotonic()
             ancestor = _finish_ancestor(
                 a,
                 start_local,
@@ -497,13 +522,19 @@ def _process_interval(
                 final_positions,
                 anc_idx,
             )
+            t_finish += time.monotonic() - t0
+
+            t0 = time.monotonic()
             writer.add_ancestor(ancestor)
+            t_write += time.monotonic() - t0
+
             n_consumed += 1
             pbar.update(1)
 
     for anc_time, focal_sites in ancestor_descriptors:
         if len(future_meta) >= max_queued:
             _drain_completed(future_meta)
+        t0 = time.monotonic()
         focal_arr = np.asarray(focal_sites, dtype=np.int32)
         a = np.full(n_ab_sites, np.int8(-1), dtype=np.int8)
         future = executor.submit(
@@ -513,10 +544,29 @@ def _process_interval(
             a,
         )
         future_meta[future] = (anc_time, ancestor_index, a, focal_arr)
+        t_submit += time.monotonic() - t0
         ancestor_index += 1
 
     while future_meta:
         _drain_completed(future_meta)
+
+    if n_consumed > 0:
+        t_make_mean = t_make_total / n_consumed
+        logger.info(
+            "Interval %d timing: %d ancestors, "
+            "wait=%.3fs finish=%.3fs write=%.3fs submit=%.3fs | "
+            "make_ancestor total=%.3fs mean=%.4fs min=%.4fs max=%.4fs",
+            i_idx,
+            n_consumed,
+            t_wait,
+            t_finish,
+            t_write,
+            t_submit,
+            t_make_total,
+            t_make_mean,
+            t_make_min,
+            t_make_max,
+        )
 
     pbar.close()
     return ancestor_index

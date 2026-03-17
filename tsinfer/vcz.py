@@ -42,6 +42,8 @@ Low-level utilities for reading and writing VCZ (VCF Zarr) stores.
 from __future__ import annotations
 
 import logging
+import queue
+import threading
 import time as _time
 from dataclasses import dataclass
 from pathlib import Path
@@ -498,6 +500,15 @@ class AncestorWriter:
             )
             a.attrs["_ARRAY_DIMENSIONS"] = ["samples"]
 
+        # --- Background writer thread ---
+        # Chunks are queued from the main thread and written to zarr
+        # asynchronously so that the main thread can continue submitting
+        # ancestor-building work without blocking on I/O.
+        self._write_queue = queue.Queue(maxsize=2)
+        self._write_error = None
+        self._writer_thread = threading.Thread(target=self._writer_loop, daemon=True)
+        self._writer_thread.start()
+
     # -----------------------------------------------------------------
 
     def add_ancestor(self, ancestor):
@@ -508,8 +519,8 @@ class AncestorWriter:
         They are buffered by index and drained into the write buffer
         in sequential order.
         """
+        self._check_writer_error()
         self._pending[ancestor.index] = ancestor
-        drained = 0
         while self._next_index in self._pending:
             anc = self._pending.pop(self._next_index)
             self._buffer.append(anc)
@@ -517,18 +528,18 @@ class AncestorWriter:
                 np.asarray(anc.focal_positions, dtype=np.int32)
             )
             self._next_index += 1
-            drained += 1
             if len(self._buffer) >= self._chunk_size:
-                self._flush()
+                self._enqueue_flush()
 
     # -----------------------------------------------------------------
 
-    def _flush(self):
-        if not self._buffer:
-            return
-        assert len(self._buffer) <= self._chunk_size
+    def _check_writer_error(self):
+        """Re-raise any exception from the writer thread."""
+        if self._write_error is not None:
+            raise self._write_error
 
-        t0 = _time.monotonic()
+    def _enqueue_flush(self):
+        """Assemble chunk arrays from the buffer and enqueue for writing."""
         n = len(self._buffer)
         ns = self._num_sites
 
@@ -543,32 +554,47 @@ class AncestorWriter:
             starts[j] = anc.start_position
             ends[j] = anc.end_position
 
-        self._root["call_genotype"].append(gt_chunk, axis=1)
-        self._root["sample_time"].append(times)
-        self._root["sample_start_position"].append(starts)
-        self._root["sample_end_position"].append(ends)
-
-        self._num_flushed += n
         self._buffer.clear()
-        elapsed = _time.monotonic() - t0
-        gt_chunk_mb = gt_chunk.nbytes / (1024 * 1024)
-        focal_mb = sum(fp.nbytes for fp in self._focal_positions_acc) / (1024 * 1024)
-        logger.debug(
-            "Flushed chunk: %d ancestors (%d total) in %.3fs; "
-            "gt_chunk=%.1fMiB focal_acc=%.1fMiB (%d entries)",
-            n,
-            self._num_flushed,
-            elapsed,
-            gt_chunk_mb,
-            focal_mb,
-            len(self._focal_positions_acc),
-        )
+        # blocks if the writer thread is still working on the previous chunk
+        self._write_queue.put((gt_chunk, times, starts, ends, n))
+        self._num_flushed += n
+
+    def _writer_loop(self):
+        """Background thread: consume chunks from the queue and write to zarr."""
+        try:
+            while True:
+                item = self._write_queue.get()
+                if item is None:
+                    break
+                gt_chunk, times, starts, ends, n = item
+                t0 = _time.monotonic()
+
+                self._root["call_genotype"].append(gt_chunk, axis=1)
+                self._root["sample_time"].append(times)
+                self._root["sample_start_position"].append(starts)
+                self._root["sample_end_position"].append(ends)
+
+                elapsed = _time.monotonic() - t0
+                gt_chunk_mb = gt_chunk.nbytes / (1024 * 1024)
+                logger.debug(
+                    "Writer: flushed %d ancestors in %.3fs (%.1fMiB)",
+                    n,
+                    elapsed,
+                    gt_chunk_mb,
+                )
+        except Exception as e:
+            self._write_error = e
 
     # -----------------------------------------------------------------
 
     def finalize(self):
         """Flush remaining buffer and write final arrays.  Returns the Group."""
-        self._flush()
+        if self._buffer:
+            self._enqueue_flush()
+        # Signal the writer thread to exit and wait for it
+        self._write_queue.put(None)
+        self._writer_thread.join()
+        self._check_writer_error()
         num_anc = self._num_flushed
         focal_mb = sum(fp.nbytes for fp in self._focal_positions_acc) / (1024 * 1024)
         logger.debug(
