@@ -1238,7 +1238,7 @@ class TestAncestorWriterIndexed:
         # Insert index 1 first — should not flush
         w.add_ancestor(anc1)
         assert w._num_flushed == 0
-        assert len(w._buffer) == 0
+        assert w._chunk_count == 0
         assert len(w._pending) == 1
         # Now insert index 0 — both should drain and flush
         anc0 = self._make_ancestor(0, ns, 0, end_pos=200)
