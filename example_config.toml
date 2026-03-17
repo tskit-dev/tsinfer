@@ -87,6 +87,10 @@ genotype_encoding = "eight_bit"
 # samples_chunk_size  = 1000         # default: 1000 (ancestor dimension)
 # variants_chunk_size = 1000         # default: 1000 (site dimension)
 
+# Zarr compression for the output ancestor store.  Uses Blosc with bitshuffle.
+# compressor = "zstd"                # default: "zstd" (blosc cname)
+# compression_level = 7              # default: 7 (0-9)
+
 
 # ============================================================================
 # Match
