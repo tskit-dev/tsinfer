@@ -561,6 +561,7 @@ class PipelineStats:
     worker_count: int = 0  # total ancestors processed by workers
 
     # Writer-side (summed across all writer threads)
+    writer_scatter: float = 0.0  # transpose + scatter into intermediate array
     writer_zarr: float = 0.0  # time writing to zarr
     writer_release: float = 0.0  # pool.release (reset + enqueue)
     writer_chunks: int = 0  # chunks flushed
@@ -822,11 +823,15 @@ class AncestorWriter:
     def _writer_loop(self):
         """Writer thread: pop completed chunks, transpose + scatter, write to zarr."""
         # Thread-local accumulators
+        t_scatter = 0.0
         t_zarr = 0.0
         t_release = 0.0
         n_chunks = 0
         local_mask = self._local_mask
         num_sites = self._num_sites
+        chunk_size = self._chunk_size
+        # Pre-allocate intermediate array for full chunks (reused across iterations)
+        intermediate = np.empty((num_sites, chunk_size, 1), dtype=np.int8)
         try:
             while True:
                 buf = self._write_queue.get()
@@ -837,25 +842,34 @@ class AncestorWriter:
                 n = buf.expected_count
                 pc = buf._partial_count
 
-                # Build intermediate array in global coordinates
+                # Use pre-allocated buffer for full chunks, slice for partial
+                if n == chunk_size:
+                    out = intermediate
+                else:
+                    out = intermediate[:, :n, :]
+                out[:] = np.int8(-1)
+
+                # Scatter into intermediate array
                 t0 = _time.monotonic()
-                intermediate = np.full((num_sites, n, 1), np.int8(-1), dtype=np.int8)
 
                 # Copy previous interval's data (already in global coords)
                 if buf._partial_gt is not None and pc > 0:
-                    intermediate[:, :pc, :] = buf._partial_gt
+                    out[:, :pc, :] = buf._partial_gt
 
                 # Scatter new ancestors from haplotype_buf via local_mask
                 # haplotype_buf[pc:n, :] has shape (n-pc, n_local)
                 # Transposed: (n_local, n-pc)
-                # intermediate[local_mask, pc:n, 0] has shape (n_local, n-pc)
+                # out[local_mask, pc:n, 0] has shape (n_local, n-pc)
                 if n > pc:
-                    intermediate[local_mask, pc:n, 0] = buf.haplotype_buf[pc:n, :].T
+                    out[local_mask, pc:n, 0] = buf.haplotype_buf[pc:n, :].T
+                dt_scatter = _time.monotonic() - t0
+                t_scatter += dt_scatter
 
                 # Write to zarr
-                col_start = ci * self._chunk_size
+                t0 = _time.monotonic()
+                col_start = ci * chunk_size
                 col_end = col_start + n
-                self._root["call_genotype"][:, col_start:col_end, :] = intermediate
+                self._root["call_genotype"][:, col_start:col_end, :] = out
                 self._root["sample_time"][col_start:col_end] = buf.times[:n]
                 self._root["sample_start_position"][col_start:col_end] = buf.starts[:n]
                 self._root["sample_end_position"][col_start:col_end] = buf.ends[:n]
@@ -873,14 +887,15 @@ class AncestorWriter:
                 t_release += dt_release
 
                 n_chunks += 1
-                gt_mb = intermediate.nbytes / (1024 * 1024)
+                gt_mb = num_sites * n / (1024 * 1024)
                 logger.debug(
                     "Writer: flushed chunk %d (%d ancestors, %d partial, %.1fMiB) "
-                    "zarr=%.3fs release=%.3fs",
+                    "scatter=%.3fs zarr=%.3fs release=%.3fs",
                     ci,
                     n,
                     pc,
                     gt_mb,
+                    dt_scatter,
                     dt_zarr,
                     dt_release,
                 )
@@ -889,12 +904,15 @@ class AncestorWriter:
         finally:
             if n_chunks > 0:
                 logger.debug(
-                    "Writer thread done: %d chunks, zarr=%.3fs release=%.3fs",
+                    "Writer thread done: %d chunks, scatter=%.3fs zarr=%.3fs "
+                    "release=%.3fs",
                     n_chunks,
+                    t_scatter,
                     t_zarr,
                     t_release,
                 )
             with self._stats_lock:
+                self._stats.writer_scatter += t_scatter
                 self._stats.writer_zarr += t_zarr
                 self._stats.writer_release += t_release
                 self._stats.writer_chunks += n_chunks
