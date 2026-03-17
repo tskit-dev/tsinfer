@@ -420,6 +420,8 @@ def _process_interval(
         num_sites=num_sites,
         chunk_size=cfg.samples_chunk_size,
         n_ancestors=n_ancestors,
+        local_mask=local_mask,
+        final_positions=final_positions,
         num_threads=num_threads,
         write_threads=write_threads,
         compressor=compressor,
@@ -440,8 +442,6 @@ def _process_interval(
             focal_sites,
             anc_time,
             local_index,
-            local_mask,
-            final_positions,
         )
         pbar.update(1)
 

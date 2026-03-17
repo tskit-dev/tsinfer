@@ -407,39 +407,48 @@ class _WorkItem:
     anc_time: float
     ancestor_index: int  # global index across all intervals
     expected_count: int  # expected ancestors in this chunk
-    local_mask: np.ndarray
-    final_positions: np.ndarray
 
 
 class ChunkBuffer:
     """
     Thread-safe buffer for one sample-chunk of ancestor data.
 
-    Each worker writes to a distinct ``slot`` (column), so data arrays have
+    Haplotypes are stored row-wise: ``haplotype_buf[slot]`` is the full
+    local-coordinate haplotype array for one ancestor.  This gives optimal
+    cache locality during the worker fill (a single contiguous row copy)
+    at the cost of a transpose in the writer thread before the zarr write.
+
+    Each worker writes to a distinct ``slot`` (row), so data arrays have
     no races.  Only ``filled_count`` increment + completion check needs a lock.
     """
 
     __slots__ = (
         "chunk_idx",
-        "gt_buf",
+        "haplotype_buf",
         "times",
         "starts",
         "ends",
         "focal_positions",
         "expected_count",
         "filled_count",
+        "_partial_gt",
+        "_partial_count",
         "_lock",
     )
 
-    def __init__(self, num_sites: int, chunk_size: int):
+    def __init__(self, n_local: int, chunk_size: int):
         self.chunk_idx: int = -1
-        self.gt_buf = np.full((num_sites, chunk_size, 1), np.int8(-1), dtype=np.int8)
+        # Row-major: each slot is a contiguous row of n_local sites
+        self.haplotype_buf = np.full((chunk_size, n_local), np.int8(-1), dtype=np.int8)
         self.times = np.zeros(chunk_size, dtype=np.float64)
         self.starts = np.zeros(chunk_size, dtype=np.int32)
         self.ends = np.zeros(chunk_size, dtype=np.int32)
         self.focal_positions: list = [None] * chunk_size
         self.expected_count: int = -1  # -1 = unknown
         self.filled_count: int = 0
+        # Only set for partial-chunk reload from previous interval
+        self._partial_gt: np.ndarray | None = None  # (num_sites, partial_count, 1)
+        self._partial_count: int = 0
         self._lock = threading.Lock()
 
     def record_fill(self) -> bool:
@@ -457,23 +466,25 @@ class ChunkBuffer:
     def reset(self, chunk_size: int):
         """Reset buffer for reuse."""
         self.chunk_idx = -1
-        self.gt_buf[:] = np.int8(-1)
+        self.haplotype_buf[:] = np.int8(-1)
         self.times[:] = 0
         self.starts[:] = 0
         self.ends[:] = 0
         self.focal_positions = [None] * chunk_size
         self.expected_count = -1
         self.filled_count = 0
+        self._partial_gt = None
+        self._partial_count = 0
 
 
 class ChunkBufferPool:
     """Pool of pre-allocated ChunkBuffer objects."""
 
-    def __init__(self, num_buffers: int, num_sites: int, chunk_size: int):
+    def __init__(self, num_buffers: int, n_local: int, chunk_size: int):
         self._chunk_size = chunk_size
         self._free: queue.Queue = queue.Queue()
         for _ in range(num_buffers):
-            self._free.put(ChunkBuffer(num_sites, chunk_size))
+            self._free.put(ChunkBuffer(n_local, chunk_size))
 
     def acquire(self, chunk_idx: int, expected_count: int) -> ChunkBuffer:
         """Get a buffer from the pool (blocks if empty)."""
@@ -600,6 +611,8 @@ class AncestorWriter:
         num_sites,
         chunk_size,
         n_ancestors,
+        local_mask,
+        final_positions,
         num_threads=0,
         write_threads=4,
         compressor=None,
@@ -608,6 +621,9 @@ class AncestorWriter:
         self._num_sites = num_sites
         self._chunk_size = chunk_size
         self._n_ancestors = n_ancestors
+        self._local_mask = local_mask  # maps local site idx → global site idx
+        self._final_positions = final_positions  # global site positions
+        self._n_local = len(local_mask)
         self._num_threads = num_threads
         self._write_threads = max(1, write_threads)
         self._compressor = compressor
@@ -634,7 +650,7 @@ class AncestorWriter:
         max_active_chunks = (max_queued + max(num_threads, 1)) // chunk_size + 1
         num_buffers = max(4, max_active_chunks + self._write_threads + 3)
 
-        self._pool = ChunkBufferPool(num_buffers, num_sites, chunk_size)
+        self._pool = ChunkBufferPool(num_buffers, self._n_local, chunk_size)
         self._registry = ActiveChunkRegistry(self._pool)
 
         # Load partial chunk from previous interval if needed
@@ -643,9 +659,11 @@ class AncestorWriter:
             buf = self._pool.acquire(partial_ci, expected_count=-1)
             start = partial_ci * chunk_size
             end = existing_samples
-            buf.gt_buf[:, :partial_count, :] = np.asarray(
+            # Store previous interval's data in global coordinates
+            # (can't use haplotype_buf — different local_mask)
+            buf._partial_gt = np.asarray(
                 self._root["call_genotype"][:, start:end, :]
-            )
+            ).copy()
             buf.times[:partial_count] = np.asarray(self._root["sample_time"][start:end])
             buf.starts[:partial_count] = np.asarray(
                 self._root["sample_start_position"][start:end]
@@ -654,6 +672,7 @@ class AncestorWriter:
                 self._root["sample_end_position"][start:end]
             )
             buf.focal_positions[:partial_count] = [None] * partial_count
+            buf._partial_count = partial_count
             buf.filled_count = partial_count
             self._registry._active[partial_ci] = buf
 
@@ -699,8 +718,6 @@ class AncestorWriter:
         focal_sites,
         anc_time,
         ancestor_local_index,
-        local_mask,
-        final_positions,
     ):
         """Submit a work item for ancestor building."""
         self._check_errors()
@@ -718,8 +735,6 @@ class AncestorWriter:
             anc_time=anc_time,
             ancestor_index=ancestor_index,
             expected_count=expected_count,
-            local_mask=local_mask,
-            final_positions=final_positions,
         )
         t0 = _time.monotonic()
         self._work_queue.put(item)
@@ -738,6 +753,9 @@ class AncestorWriter:
         t_buf_fill = 0.0
         t_registry = 0.0
         n_processed = 0
+        local_mask = self._local_mask
+        final_positions = self._final_positions
+        n_local = self._n_local
         try:
             while True:
                 item = self._work_queue.get()
@@ -745,7 +763,6 @@ class AncestorWriter:
                     break
 
                 # Get or create thread-local output array
-                n_local = len(item.local_mask)
                 if local_array is None or len(local_array) != n_local:
                     local_array = np.empty(n_local, dtype=np.int8)
 
@@ -760,15 +777,13 @@ class AncestorWriter:
                 if dt > t_make_max:
                     t_make_max = dt
 
-                fragment = local_array[start_local:end_local].copy()
-
-                # Map to global coordinates
-                start_site_idx = int(item.local_mask[start_local])
-                end_site_idx = int(item.local_mask[end_local - 1]) + 1
-                start_pos = int(item.final_positions[start_site_idx])
-                end_pos = int(item.final_positions[end_site_idx - 1])
-                focal_global = item.local_mask[item.focal_sites]
-                focal_pos = item.final_positions[focal_global]
+                # Map to global coordinates for metadata only
+                start_site_idx = int(local_mask[start_local])
+                end_site_idx = int(local_mask[end_local - 1]) + 1
+                start_pos = int(final_positions[start_site_idx])
+                end_pos = int(final_positions[end_site_idx - 1])
+                focal_global = local_mask[item.focal_sites]
+                focal_pos = final_positions[focal_global]
 
                 # Get or create chunk buffer
                 chunk_idx = item.ancestor_index // self._chunk_size
@@ -778,9 +793,9 @@ class AncestorWriter:
                 buf = self._registry.get_or_create(chunk_idx, item.expected_count)
                 t_registry += _time.monotonic() - t0
 
-                # Fill buffer slot
+                # Fill buffer slot — contiguous row copy (cache-friendly)
                 t0 = _time.monotonic()
-                buf.gt_buf[start_site_idx:end_site_idx, slot, 0] = fragment
+                buf.haplotype_buf[slot] = local_array
                 buf.times[slot] = item.anc_time
                 buf.starts[slot] = start_pos
                 buf.ends[slot] = end_pos
@@ -805,11 +820,13 @@ class AncestorWriter:
                 self._stats.worker_count += n_processed
 
     def _writer_loop(self):
-        """Writer thread: pop completed chunks, write to zarr via .blocks[]."""
+        """Writer thread: pop completed chunks, transpose + scatter, write to zarr."""
         # Thread-local accumulators
         t_zarr = 0.0
         t_release = 0.0
         n_chunks = 0
+        local_mask = self._local_mask
+        num_sites = self._num_sites
         try:
             while True:
                 buf = self._write_queue.get()
@@ -818,14 +835,27 @@ class AncestorWriter:
 
                 ci = buf.chunk_idx
                 n = buf.expected_count
+                pc = buf._partial_count
+
+                # Build intermediate array in global coordinates
+                t0 = _time.monotonic()
+                intermediate = np.full((num_sites, n, 1), np.int8(-1), dtype=np.int8)
+
+                # Copy previous interval's data (already in global coords)
+                if buf._partial_gt is not None and pc > 0:
+                    intermediate[:, :pc, :] = buf._partial_gt
+
+                # Scatter new ancestors from haplotype_buf via local_mask
+                # haplotype_buf[pc:n, :] has shape (n-pc, n_local)
+                # Transposed: (n_local, n-pc)
+                # intermediate[local_mask, pc:n, 0] has shape (n_local, n-pc)
+                if n > pc:
+                    intermediate[local_mask, pc:n, 0] = buf.haplotype_buf[pc:n, :].T
 
                 # Write to zarr
-                t0 = _time.monotonic()
                 col_start = ci * self._chunk_size
                 col_end = col_start + n
-                self._root["call_genotype"][:, col_start:col_end, :] = buf.gt_buf[
-                    :, :n, :
-                ]
+                self._root["call_genotype"][:, col_start:col_end, :] = intermediate
                 self._root["sample_time"][col_start:col_end] = buf.times[:n]
                 self._root["sample_start_position"][col_start:col_end] = buf.starts[:n]
                 self._root["sample_end_position"][col_start:col_end] = buf.ends[:n]
@@ -843,12 +873,13 @@ class AncestorWriter:
                 t_release += dt_release
 
                 n_chunks += 1
-                gt_mb = buf.gt_buf[:, :n, :].nbytes / (1024 * 1024)
+                gt_mb = intermediate.nbytes / (1024 * 1024)
                 logger.debug(
-                    "Writer: flushed chunk %d (%d ancestors, %.1fMiB) "
+                    "Writer: flushed chunk %d (%d ancestors, %d partial, %.1fMiB) "
                     "zarr=%.3fs release=%.3fs",
                     ci,
                     n,
+                    pc,
                     gt_mb,
                     dt_zarr,
                     dt_release,
