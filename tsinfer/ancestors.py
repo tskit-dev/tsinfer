@@ -461,12 +461,12 @@ def _process_interval(
         _memory_usage_mb(),
     )
 
-    # Build ancestors with bounded in-flight futures, following the
-    # threaded_map pattern from upstream: submit up to max_queued futures,
+    # Build ancestors with bounded in-flight futures.
+    # Dubmit up to max_queued futures,
     # then drain completed ones before submitting more.  The writer's
     # index-aware pending dict ensures deterministic output regardless of
     # completion order.
-    max_queued = max(2 * num_threads, 1)
+    max_queued = max(8 * num_threads, 1)
     futures = set()
     n_ancestors = len(ancestor_descriptors)
     n_consumed = 0

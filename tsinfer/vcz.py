@@ -520,22 +520,13 @@ class AncestorWriter:
             drained += 1
             if len(self._buffer) >= self._chunk_size:
                 self._flush()
-        logger.debug(
-            "add_ancestor idx=%d: drained=%d pending=%d buffer=%d "
-            "focal_acc=%d flushed=%d",
-            ancestor.index,
-            drained,
-            len(self._pending),
-            len(self._buffer),
-            len(self._focal_positions_acc),
-            self._num_flushed,
-        )
 
     # -----------------------------------------------------------------
 
     def _flush(self):
         if not self._buffer:
             return
+        assert len(self._buffer) <= self._chunk_size
 
         t0 = _time.monotonic()
         n = len(self._buffer)
