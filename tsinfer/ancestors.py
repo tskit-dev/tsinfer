@@ -22,7 +22,6 @@ Ancestor generation: builds the ancestor VCZ store from a samples VCZ store.
 
 from __future__ import annotations
 
-import concurrent.futures
 import logging
 import time
 from dataclasses import dataclass
@@ -35,7 +34,6 @@ import _tsinfer
 
 from . import vcz as vcz_mod
 from .config import AncestorsConfig, AncestralState, Source
-from .utils import SynchronousExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -272,43 +270,6 @@ class Ancestor:
         return full
 
 
-def _build_ancestor(
-    ab, focal_sites, a, anc_time, ancestor_index, local_mask, final_positions
-):
-    """
-    Worker function: call the C make_ancestor (GIL-released) and build
-    the Ancestor object.
-
-    The output array *a* is prepared by the caller on the main thread.
-    The caller must copy/recycle *a* only after retrieving the result,
-    since _build_ancestor copies out the active fragment.
-    """
-    t0 = time.monotonic()
-    start_local, end_local = ab.make_ancestor(focal_sites, a)
-    dt_make = time.monotonic() - t0
-
-    fragment = a[start_local:end_local].copy()
-    start_site_idx = int(local_mask[start_local])
-    end_site_idx = int(local_mask[end_local - 1]) + 1
-
-    start_pos = int(final_positions[start_site_idx])
-    end_pos = int(final_positions[end_site_idx - 1])
-    focal_global = local_mask[focal_sites]
-    focal_pos = final_positions[focal_global]
-
-    ancestor = Ancestor(
-        index=ancestor_index,
-        time=float(anc_time),
-        haplotype=fragment,
-        focal_positions=focal_pos,
-        start_site_idx=start_site_idx,
-        end_site_idx=end_site_idx,
-        start_position=start_pos,
-        end_position=end_pos,
-    )
-    return ancestor, dt_make
-
-
 def _open_source(source):
     """
     Open the source store, returning a zarr.Group.
@@ -398,16 +359,20 @@ def _process_interval(
     num_haplotypes,
     cfg,
     sample_include,
-    writer,
-    executor,
+    zarr_root,
     num_threads,
+    write_threads,
     ancestor_index,
     progress,
+    compressor,
 ):
     """
     Process a single sequence interval: load genotypes, build ancestors.
 
-    Returns the updated ancestor_index.
+    Creates a per-interval AncestorWriter that owns its own worker and
+    writer threads.
+
+    Returns (updated_ancestor_index, interval_focal_positions).
     """
     n_local = len(local_mask)
     local_positions = final_positions[local_mask]
@@ -434,34 +399,34 @@ def _process_interval(
 
     ancestor_descriptors = list(ab.ancestor_descriptors())
     ab_mem_mb = ab.mem_size / (1024 * 1024)
+    n_ancestors = len(ancestor_descriptors)
     logger.info(
         "Interval %d: %d sites (%d–%d), %d ancestors (builder=%.1fMiB, RSS=%.1fMiB)",
         i_idx,
         n_local,
         int(local_positions[0]),
         int(local_positions[-1]),
-        len(ancestor_descriptors),
+        n_ancestors,
         ab_mem_mb,
         _memory_usage_mb(),
     )
 
-    # Build ancestors with bounded in-flight futures.
-    # Submit up to max_queued futures,
-    # then drain completed ones before submitting more.  The writer's
-    # index-aware pending dict ensures deterministic output regardless of
-    # completion order.
-    #
-    # Worker threads run the GIL-releasing C make_ancestor call and then
-    # build the Ancestor object (lightweight numpy slicing).
-    max_queued = max(8 * num_threads, 1)
-    # Map future → output array (for recycling after result is retrieved)
-    future_arrays = {}
-    n_ancestors = len(ancestor_descriptors)
-    n_consumed = 0
-    # Pre-allocate reusable output arrays to avoid per-ancestor allocation.
-    # _build_ancestor copies out the active fragment, so the array can be
-    # recycled immediately after draining.
-    _free_arrays = [np.empty(n_ab_sites, dtype=np.int8) for _ in range(max_queued)]
+    if n_ancestors == 0:
+        return ancestor_index, []
+
+    num_sites = len(final_positions)
+    writer = vcz_mod.AncestorWriter(
+        zarr_root=zarr_root,
+        num_sites=num_sites,
+        chunk_size=cfg.samples_chunk_size,
+        n_ancestors=n_ancestors,
+        num_threads=num_threads,
+        write_threads=write_threads,
+        compressor=compressor,
+    )
+
+    t_wall_start = time.monotonic()
+
     pbar = tqdm_mod.tqdm(
         total=n_ancestors,
         desc=f"Interval {i_idx}: ancestors",
@@ -469,88 +434,56 @@ def _process_interval(
         disable=not progress,
     )
 
-    # Timing accumulators for diagnosing throughput bottlenecks.
-    # All times in seconds.
-    t_wall_start = time.monotonic()  # wall-clock start for entire interval
-    t_wait = 0.0  # blocked in concurrent.futures.wait()
-    t_write = 0.0  # writer.add_ancestor
-    t_submit = 0.0  # preparing + submitting futures
-    t_make_total = 0.0  # sum of per-call make_ancestor wall times
-    t_make_min = float("inf")
-    t_make_max = 0.0
-
-    def _drain_completed(future_arrays, pbar=pbar):
-        nonlocal n_consumed, t_wait, t_write, t_make_total
-        nonlocal t_make_min, t_make_max
-
-        t0 = time.monotonic()
-        done, _pending = concurrent.futures.wait(
-            future_arrays.keys(),
-            return_when=concurrent.futures.FIRST_COMPLETED,
-        )
-        t_wait += time.monotonic() - t0
-
-        for future in done:
-            ancestor, dt_make = future.result()
-            t_make_total += dt_make
-            if dt_make < t_make_min:
-                t_make_min = dt_make
-            if dt_make > t_make_max:
-                t_make_max = dt_make
-
-            # Return array to pool for reuse
-            _free_arrays.append(future_arrays.pop(future))
-
-            t0 = time.monotonic()
-            writer.add_ancestor(ancestor)
-            t_write += time.monotonic() - t0
-
-            n_consumed += 1
-            pbar.update(1)
-
-    for anc_time, focal_sites in ancestor_descriptors:
-        if len(future_arrays) >= max_queued:
-            _drain_completed(future_arrays)
-        t0 = time.monotonic()
-        a = _free_arrays.pop()
-        future = executor.submit(
-            _build_ancestor,
+    for local_index, (anc_time, focal_sites) in enumerate(ancestor_descriptors):
+        writer.submit(
             ab,
             focal_sites,
-            a,
             anc_time,
-            ancestor_index,
+            local_index,
             local_mask,
             final_positions,
         )
-        future_arrays[future] = a
-        t_submit += time.monotonic() - t0
-        ancestor_index += 1
+        pbar.update(1)
 
-    while future_arrays:
-        _drain_completed(future_arrays)
+    t_submit_wall = time.monotonic() - t_wall_start
+    pbar.close()
 
-    if n_consumed > 0:
-        t_wall = time.monotonic() - t_wall_start
-        t_make_mean = t_make_total / n_consumed
+    interval_focals = writer.finalize()
+
+    t_wall = time.monotonic() - t_wall_start
+    s = writer.stats
+    if n_ancestors > 0:
+        make_mean = s.worker_make_ancestor / n_ancestors
+        make_min = s.worker_make_min if s.worker_make_min < float("inf") else 0
+        make_max = s.worker_make_max
         logger.info(
-            "Interval %d timing: %d ancestors in %.3fs, "
-            "wait=%.3fs write=%.3fs submit=%.3fs | "
-            "make_ancestor total=%.3fs mean=%.4fs min=%.4fs max=%.4fs",
+            "Interval %d: %d ancestors, %d chunks in %.3fs | "
+            "submit: wall=%.3fs put_block=%.3fs | "
+            "workers: make_ancestor=%.3fs (mean=%.4fs min=%.4fs max=%.4fs) "
+            "buf_fill=%.3fs registry_wait=%.3fs | "
+            "writers: zarr=%.3fs release=%.3fs | "
+            "finalize: worker_join=%.3fs seal=%.3fs writer_join=%.3fs",
             i_idx,
-            n_consumed,
+            n_ancestors,
+            s.writer_chunks,
             t_wall,
-            t_wait,
-            t_write,
-            t_submit,
-            t_make_total,
-            t_make_mean,
-            t_make_min,
-            t_make_max,
+            t_submit_wall,
+            s.submit_put,
+            s.worker_make_ancestor,
+            make_mean,
+            make_min,
+            make_max,
+            s.worker_buf_fill,
+            s.worker_registry_wait,
+            s.writer_zarr,
+            s.writer_release,
+            s.finalize_worker_join,
+            s.finalize_seal,
+            s.finalize_writer_join,
         )
 
-    pbar.close()
-    return ancestor_index
+    ancestor_index += n_ancestors
+    return ancestor_index, interval_focals
 
 
 def infer_ancestors(
@@ -642,18 +575,21 @@ def infer_ancestors(
     # --- 5. Pass 2: per-interval ancestor building ---
     t_pass2 = time.monotonic()
     encoding_name = "one_bit" if cfg.genotype_encoding == 1 else "eight_bit"
+    write_threads = getattr(cfg, "write_threads", 4)
     if num_threads > 0:
         logger.info(
             "Pass 2: building ancestors per interval "
-            "(%d threads, encoding=%s, RSS=%.1fMiB)",
+            "(%d worker threads, %d write threads, encoding=%s, RSS=%.1fMiB)",
             num_threads,
+            write_threads,
             encoding_name,
             _memory_usage_mb(),
         )
     else:
         logger.info(
             "Pass 2: building ancestors per interval "
-            "(synchronous, encoding=%s, RSS=%.1fMiB)",
+            "(synchronous, %d write threads, encoding=%s, RSS=%.1fMiB)",
+            write_threads,
             encoding_name,
             _memory_usage_mb(),
         )
@@ -661,7 +597,9 @@ def infer_ancestors(
 
     contig_id = str(store["contig_id"][0])
     contig_length = int(store["contig_length"][0])
-    writer = vcz_mod.AncestorWriter(
+
+    # Create zarr group with fixed arrays
+    zarr_root = vcz_mod.setup_ancestor_zarr(
         num_inf,
         final_positions,
         final_alleles,
@@ -675,39 +613,40 @@ def infer_ancestors(
         compressor=compressor,
     )
 
-    if num_threads > 0:
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=num_threads)
-    else:
-        executor = SynchronousExecutor()
-
     ancestor_index = 0
-    with executor:
-        for i_idx in range(len(seq_intervals)):
-            in_interval = site_interval_idx == i_idx
-            if not np.any(in_interval):
-                continue
-            local_mask = np.where(in_interval)[0]
-            ancestor_index = _process_interval(
-                store,
-                i_idx,
-                local_mask,
-                final_positions,
-                final_anc_indices,
-                times,
-                num_haplotypes,
-                cfg,
-                sample_include,
-                writer,
-                executor,
-                num_threads,
-                ancestor_index,
-                progress,
-            )
+    all_focal_positions = []
+
+    for i_idx in range(len(seq_intervals)):
+        in_interval = site_interval_idx == i_idx
+        if not np.any(in_interval):
+            continue
+        local_mask = np.where(in_interval)[0]
+        ancestor_index, interval_focals = _process_interval(
+            store,
+            i_idx,
+            local_mask,
+            final_positions,
+            final_anc_indices,
+            times,
+            num_haplotypes,
+            cfg,
+            sample_include,
+            zarr_root,
+            num_threads,
+            write_threads,
+            ancestor_index,
+            progress,
+            compressor,
+        )
+        all_focal_positions.extend(interval_focals)
 
     elapsed_pass2 = time.monotonic() - t_pass2
     logger.info("Pass 2 complete in %.1fs", elapsed_pass2)
 
-    result = writer.finalize()
+    # Write sample_id and sample_focal_positions
+    result = vcz_mod.finalize_ancestor_zarr(
+        zarr_root, all_focal_positions, compressor=compressor
+    )
     elapsed_total = time.monotonic() - t_start
     logger.info(
         "Ancestor inference complete: %d ancestors across %d sites"

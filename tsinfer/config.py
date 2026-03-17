@@ -116,6 +116,7 @@ class AncestorsConfig:
     genotype_encoding: int = 0  # 0 = eight-bit, 1 = one-bit
     compressor: str = "zstd"  # blosc cname: zstd, lz4, lz4hc, etc.
     compression_level: int = 7
+    write_threads: int = 4
 
 
 @dataclass
@@ -381,6 +382,7 @@ def _parse_ancestors(raw: dict, base: Path) -> AncestorsConfig | None:
             genotype_encoding=int(genotype_encoding),
             compressor=str(entry.get("compressor", "zstd")),
             compression_level=int(entry.get("compression_level", 7)),
+            write_threads=int(entry.get("write_threads", 4)),
         )
     except KeyError as e:
         raise ValueError(f"[ancestors] missing required key: {e}") from e
