@@ -348,18 +348,23 @@ def num_contigs(store: zarr.Group) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _arr(group, name, data, dims, chunks=None):
+def _arr(group, name, data, dims, chunks=None, compressor=None):
     kw = {}
     if chunks is not None:
         kw["chunks"] = chunks
+    if compressor is not None:
+        kw["compressor"] = compressor
     a = group.create_array(name, data=data, **kw)
     a.attrs["_ARRAY_DIMENSIONS"] = dims
     return a
 
 
-def _str_array(group, name, data, dims):
+def _str_array(group, name, data, dims, compressor=None):
     data = np.asarray(data)
-    a = group.create_array(name, shape=data.shape, dtype=_VLEN_STR)
+    kw = {}
+    if compressor is not None:
+        kw["compressor"] = compressor
+    a = group.create_array(name, shape=data.shape, dtype=_VLEN_STR, **kw)
     a[:] = data
     a.attrs["_ARRAY_DIMENSIONS"] = dims
     return a
@@ -431,6 +436,7 @@ class AncestorWriter:
         variants_chunk_size=1000,
         contig_id="1",
         contig_length=0,
+        compressor=None,
     ):
         self._num_sites = num_sites
         self._chunk_size = samples_chunk_size
@@ -441,19 +447,31 @@ class AncestorWriter:
         # drained into _buffer in contiguous order.
         self._pending = {}
         self._next_index = 0
+        self._compressor = compressor
 
         # --- Build the zarr group and write fixed arrays ---
         self._root = open_group(store)
         vchunks = variants_chunk_size
 
-        _arr(self._root, "variant_position", positions, ["variants"], chunks=(vchunks,))
+        _arr(
+            self._root,
+            "variant_position",
+            positions,
+            ["variants"],
+            chunks=(vchunks,),
+            compressor=compressor,
+        )
 
         out_alleles = _build_output_alleles(alleles, anc_indices, num_sites)
+        ckw = {}
+        if compressor is not None:
+            ckw["compressor"] = compressor
         va = self._root.create_array(
             "variant_allele",
             shape=out_alleles.shape,
             dtype=_VLEN_STR,
             chunks=(vchunks, out_alleles.shape[1]),
+            **ckw,
         )
         va[:] = out_alleles
         va.attrs["_ARRAY_DIMENSIONS"] = ["variants", "alleles"]
@@ -463,15 +481,23 @@ class AncestorWriter:
             "sequence_intervals",
             seq_intervals,
             ["intervals", "coords"],
+            compressor=compressor,
         )
 
         # Contig metadata — required for vcztools compatibility
-        _str_array(self._root, "contig_id", np.array([contig_id]), ["contigs"])
+        _str_array(
+            self._root,
+            "contig_id",
+            np.array([contig_id]),
+            ["contigs"],
+            compressor=compressor,
+        )
         _arr(
             self._root,
             "contig_length",
             np.array([contig_length], dtype=np.int64),
             ["contigs"],
+            compressor=compressor,
         )
         _arr(
             self._root,
@@ -479,6 +505,7 @@ class AncestorWriter:
             np.zeros(num_sites, dtype=np.int8),
             ["variants"],
             chunks=(vchunks,),
+            compressor=compressor,
         )
 
         # --- Ancestor-dimensioned arrays: start empty, append by chunk ---
@@ -487,6 +514,7 @@ class AncestorWriter:
             shape=(num_sites, 0, 1),
             dtype=np.int8,
             chunks=(variants_chunk_size, samples_chunk_size, 1),
+            **ckw,
         )
         gt.attrs["_ARRAY_DIMENSIONS"] = ["variants", "samples", "ploidy"]
 
@@ -497,6 +525,7 @@ class AncestorWriter:
                 shape=(0,),
                 dtype=dt,
                 chunks=(samples_chunk_size,),
+                **ckw,
             )
             a.attrs["_ARRAY_DIMENSIONS"] = ["samples"]
 
@@ -609,11 +638,15 @@ class AncestorWriter:
         t0 = _time.monotonic()
 
         # sample_id — trivial, write once
+        ckw = {}
+        if self._compressor is not None:
+            ckw["compressor"] = self._compressor
         ids = np.array([f"a{i}" for i in range(num_anc)])
         id_arr = self._root.create_array(
             "sample_id",
             shape=ids.shape,
             dtype=_VLEN_STR,
+            **ckw,
         )
         id_arr[:] = ids
         id_arr.attrs["_ARRAY_DIMENSIONS"] = ["samples"]
@@ -632,6 +665,7 @@ class AncestorWriter:
             "sample_focal_positions",
             fp_data,
             ["samples", "focal_alleles"],
+            compressor=self._compressor,
         )
 
         elapsed = _time.monotonic() - t0
@@ -791,7 +825,13 @@ class HaplotypeReader:
         return hap
 
 
-def write_empty_ancestor_vcz(seq_intervals, store=None, contig_id="1", contig_length=0):
+def write_empty_ancestor_vcz(
+    seq_intervals,
+    store=None,
+    contig_id="1",
+    contig_length=0,
+    compressor=None,
+):
     """Return an ancestor VCZ with zero sites and zero ancestors.
 
     Parameters
@@ -804,48 +844,89 @@ def write_empty_ancestor_vcz(seq_intervals, store=None, contig_id="1", contig_le
         Contig name for vcztools compatibility.
     contig_length : int
         Contig length in base pairs.
+    compressor : numcodecs codec or None
+        Compressor for zarr arrays.
     """
     root = open_group(store)
+    ckw = {}
+    if compressor is not None:
+        ckw["compressor"] = compressor
 
     g = root.create_array(
         "call_genotype",
         shape=(0, 0, 1),
         dtype=np.int8,
+        **ckw,
     )
     g.attrs["_ARRAY_DIMENSIONS"] = ["variants", "samples", "ploidy"]
 
-    _arr(root, "variant_position", np.zeros(0, dtype=np.int32), ["variants"])
+    _arr(
+        root,
+        "variant_position",
+        np.zeros(0, dtype=np.int32),
+        ["variants"],
+        compressor=compressor,
+    )
 
-    va = root.create_array("variant_allele", shape=(0, 2), dtype=_VLEN_STR)
+    va = root.create_array("variant_allele", shape=(0, 2), dtype=_VLEN_STR, **ckw)
     va.attrs["_ARRAY_DIMENSIONS"] = ["variants", "alleles"]
 
-    ids = root.create_array("sample_id", shape=(0,), dtype=_VLEN_STR)
+    ids = root.create_array("sample_id", shape=(0,), dtype=_VLEN_STR, **ckw)
     ids.attrs["_ARRAY_DIMENSIONS"] = ["samples"]
 
-    _arr(root, "sample_time", np.zeros(0, dtype=np.float64), ["samples"])
+    _arr(
+        root,
+        "sample_time",
+        np.zeros(0, dtype=np.float64),
+        ["samples"],
+        compressor=compressor,
+    )
     _arr(
         root,
         "sample_start_position",
         np.zeros(0, dtype=np.int32),
         ["samples"],
+        compressor=compressor,
     )
     _arr(
         root,
         "sample_end_position",
         np.zeros(0, dtype=np.int32),
         ["samples"],
+        compressor=compressor,
     )
     _arr(
         root,
         "sample_focal_positions",
         np.zeros((0, 1), dtype=np.int32),
         ["samples", "focal_alleles"],
+        compressor=compressor,
     )
-    _arr(root, "sequence_intervals", seq_intervals, ["intervals", "coords"])
+    _arr(
+        root,
+        "sequence_intervals",
+        seq_intervals,
+        ["intervals", "coords"],
+        compressor=compressor,
+    )
 
     # Contig metadata — required for vcztools compatibility
-    _str_array(root, "contig_id", np.array([contig_id]), ["contigs"])
-    _arr(root, "contig_length", np.array([contig_length], dtype=np.int64), ["contigs"])
-    _arr(root, "variant_contig", np.zeros(0, dtype=np.int8), ["variants"])
+    _str_array(
+        root, "contig_id", np.array([contig_id]), ["contigs"], compressor=compressor
+    )
+    _arr(
+        root,
+        "contig_length",
+        np.array([contig_length], dtype=np.int64),
+        ["contigs"],
+        compressor=compressor,
+    )
+    _arr(
+        root,
+        "variant_contig",
+        np.zeros(0, dtype=np.int8),
+        ["variants"],
+        compressor=compressor,
+    )
 
     return root

@@ -114,6 +114,8 @@ class AncestorsConfig:
     samples_chunk_size: int = 1000
     variants_chunk_size: int = 1000
     genotype_encoding: int = 0  # 0 = eight-bit, 1 = one-bit
+    compressor: str = "zstd"  # blosc cname: zstd, lz4, lz4hc, etc.
+    compression_level: int = 7
 
 
 @dataclass
@@ -377,6 +379,8 @@ def _parse_ancestors(raw: dict, base: Path) -> AncestorsConfig | None:
             samples_chunk_size=int(entry.get("samples_chunk_size", 1000)),
             variants_chunk_size=int(entry.get("variants_chunk_size", 1000)),
             genotype_encoding=int(genotype_encoding),
+            compressor=str(entry.get("compressor", "zstd")),
+            compression_level=int(entry.get("compression_level", 7)),
         )
     except KeyError as e:
         raise ValueError(f"[ancestors] missing required key: {e}") from e

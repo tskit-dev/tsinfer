@@ -486,6 +486,7 @@ def _process_interval(
 
     # Timing accumulators for diagnosing throughput bottlenecks.
     # All times in seconds.
+    t_wall_start = time.monotonic()  # wall-clock start for entire interval
     t_wait = 0.0  # blocked in concurrent.futures.wait()
     t_finish = 0.0  # _finish_ancestor post-processing
     t_write = 0.0  # writer.add_ancestor
@@ -559,13 +560,15 @@ def _process_interval(
         _drain_completed(future_meta)
 
     if n_consumed > 0:
+        t_wall = time.monotonic() - t_wall_start
         t_make_mean = t_make_total / n_consumed
         logger.info(
-            "Interval %d timing: %d ancestors, "
+            "Interval %d timing: %d ancestors in %.3fs, "
             "wait=%.3fs finish=%.3fs write=%.3fs submit=%.3fs | "
             "make_ancestor total=%.3fs mean=%.4fs min=%.4fs max=%.4fs",
             i_idx,
             n_consumed,
+            t_wall,
             t_wait,
             t_finish,
             t_write,
@@ -602,6 +605,15 @@ def infer_ancestors(
 
     # --- 1. Open store and resolve filtering ---
     store = _open_source(source)
+
+    # Build compressor from config
+    import numcodecs
+
+    compressor = numcodecs.Blosc(
+        cname=cfg.compressor,
+        clevel=cfg.compression_level,
+        shuffle=numcodecs.Blosc.BITSHUFFLE,
+    )
 
     if source.include is not None:
         logger.info("Variant filter (include): %s", source.include)
@@ -643,6 +655,7 @@ def infer_ancestors(
             store=cfg.path,
             contig_id=contig_id,
             contig_length=contig_length,
+            compressor=compressor,
         )
 
     # --- 4. Compute sequence intervals ---
@@ -689,6 +702,7 @@ def infer_ancestors(
         variants_chunk_size=cfg.variants_chunk_size,
         contig_id=contig_id,
         contig_length=contig_length,
+        compressor=compressor,
     )
 
     if num_threads > 0:
