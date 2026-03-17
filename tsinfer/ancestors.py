@@ -461,7 +461,7 @@ def _process_interval(
             "submit: wall=%.3fs put_block=%.3fs | "
             "workers: make_ancestor=%.3fs (mean=%.4fs min=%.4fs max=%.4fs) "
             "buf_fill=%.3fs registry_wait=%.3fs | "
-            "writers: zarr=%.3fs release=%.3fs | "
+            "writers: scatter=%.3fs zarr=%.3fs release=%.3fs | "
             "finalize: worker_join=%.3fs seal=%.3fs writer_join=%.3fs",
             i_idx,
             n_ancestors,
@@ -475,6 +475,7 @@ def _process_interval(
             make_max,
             s.worker_buf_fill,
             s.worker_registry_wait,
+            s.writer_scatter,
             s.writer_zarr,
             s.writer_release,
             s.finalize_worker_join,
