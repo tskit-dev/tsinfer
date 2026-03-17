@@ -346,8 +346,11 @@ def num_contigs(store: zarr.Group) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _arr(group, name, data, dims):
-    a = group.create_array(name, data=data)
+def _arr(group, name, data, dims, chunks=None):
+    kw = {}
+    if chunks is not None:
+        kw["chunks"] = chunks
+    a = group.create_array(name, data=data, **kw)
     a.attrs["_ARRAY_DIMENSIONS"] = dims
     return a
 
@@ -439,12 +442,16 @@ class AncestorWriter:
 
         # --- Build the zarr group and write fixed arrays ---
         self._root = open_group(store)
+        vchunks = variants_chunk_size
 
-        _arr(self._root, "variant_position", positions, ["variants"])
+        _arr(self._root, "variant_position", positions, ["variants"], chunks=(vchunks,))
 
         out_alleles = _build_output_alleles(alleles, anc_indices, num_sites)
         va = self._root.create_array(
-            "variant_allele", shape=out_alleles.shape, dtype=_VLEN_STR
+            "variant_allele",
+            shape=out_alleles.shape,
+            dtype=_VLEN_STR,
+            chunks=(vchunks, out_alleles.shape[1]),
         )
         va[:] = out_alleles
         va.attrs["_ARRAY_DIMENSIONS"] = ["variants", "alleles"]
@@ -469,6 +476,7 @@ class AncestorWriter:
             "variant_contig",
             np.zeros(num_sites, dtype=np.int8),
             ["variants"],
+            chunks=(vchunks,),
         )
 
         # --- Ancestor-dimensioned arrays: start empty, append by chunk ---

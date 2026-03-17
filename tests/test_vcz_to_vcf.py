@@ -350,3 +350,43 @@ class TestAncestorVczToVcf:
         assert records[1]["CHROM"] == "chr1"
         assert records[0]["POS"] == "100"
         assert records[1]["POS"] == "200"
+
+    def test_infer_ancestors_vcztools_view(self, tmp_path):
+        """vcztools view on a filesystem-backed ancestor VCZ produces valid VCF."""
+        import subprocess
+
+        from tsinfer.ancestors import infer_ancestors
+        from tsinfer.config import AncestorsConfig, Source
+
+        n_sites = 20
+        n_samples = 6
+        rng = np.random.RandomState(42)
+        gt = rng.randint(0, 2, size=(n_sites, n_samples, 1)).astype(np.int8)
+        positions = np.arange(100, 100 + n_sites * 100, 100, dtype=np.int32)
+        store = make_sample_vcz(
+            gt,
+            positions,
+            np.array([["A", "T"]] * n_sites),
+            np.array(["A"] * n_sites),
+            100_000,
+            contig_id="chr2",
+        )
+        anc_path = tmp_path / "ancestors.vcz"
+        cfg = AncestorsConfig(
+            path=anc_path,
+            sources=["test"],
+            variants_chunk_size=5,
+            samples_chunk_size=3,
+        )
+        infer_ancestors(Source(path=store, name="test"), cfg)
+
+        result = subprocess.run(
+            [".venv/bin/python", "-m", "vcztools", "view", str(anc_path)],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        assert "##contig=<ID=chr2" in result.stdout
+        records = _parse_vcf_records(result.stdout)
+        assert len(records) > 0
+        assert all(r["CHROM"] == "chr2" for r in records)

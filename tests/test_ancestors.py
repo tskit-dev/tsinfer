@@ -575,6 +575,24 @@ class TestInferAncestorsFormat:
         assert int(anc["contig_length"][0]) == 3000
         assert anc["variant_contig"].shape == (0,)
 
+    def test_variant_arrays_chunk_aligned(self):
+        """All variant-dimensioned arrays share the same chunk layout."""
+        gt = _haploid_store(
+            [[0, 0, 1, 1], [0, 1, 0, 1], [1, 0, 0, 1], [0, 1, 1, 0]],
+            positions=[100, 200, 300, 400],
+            alleles=[["A", "T"]] * 4,
+            anc_states=["A", "A", "A", "A"],
+        )
+        anc = infer_ancestors(
+            _src(gt), _cfg(variants_chunk_size=2, samples_chunk_size=2)
+        )
+        gt_vchunks = anc["call_genotype"].chunks[0]
+        for name in ("variant_position", "variant_allele", "variant_contig"):
+            assert anc[name].chunks[0] == gt_vchunks, (
+                f"{name} chunk size {anc[name].chunks[0]} != "
+                f"call_genotype chunk size {gt_vchunks}"
+            )
+
 
 # ---------------------------------------------------------------------------
 # infer_ancestors — comparison with Python oracle
