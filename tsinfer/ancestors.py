@@ -272,38 +272,34 @@ class Ancestor:
         return full
 
 
-def _build_one_ancestor(
-    ab,
+def _call_make_ancestor(ab, focal_sites_list, a):
+    """
+    Worker function: call the C make_ancestor and return raw results.
+
+    Only the GIL-releasing C work lives here so that worker threads
+    spend almost no time holding the GIL.  All Python post-processing
+    (slicing, copying, Ancestor construction) happens on the main thread.
+
+    The output array *a* and the focal_sites list are prepared by the
+    caller on the main thread to minimise GIL-held work here.
+    """
+    start_local, end_local = ab.make_ancestor(focal_sites_list, a)
+    return start_local, end_local
+
+
+def _finish_ancestor(
+    a,
+    start_local,
+    end_local,
+    focal_arr,
     anc_time,
-    focal_sites,
-    n_ab_sites,
-    n_local,
     local_mask,
     final_positions,
     ancestor_index,
 ):
     """
-    Build a single ancestor haplotype from a finalized AncestorBuilder.
-
-    This is the per-ancestor work extracted from the inner loop of Pass 2
-    so it can be submitted to a thread pool. The AncestorBuilder's
-    ``make_ancestor`` reads only from finalized (immutable) builder state
-    and writes into caller-owned arrays, so concurrent calls are safe.
-
-    The C engine always sets focal sites to 1 (derived) and extends
-    outward, so the result is never all-missing.
-
-    Returns an :class:`Ancestor` storing only the active haplotype
-    fragment (from ``start`` to ``end`` in local coordinates) to
-    minimise memory.
+    Main-thread post-processing: build an Ancestor from raw C output.
     """
-    focal_arr = np.asarray(focal_sites, dtype=np.int32)
-    a = np.full(n_ab_sites, np.int8(-1), dtype=np.int8)
-    start_local, end_local = ab.make_ancestor(focal_arr.tolist(), a)
-
-    # Store only the active fragment (local coords start_local:end_local).
-    # local_mask is contiguous within an interval, so global indices are
-    # also contiguous.
     fragment = a[start_local:end_local].copy()
     start_site_idx = int(local_mask[start_local])
     end_site_idx = int(local_mask[end_local - 1]) + 1
@@ -462,12 +458,17 @@ def _process_interval(
     )
 
     # Build ancestors with bounded in-flight futures.
-    # Dubmit up to max_queued futures,
+    # Submit up to max_queued futures,
     # then drain completed ones before submitting more.  The writer's
     # index-aware pending dict ensures deterministic output regardless of
     # completion order.
+    #
+    # Worker threads only run the GIL-releasing C make_ancestor call.
+    # All Python post-processing (_finish_ancestor) runs on the main
+    # thread when draining, to avoid GIL contention.
     max_queued = max(8 * num_threads, 1)
-    futures = set()
+    # Map future → (anc_time, ancestor_index) for main-thread finishing
+    future_meta = {}
     n_ancestors = len(ancestor_descriptors)
     n_consumed = 0
     pbar = tqdm_mod.tqdm(
@@ -477,37 +478,45 @@ def _process_interval(
         disable=not progress,
     )
 
-    def _drain_completed(futures, pbar=pbar):
+    def _drain_completed(future_meta, pbar=pbar):
         nonlocal n_consumed
-        done, futures = concurrent.futures.wait(
-            futures,
+        done, _pending = concurrent.futures.wait(
+            future_meta.keys(),
             return_when=concurrent.futures.FIRST_COMPLETED,
         )
         for future in done:
-            writer.add_ancestor(future.result())
+            start_local, end_local = future.result()
+            anc_time, anc_idx, a, focal_arr = future_meta.pop(future)
+            ancestor = _finish_ancestor(
+                a,
+                start_local,
+                end_local,
+                focal_arr,
+                anc_time,
+                local_mask,
+                final_positions,
+                anc_idx,
+            )
+            writer.add_ancestor(ancestor)
             n_consumed += 1
             pbar.update(1)
-        return futures
 
     for anc_time, focal_sites in ancestor_descriptors:
-        if len(futures) >= max_queued:
-            futures = _drain_completed(futures)
+        if len(future_meta) >= max_queued:
+            _drain_completed(future_meta)
+        focal_arr = np.asarray(focal_sites, dtype=np.int32)
+        a = np.full(n_ab_sites, np.int8(-1), dtype=np.int8)
         future = executor.submit(
-            _build_one_ancestor,
+            _call_make_ancestor,
             ab,
-            anc_time,
-            focal_sites,
-            n_ab_sites,
-            n_local,
-            local_mask,
-            final_positions,
-            ancestor_index,
+            focal_arr.tolist(),
+            a,
         )
-        futures.add(future)
+        future_meta[future] = (anc_time, ancestor_index, a, focal_arr)
         ancestor_index += 1
 
-    while futures:
-        futures = _drain_completed(futures)
+    while future_meta:
+        _drain_completed(future_meta)
 
     pbar.close()
     return ancestor_index
