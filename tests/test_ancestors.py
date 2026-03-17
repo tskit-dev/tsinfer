@@ -1089,33 +1089,33 @@ class TestChunkBuffer:
     """Test ChunkBuffer record_fill and seal logic."""
 
     def test_record_fill_not_complete_until_expected(self):
-        buf = ChunkBuffer(num_sites=3, chunk_size=4)
+        buf = ChunkBuffer(n_local=3, chunk_size=4)
         buf.expected_count = 3
         assert not buf.record_fill()
         assert not buf.record_fill()
         assert buf.record_fill()  # 3rd fill → complete
 
     def test_seal_sets_expected_count(self):
-        buf = ChunkBuffer(num_sites=3, chunk_size=4)
+        buf = ChunkBuffer(n_local=3, chunk_size=4)
         buf.filled_count = 2
         assert not buf.seal(3)  # 2 != 3
         buf.filled_count = 3
-        buf2 = ChunkBuffer(num_sites=3, chunk_size=4)
+        buf2 = ChunkBuffer(n_local=3, chunk_size=4)
         buf2.filled_count = 3
         assert buf2.seal(3)  # 3 == 3
 
     def test_reset_clears_state(self):
-        buf = ChunkBuffer(num_sites=2, chunk_size=3)
+        buf = ChunkBuffer(n_local=2, chunk_size=3)
         buf.chunk_idx = 5
         buf.filled_count = 2
         buf.expected_count = 3
-        buf.gt_buf[0, 0, 0] = 1
+        buf.haplotype_buf[0, 0] = 1
         buf.focal_positions[0] = np.array([100], dtype=np.int32)
         buf.reset(3)
         assert buf.chunk_idx == -1
         assert buf.filled_count == 0
         assert buf.expected_count == -1
-        assert np.all(buf.gt_buf == -1)
+        assert np.all(buf.haplotype_buf == -1)
         assert all(fp is None for fp in buf.focal_positions)
 
 
@@ -1123,7 +1123,7 @@ class TestChunkBufferPool:
     """Test ChunkBufferPool acquire/release."""
 
     def test_acquire_release_cycle(self):
-        pool = ChunkBufferPool(num_buffers=2, num_sites=3, chunk_size=4)
+        pool = ChunkBufferPool(num_buffers=2, n_local=3, chunk_size=4)
         b1 = pool.acquire(chunk_idx=0, expected_count=4)
         assert b1.chunk_idx == 0
         b2 = pool.acquire(chunk_idx=1, expected_count=4)
@@ -1137,14 +1137,14 @@ class TestChunkBufferPool:
         pool.release(b3)
 
     def test_pool_resets_on_release(self):
-        pool = ChunkBufferPool(num_buffers=1, num_sites=2, chunk_size=3)
+        pool = ChunkBufferPool(num_buffers=1, n_local=2, chunk_size=3)
         buf = pool.acquire(chunk_idx=0, expected_count=3)
-        buf.gt_buf[0, 0, 0] = 1
+        buf.haplotype_buf[0, 0] = 1
         buf.filled_count = 2
         pool.release(buf)
         buf2 = pool.acquire(chunk_idx=1, expected_count=2)
         assert buf2.filled_count == 0
-        assert np.all(buf2.gt_buf == -1)
+        assert np.all(buf2.haplotype_buf == -1)
         pool.release(buf2)
 
 
@@ -1152,14 +1152,14 @@ class TestActiveChunkRegistry:
     """Test ActiveChunkRegistry get_or_create and remove."""
 
     def test_get_or_create_returns_same_buffer(self):
-        pool = ChunkBufferPool(num_buffers=4, num_sites=3, chunk_size=4)
+        pool = ChunkBufferPool(num_buffers=4, n_local=3, chunk_size=4)
         reg = ActiveChunkRegistry(pool)
         b1 = reg.get_or_create(0, 4)
         b2 = reg.get_or_create(0, 4)
         assert b1 is b2
 
     def test_remove_pops_buffer(self):
-        pool = ChunkBufferPool(num_buffers=4, num_sites=3, chunk_size=4)
+        pool = ChunkBufferPool(num_buffers=4, n_local=3, chunk_size=4)
         reg = ActiveChunkRegistry(pool)
         b1 = reg.get_or_create(0, 4)
         removed = reg.remove(0)
@@ -1169,7 +1169,7 @@ class TestActiveChunkRegistry:
         assert b3 is not b1
 
     def test_pop_remaining(self):
-        pool = ChunkBufferPool(num_buffers=4, num_sites=3, chunk_size=4)
+        pool = ChunkBufferPool(num_buffers=4, n_local=3, chunk_size=4)
         reg = ActiveChunkRegistry(pool)
         reg.get_or_create(0, 4)
         reg.get_or_create(1, 4)
