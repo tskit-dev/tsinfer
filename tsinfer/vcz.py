@@ -829,7 +829,8 @@ class AncestorWriter:
                 self._root["sample_time"][col_start:col_end] = buf.times[:n]
                 self._root["sample_start_position"][col_start:col_end] = buf.starts[:n]
                 self._root["sample_end_position"][col_start:col_end] = buf.ends[:n]
-                t_zarr += _time.monotonic() - t0
+                dt_zarr = _time.monotonic() - t0
+                t_zarr += dt_zarr
 
                 # Collect focal positions
                 focals = [buf.focal_positions[s] for s in range(n)]
@@ -838,12 +839,30 @@ class AncestorWriter:
 
                 t0 = _time.monotonic()
                 self._pool.release(buf)
-                t_release += _time.monotonic() - t0
+                dt_release = _time.monotonic() - t0
+                t_release += dt_release
 
                 n_chunks += 1
+                gt_mb = buf.gt_buf[:, :n, :].nbytes / (1024 * 1024)
+                logger.debug(
+                    "Writer: flushed chunk %d (%d ancestors, %.1fMiB) "
+                    "zarr=%.3fs release=%.3fs",
+                    ci,
+                    n,
+                    gt_mb,
+                    dt_zarr,
+                    dt_release,
+                )
         except Exception as e:
             self._write_error = e
         finally:
+            if n_chunks > 0:
+                logger.debug(
+                    "Writer thread done: %d chunks, zarr=%.3fs release=%.3fs",
+                    n_chunks,
+                    t_zarr,
+                    t_release,
+                )
             with self._stats_lock:
                 self._stats.writer_zarr += t_zarr
                 self._stats.writer_release += t_release
@@ -871,12 +890,19 @@ class AncestorWriter:
         # Seal any remaining active chunks (last chunk of interval)
         t0 = _time.monotonic()
         remaining = self._registry.pop_remaining()
+        logger.debug("Finalize: %d remaining active chunk(s) to seal", len(remaining))
         for buf in remaining:
             total_samples = self._base_index + self._n_ancestors
             chunk_start = buf.chunk_idx * self._chunk_size
             chunk_end = min(chunk_start + self._chunk_size, total_samples)
             expected = chunk_end - chunk_start
             if buf.seal(expected):
+                logger.debug(
+                    "Finalize: sealed chunk %d (%d/%d ancestors) → write queue",
+                    buf.chunk_idx,
+                    buf.filled_count,
+                    expected,
+                )
                 self._write_queue.put(buf)
             else:
                 # Not yet complete — shouldn't happen if all workers
