@@ -7,7 +7,8 @@
 name = "1kgp_chr20"
 path = "../data/1kgp_chr20.vcz"
 # First 5Mb for development
-regions = "chr20:1-50000000"
+regions = "chr20:1-10000000"
+include = 'TYPE="snp"'
 
 # wget https://ftp.ensembl.org/pub/release-115/variation/vcf/homo_sapiens/homo_sapiens-chr20.vcf.gz
 # wget https://ftp.ensembl.org/pub/release-115/variation/vcf/homo_sapiens/homo_sapiens-chr20.vcf.gz.csi
