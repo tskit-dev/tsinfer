@@ -34,14 +34,29 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class PathSegment:
+    """One edge in the copying path: the haplotype copies from *parent*
+    over the genomic interval ``[left, right)``."""
+
+    left: float  # absolute genomic position
+    right: float  # absolute genomic position
+    parent: int  # node id in the reference tree sequence
+
+
+@dataclass
+class Mutation:
+    """A single mutation placed by the matching HMM."""
+
+    position: float  # absolute genomic position
+    derived_state: int  # allele index (typically 1)
+
+
+@dataclass
 class MatchResult:
     """The output of matching a single haplotype against the reference panel."""
 
-    path_left: np.ndarray  # (n_edges,) int32 — left breakpoints (site indices)
-    path_right: np.ndarray  # (n_edges,) int32 — right breakpoints (site indices)
-    path_parent: np.ndarray  # (n_edges,) int32 — parent node ids
-    mutation_sites: np.ndarray  # (n_mutations,) int32 — site indices
-    mutation_state: np.ndarray  # (n_mutations,) int8  — derived allele index
+    path: list[PathSegment]
+    mutations: list[Mutation]
 
 
 def _tsb_from_ts(ts: tskit.TreeSequence, num_sites: int, positions: np.ndarray):
@@ -243,6 +258,7 @@ class Matcher:
     ):
         self._positions = np.asarray(positions, dtype=np.int32)
         self._num_sites = len(positions)
+        self._sequence_length = ts.sequence_length
         self._path_compression = path_compression
 
         tsb = _tsb_from_ts(ts, self._num_sites, self._positions)
@@ -272,6 +288,8 @@ class Matcher:
             Anything with a ``read_haplotype(job) -> np.ndarray`` method.
         """
         num_sites = self._num_sites_val
+        pos = self._positions.astype(np.float64)
+        seq_len = self._sequence_length
         results = []
         for job in jobs:
             h = np.asarray(reader.read_haplotype(job), dtype=np.int8)
@@ -285,21 +303,27 @@ class Matcher:
 
             left, right, parent = self._matcher.find_path(h, start, end, match_out)
 
+            # Convert site-index edges to absolute-position PathSegments
+            path = []
+            for li, ri, pi in zip(left, right, parent):
+                l_pos = float(pos[li])
+                r_pos = float(pos[ri]) if ri < num_sites else float(seq_len)
+                path.append(PathSegment(left=l_pos, right=r_pos, parent=int(pi)))
+
+            # Detect mutations and convert to absolute positions
             in_range = np.zeros(num_sites, dtype=bool)
             in_range[start:end] = True
             mutation_mask = in_range & (h != match_out) & (h >= 0)
-            mutation_sites = np.where(mutation_mask)[0].astype(np.int32)
-            mutation_state = h[mutation_sites].astype(np.int8)
-
-            results.append(
-                MatchResult(
-                    path_left=np.asarray(left, dtype=np.int32),
-                    path_right=np.asarray(right, dtype=np.int32),
-                    path_parent=np.asarray(parent, dtype=np.int32),
-                    mutation_sites=mutation_sites,
-                    mutation_state=mutation_state,
+            mut_site_idxs = np.where(mutation_mask)[0]
+            mutations = [
+                Mutation(
+                    position=float(pos[si]),
+                    derived_state=int(h[si]),
                 )
-            )
+                for si in mut_site_idxs
+            ]
+
+            results.append(MatchResult(path=path, mutations=mutations))
         return results
 
 
@@ -329,25 +353,40 @@ def extend_ts(
 
     tsb = _tsb_from_ts(ts, num_sites, positions)
 
+    pos_arr = positions.astype(np.float64)
+
     new_node_ids = []
     for time, result in zip(node_times, results):
         node_id = tsb.add_node(float(time))
         new_node_ids.append(node_id)
 
-        if len(result.path_left) > 0:
+        if len(result.path) > 0:
+            # Convert absolute positions back to site indices for the TSB
+            left_idxs = [int(np.searchsorted(pos_arr, seg.left)) for seg in result.path]
+            right_idxs = [
+                int(np.searchsorted(pos_arr, seg.right))
+                if seg.right < seq_len
+                else num_sites
+                for seg in result.path
+            ]
+            parents = [seg.parent for seg in result.path]
             tsb.add_path(
                 child=node_id,
-                left=result.path_left.tolist(),
-                right=result.path_right.tolist(),
-                parent=result.path_parent.tolist(),
+                left=left_idxs,
+                right=right_idxs,
+                parent=parents,
                 compress=path_compression,
             )
 
-        if len(result.mutation_sites) > 0:
+        if len(result.mutations) > 0:
+            site_idxs = [
+                int(np.searchsorted(pos_arr, m.position)) for m in result.mutations
+            ]
+            derived = [m.derived_state for m in result.mutations]
             tsb.add_mutations(
                 node=node_id,
-                site=result.mutation_sites.tolist(),
-                derived_state=result.mutation_state.tolist(),
+                site=site_idxs,
+                derived_state=derived,
             )
 
     # Build individuals (group consecutive create_individuals=True haplotypes by ploidy)
