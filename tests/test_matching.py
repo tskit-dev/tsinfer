@@ -95,11 +95,11 @@ class TestMakeRootTs:
         ts = make_root_ts(1000.0, positions, intervals)
         assert ts.sequence_length == 1000.0
 
-    def test_num_nodes_zero(self):
+    def test_num_nodes_two(self):
         positions = np.array([10, 20, 30], dtype=np.int32)
         intervals = np.array([[10, 31]], dtype=np.int32)
         ts = make_root_ts(1000.0, positions, intervals)
-        assert ts.num_nodes == 0
+        assert ts.num_nodes == 2
 
     def test_sites_at_correct_positions(self):
         positions = np.array([5, 15, 25, 100], dtype=np.int32)
@@ -121,13 +121,15 @@ class TestMakeRootTs:
         intervals = np.array([[42, 43]], dtype=np.int32)
         ts = make_root_ts(100.0, positions, intervals)
         assert ts.num_sites == 1
+        assert ts.num_nodes == 2
+        assert ts.num_edges == 1
         np.testing.assert_array_equal(ts.tables.sites.position, [42])
 
-    def test_no_edges(self):
+    def test_one_edge(self):
         positions = np.array([10, 20, 30], dtype=np.int32)
         intervals = np.array([[10, 31]], dtype=np.int32)
         ts = make_root_ts(1000.0, positions, intervals)
-        assert ts.num_edges == 0
+        assert ts.num_edges == 1
 
     def test_no_mutations(self):
         positions = np.array([10, 20, 30], dtype=np.int32)
@@ -288,151 +290,102 @@ class TestExtendTs:
 
     def test_node_count_increases(self):
         ts = self._root_ts()
-        # First add virtual root node manually via extend_ts
-        result = MatchResult(
-            path_left=np.array([], dtype=np.int32),
-            path_right=np.array([], dtype=np.int32),
-            path_parent=np.array([], dtype=np.int32),
-            mutation_sites=np.array([], dtype=np.int32),
-            mutation_state=np.array([], dtype=np.int8),
-        )
+        assert ts.num_nodes == 2  # ultimate root + virtual root
+
+        # Add a node
         ts2 = extend_ts(
             ts,
-            node_times=np.array([1.0]),
-            results=[result],
-            node_metadata=[{}],
-            create_individuals=np.array([False]),
-            ploidy=1,
-        )
-        assert ts2.num_nodes == 1
-
-        # Add another node
-        ts3 = extend_ts(
-            ts2,
             node_times=np.array([0.5]),
-            results=[self._simple_match_result(0, len(self.positions))],
+            results=[self._simple_match_result(1, len(self.positions))],
             node_metadata=[{}],
             create_individuals=np.array([False]),
             ploidy=1,
         )
-        assert ts3.num_nodes == 2
+        assert ts2.num_nodes == 3
 
     def test_edges_present_after_extend(self):
         ts = self._root_ts()
-        # Add root
-        root_result = _dummy_result(len(self.positions))
+        # Add a node with edges (parent=1 is the virtual root)
         ts2 = extend_ts(
             ts,
-            node_times=np.array([1.0]),
-            results=[root_result],
-            node_metadata=[{}],
-            create_individuals=np.array([False]),
-        )
-        # Add a node with edges
-        ts3 = extend_ts(
-            ts2,
             node_times=np.array([0.5]),
-            results=[self._simple_match_result(0, len(self.positions))],
+            results=[self._simple_match_result(1, len(self.positions))],
             node_metadata=[{}],
             create_individuals=np.array([False]),
         )
-        assert ts3.num_edges > 0
+        assert ts2.num_edges > 0
 
     def test_mutations_present_after_extend(self):
         ts = self._root_ts()
-        root_result = _dummy_result(len(self.positions))
-        ts2 = extend_ts(
-            ts,
-            node_times=np.array([1.0]),
-            results=[root_result],
-            node_metadata=[{}],
-            create_individuals=np.array([False]),
-        )
-        # Add node with a mutation at site 1
+        # Add node with a mutation at site 1 (parent=1 is virtual root)
         result_with_mut = MatchResult(
             path_left=np.array([0], dtype=np.int32),
             path_right=np.array([3], dtype=np.int32),
-            path_parent=np.array([0], dtype=np.int32),
+            path_parent=np.array([1], dtype=np.int32),
             mutation_sites=np.array([1], dtype=np.int32),
             mutation_state=np.array([1], dtype=np.int8),
         )
-        ts3 = extend_ts(
-            ts2,
+        ts2 = extend_ts(
+            ts,
             node_times=np.array([0.5]),
             results=[result_with_mut],
             node_metadata=[{}],
             create_individuals=np.array([False]),
         )
-        assert ts3.num_mutations > 0
+        assert ts2.num_mutations > 0
 
     def test_individual_creation_ploidy2(self):
         ts = self._root_ts()
-        root_result = _dummy_result(len(self.positions))
+        # Two haplotypes should become one individual (parent=1 is virtual root)
+        r1 = self._simple_match_result(1, len(self.positions))
+        r2 = self._simple_match_result(1, len(self.positions))
         ts2 = extend_ts(
             ts,
-            node_times=np.array([1.0]),
-            results=[root_result],
-            node_metadata=[{}],
-            create_individuals=np.array([False]),
-        )
-        # Two haplotypes should become one individual
-        r1 = self._simple_match_result(0, len(self.positions))
-        r2 = self._simple_match_result(0, len(self.positions))
-        ts3 = extend_ts(
-            ts2,
             node_times=np.array([0.0, 0.0]),
             results=[r1, r2],
             node_metadata=[{}, {}],
             create_individuals=np.array([True, True]),
             ploidy=2,
         )
-        assert ts3.num_individuals == 1
-        ind = list(ts3.individuals())[0]
+        assert ts2.num_individuals == 1
+        ind = list(ts2.individuals())[0]
         assert len(ind.nodes) == 2
 
     def test_metadata_preserved(self):
         ts = self._root_ts()
-        root_result = _dummy_result(len(self.positions))
+        # Root TS already has metadata
+        assert "sequence_intervals" in ts.metadata
+        # Extend and check metadata survives
         ts2 = extend_ts(
             ts,
-            node_times=np.array([1.0]),
-            results=[root_result],
+            node_times=np.array([0.5]),
+            results=[self._simple_match_result(1, len(self.positions))],
             node_metadata=[{}],
             create_individuals=np.array([False]),
         )
-        # Metadata should still be present
         meta = ts2.metadata
         assert "sequence_intervals" in meta
 
     def test_no_individual_when_create_individuals_false(self):
         ts = self._root_ts()
-        root_result = _dummy_result(len(self.positions))
+        r1 = self._simple_match_result(1, len(self.positions))
+        r2 = self._simple_match_result(1, len(self.positions))
         ts2 = extend_ts(
             ts,
-            node_times=np.array([1.0]),
-            results=[root_result],
-            node_metadata=[{}],
-            create_individuals=np.array([False]),
-        )
-        r1 = self._simple_match_result(0, len(self.positions))
-        r2 = self._simple_match_result(0, len(self.positions))
-        ts3 = extend_ts(
-            ts2,
             node_times=np.array([0.0, 0.0]),
             results=[r1, r2],
             node_metadata=[{}, {}],
             create_individuals=np.array([False, False]),
             ploidy=2,
         )
-        assert ts3.num_individuals == 0
+        assert ts2.num_individuals == 0
 
     def test_sites_preserved(self):
         ts = self._root_ts()
-        root_result = _dummy_result(len(self.positions))
         ts2 = extend_ts(
             ts,
-            node_times=np.array([1.0]),
-            results=[root_result],
+            node_times=np.array([0.5]),
+            results=[self._simple_match_result(1, len(self.positions))],
             node_metadata=[{}],
             create_individuals=np.array([False]),
         )
@@ -441,25 +394,17 @@ class TestExtendTs:
 
     def test_multiple_individuals_ploidy2(self):
         ts = self._root_ts()
-        root_result = _dummy_result(len(self.positions))
+        # 4 haplotypes → 2 individuals (parent=1 is virtual root)
+        results = [self._simple_match_result(1, len(self.positions)) for _ in range(4)]
         ts2 = extend_ts(
             ts,
-            node_times=np.array([1.0]),
-            results=[root_result],
-            node_metadata=[{}],
-            create_individuals=np.array([False]),
-        )
-        # 4 haplotypes → 2 individuals
-        results = [self._simple_match_result(0, len(self.positions)) for _ in range(4)]
-        ts3 = extend_ts(
-            ts2,
             node_times=np.array([0.0, 0.0, 0.0, 0.0]),
             results=results,
             node_metadata=[{}, {}, {}, {}],
             create_individuals=np.array([True, True, True, True]),
             ploidy=2,
         )
-        assert ts3.num_individuals == 2
+        assert ts2.num_individuals == 2
 
 
 # ---------------------------------------------------------------------------
@@ -476,28 +421,13 @@ class TestMatcherExtendCycle:
         self.intervals = np.array([[10, 51]], dtype=np.int32)
         self.num_sites = 5
 
-    def _build_root_ts_with_virtual_root(self):
-        """Create a root TS and add the virtual root node (time=1.0)."""
-        ts = make_root_ts(self.seq_len, self.positions, self.intervals)
-        root_result = MatchResult(
-            path_left=np.array([], dtype=np.int32),
-            path_right=np.array([], dtype=np.int32),
-            path_parent=np.array([], dtype=np.int32),
-            mutation_sites=np.array([], dtype=np.int32),
-            mutation_state=np.array([], dtype=np.int8),
-        )
-        ts2 = extend_ts(
-            ts,
-            node_times=np.array([1.0]),
-            results=[root_result],
-            node_metadata=[{}],
-            create_individuals=np.array([False]),
-        )
-        return ts2
+    def _build_root_ts(self):
+        """Create a root TS with ultimate root + virtual root (2 nodes)."""
+        return make_root_ts(self.seq_len, self.positions, self.intervals)
 
     def test_node_time_correct_after_cycle(self):
         """Node times in the output TS should match the input times."""
-        ts = self._build_root_ts_with_virtual_root()
+        ts = self._build_root_ts()
         # Add an ancestor at time 0.5
         ancestor_hap = np.array([0, 1, 0, 1, 0], dtype=np.int8)
         matcher = Matcher(ts, self.positions, recombination_rate=1e-4)
@@ -515,7 +445,7 @@ class TestMatcherExtendCycle:
 
     def test_matching_after_two_extends(self):
         """After adding ancestor, matching a similar haplotype gives a path."""
-        ts = self._build_root_ts_with_virtual_root()
+        ts = self._build_root_ts()
         ancestor_hap = np.array([0, 0, 1, 1, 0], dtype=np.int8)
         matcher = Matcher(ts, self.positions, recombination_rate=1e-4)
         results = matcher.match(np.array([ancestor_hap]))
@@ -537,8 +467,8 @@ class TestMatcherExtendCycle:
 
     def test_num_nodes_accumulates(self):
         """Each extend_ts call should add the expected number of nodes."""
-        ts = self._build_root_ts_with_virtual_root()
-        assert ts.num_nodes == 1
+        ts = self._build_root_ts()
+        assert ts.num_nodes == 2  # ultimate root + virtual root
 
         # Add ancestors one at a time at different time levels to avoid the
         # multi-child-of-root constraint in the C ancestor matcher.
@@ -552,7 +482,7 @@ class TestMatcherExtendCycle:
             node_metadata=[{}],
             create_individuals=np.array([False]),
         )
-        assert ts2.num_nodes == 2  # root + ancestor1
+        assert ts2.num_nodes == 3  # 2 roots + ancestor1
 
         matcher2 = Matcher(ts2, self.positions, recombination_rate=1e-4)
         hap2 = np.array([[1, 0, 0, 1, 0]], dtype=np.int8)
@@ -564,7 +494,7 @@ class TestMatcherExtendCycle:
             node_metadata=[{}],
             create_individuals=np.array([False]),
         )
-        assert ts3.num_nodes == 3  # root + 2 ancestors
+        assert ts3.num_nodes == 4  # 2 roots + 2 ancestors
 
         matcher3 = Matcher(ts3, self.positions, recombination_rate=1e-4)
         sample_hap = np.array([[0, 1, 0, 0, 1]], dtype=np.int8)
@@ -576,11 +506,11 @@ class TestMatcherExtendCycle:
             node_metadata=[{}],
             create_individuals=np.array([False]),
         )
-        assert ts4.num_nodes == 4
+        assert ts4.num_nodes == 5
 
     def test_metadata_survives_multiple_cycles(self):
         """sequence_intervals metadata should survive multiple extend_ts calls."""
-        ts = self._build_root_ts_with_virtual_root()
+        ts = self._build_root_ts()
         matcher = Matcher(ts, self.positions, recombination_rate=1e-4)
         hap = np.array([[0, 1, 0, 0, 1]], dtype=np.int8)
         results = matcher.match(hap)

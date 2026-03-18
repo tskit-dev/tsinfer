@@ -1249,9 +1249,6 @@ class HaplotypeReader:
         Returns (num_ancestor_sites,) int8 array:
         0=ancestral, 1=derived, -1=missing.
         """
-        if job.source == "ancestors" and job.sample_id == "virtual_root":
-            return np.zeros(self._num_sites, dtype=np.int8)
-
         if job.source == "ancestors":
             anc_col = self._anc_id_to_col[job.sample_id]
             return np.asarray(

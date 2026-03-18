@@ -395,12 +395,11 @@ class TestComputeGroups:
             result = runner.invoke(main, ["compute-groups", config_path])
             assert result.exit_code == 0, result.output
             records = json.loads(result.output)
-            # First record should be the virtual root
+            # First record should be an ancestor in group 0
             rec0 = records[0]
             assert rec0["haplotype_index"] == 0
-            assert rec0["time"] == 1.0
             assert rec0["group"] == 0
-            assert rec0["sample_id"] == "virtual_root"
+            assert rec0["source"] == "ancestors"
             # Every record has the expected keys
             expected_keys = {
                 "haplotype_index",
