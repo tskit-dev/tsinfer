@@ -23,7 +23,6 @@ Matching engine: Matcher, grouping algorithm, and tree sequence extension.
 from __future__ import annotations
 
 import logging
-import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 
@@ -294,8 +293,7 @@ class Matcher:
             start = int(non_missing[0])
             end = int(non_missing[-1]) + 1
 
-        with self._lock:
-            left, right, parent = self._matcher.find_path(h, start, end, match_out)
+        left, right, parent = self._matcher.find_path(h, start, end, match_out)
 
         # Convert site-index edges to absolute-position PathSegments
         path = []
@@ -341,7 +339,6 @@ class Matcher:
             If True, display a tqdm progress bar updated as jobs complete.
         """
         jobs = list(jobs)
-        self._lock = threading.Lock()
 
         results = []
         with ThreadPoolExecutor(max_workers=num_threads) as executor:
