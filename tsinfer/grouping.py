@@ -26,6 +26,7 @@ Also provides lightweight metadata loading and the ``compute_groups`` /
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import time as time_
@@ -37,6 +38,7 @@ import numpy as np
 from . import vcz as vcz_mod
 from .config import Config
 
+logging.getLogger("numba").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
@@ -470,12 +472,10 @@ def compute_match_jobs(cfg: Config) -> list[MatchJob]:
     haplotype index within each group — the same order the match loop
     processes them.
     """
-    import time
-
     logger.info("Loading haplotype metadata")
-    t0 = time.monotonic()
+    t0 = time_.monotonic()
     hap_meta = collect_haplotype_metadata(cfg)
-    elapsed = time.monotonic() - t0
+    elapsed = time_.monotonic() - t0
     num_anc = int(np.sum(hap_meta.is_ancestor))
     num_samples = len(hap_meta.times) - num_anc
     logger.info(
@@ -487,14 +487,14 @@ def compute_match_jobs(cfg: Config) -> list[MatchJob]:
     )
 
     logger.info("Computing groups")
-    t0 = time.monotonic()
+    t0 = time_.monotonic()
     groups = compute_groups(
         hap_meta.times,
         hap_meta.is_ancestor,
         hap_meta.start_positions,
         hap_meta.end_positions,
     )
-    elapsed = time.monotonic() - t0
+    elapsed = time_.monotonic() - t0
     logger.info("Computed %d groups in %.2fs", len(groups), elapsed)
 
     # Build flat list ordered by (group, haplotype_index)
@@ -527,16 +527,13 @@ def compute_groups_json(cfg: Config) -> str:
     :class:`MatchJob` — suitable for loading into pandas with
     ``pd.read_json`` or ``pd.DataFrame``.
     """
-    import dataclasses
-    import time
-
-    t0 = time.monotonic()
+    t0 = time_.monotonic()
     jobs = compute_match_jobs(cfg)
-    elapsed = time.monotonic() - t0
+    elapsed = time_.monotonic() - t0
 
     logger.info("Serialising %d match jobs to JSON", len(jobs))
-    t0 = time.monotonic()
+    t0 = time_.monotonic()
     json_str = json.dumps([dataclasses.asdict(j) for j in jobs], indent=2)
-    elapsed = time.monotonic() - t0
+    elapsed = time_.monotonic() - t0
     logger.info("Serialised in %.2fs", elapsed)
     return json_str

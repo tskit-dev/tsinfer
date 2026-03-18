@@ -42,7 +42,12 @@ from pathlib import Path
 import click
 import tskit
 
+from .ancestors import infer_ancestors
 from .config import Config
+from .pipeline import compute_groups_json
+from .pipeline import match as pipeline_match
+from .pipeline import post_process as pipeline_post_process
+from .pipeline import run as pipeline_run
 
 logger = logging.getLogger(__name__)
 
@@ -115,9 +120,6 @@ def infer_ancestors_cmd(config, threads, force, progress, verbose):
     """Build the ancestor VCZ store from the samples VCZ."""
     _setup_logging(verbose)
     cfg = Config.from_toml(config)
-
-    from .ancestors import infer_ancestors
-
     if progress and threads <= 0:
         warnings.warn(
             "--progress has no effect without --threads; "
@@ -153,9 +155,6 @@ def match_cmd(config, groups, threads, force, progress, verbose):
     if groups is not None:
         cfg.match.groups = groups
     _check_output(cfg.match.output, force)
-
-    from .pipeline import match as pipeline_match
-
     logger.info("Running match")
     ts = pipeline_match(cfg)
     ts.dump(str(cfg.match.output))
@@ -176,9 +175,6 @@ def post_process_cmd(config, input_ts, threads, force, progress, verbose):
     """Post-process a matched tree sequence."""
     _setup_logging(verbose)
     cfg = Config.from_toml(config)
-
-    from .pipeline import post_process as pipeline_post_process
-
     ts = tskit.load(input_ts)
     logger.info("Post-processing %s (%d nodes)", input_ts, ts.num_nodes)
     ts = pipeline_post_process(ts, cfg)
@@ -196,9 +192,6 @@ def run_cmd(config, threads, force, progress, verbose):
     _setup_logging(verbose)
     cfg = Config.from_toml(config)
     _check_output(cfg.match.output, force)
-
-    from .pipeline import run as pipeline_run
-
     logger.info("Running full pipeline")
     ts = pipeline_run(cfg, progress=progress, num_threads=threads)
     ts.dump(str(cfg.match.output))
@@ -230,9 +223,6 @@ def compute_groups_cmd(config, output_file, threads, force, progress, verbose):
     """Compute the haplotype grouping and print as JSON."""
     _setup_logging(verbose)
     cfg = Config.from_toml(config)
-
-    from .pipeline import compute_groups_json
-
     result = compute_groups_json(cfg)
     if output_file:
         _check_output(output_file, force)
