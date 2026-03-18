@@ -98,15 +98,9 @@ def _check_genotypes(input_store, output_ts, ploidy=1):
             continue
         i = pos_to_idx.pop(pos)
 
-        # Resolve both sides to allele strings via the input allele array.
-        # Output uses 0=ancestral, 1=derived; map to input allele indices.
         alleles = np.asarray(input_alleles[i])
-        allele_list = [str(a) for a in alleles if str(a) != ""]
-        anc_idx = allele_list.index(str(input_anc[i]))
-        out_to_in = np.array([anc_idx, 1 - anc_idx])
-
         expected = alleles[input_gt[i].reshape(-1)]
-        observed = alleles[out_to_in[variant.genotypes[sample_node_ids]]]
+        observed = alleles[variant.genotypes[sample_node_ids]]
 
         np.testing.assert_array_equal(
             observed,
