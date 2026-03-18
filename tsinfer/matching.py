@@ -177,6 +177,7 @@ def _ts_from_tsb(
                     population=pop_id if pop_id >= 0 else -1,
                 )
 
+    t0 = time_.monotonic()
     pos_arr = positions.astype(np.float64)
     el, er, ep, ec = tsb.dump_edges()
     for le, re, pe, ce in zip(el, er, ep, ec):
@@ -185,17 +186,43 @@ def _ts_from_tsb(
         tables.edges.add_row(
             left=left_coord, right=right_coord, parent=int(pe), child=int(ce)
         )
+    t_edges = time_.monotonic() - t0
 
+    t0 = time_.monotonic()
     alleles = ["0", "1"]
     ms, mn, md, _mp = tsb.dump_mutations()
     for s, n, d in zip(ms, mn, md):
         tables.mutations.add_row(
             site=int(s), node=int(n), derived_state=alleles[int(d)], parent=-1
         )
+    t_mutations = time_.monotonic() - t0
 
+    t0 = time_.monotonic()
     tables.sort()
+    t_sort = time_.monotonic() - t0
+
+    t0 = time_.monotonic()
     tables.build_index()
+    t_index = time_.monotonic() - t0
+
+    t0 = time_.monotonic()
     tables.compute_mutation_parents()
+    t_mut_parents = time_.monotonic() - t0
+
+    logger.info(
+        "ts_from_tsb: %d nodes, %d edges, %d mutations, %d sites | "
+        "edges=%.3fs mutations=%.3fs sort=%.3fs index=%.3fs mut_parents=%.3fs",
+        tables.nodes.num_rows,
+        tables.edges.num_rows,
+        tables.mutations.num_rows,
+        tables.sites.num_rows,
+        t_edges,
+        t_mutations,
+        t_sort,
+        t_index,
+        t_mut_parents,
+    )
+
     return tables.tree_sequence()
 
 
@@ -384,15 +411,20 @@ def extend_ts(
     Returns the updated tree sequence, which becomes the reference panel for
     the next group.
     """
+    t_start = time_.monotonic()
+
     positions = ts.tables.sites.position
     num_sites = ts.num_sites
     seq_len = ts.sequence_length
     meta = dict(ts.metadata) if ts.metadata is not None else {}
 
+    t0 = time_.monotonic()
     tsb = _tsb_from_ts(ts, num_sites, positions)
+    t_restore = time_.monotonic() - t0
 
     pos_arr = positions.astype(np.float64)
 
+    t0 = time_.monotonic()
     new_node_ids = []
     for time, result in zip(node_times, results):
         node_id = tsb.add_node(float(time))
@@ -426,6 +458,7 @@ def extend_ts(
                 site=site_idxs,
                 derived_state=derived,
             )
+    t_add = time_.monotonic() - t0
 
     # Build individuals (group consecutive create_individuals=True haplotypes by ploidy)
     individuals = []
@@ -448,7 +481,8 @@ def extend_ts(
             existing_meta.append(None)
     full_node_metadata = existing_meta + list(node_metadata)
 
-    return _ts_from_tsb(
+    t0 = time_.monotonic()
+    result_ts = _ts_from_tsb(
         tsb,
         num_sites,
         positions,
@@ -457,3 +491,20 @@ def extend_ts(
         individuals if len(individuals) > 0 else None,
         node_metadata=full_node_metadata,
     )
+    t_convert = time_.monotonic() - t0
+
+    logger.info(
+        "extend_ts: added %d nodes (%d total), %d edges, %d mutations, "
+        "%d individuals | restore=%.3fs add=%.3fs convert=%.3fs total=%.3fs",
+        len(new_node_ids),
+        result_ts.num_nodes,
+        result_ts.num_edges,
+        result_ts.num_mutations,
+        result_ts.num_individuals,
+        t_restore,
+        t_add,
+        t_convert,
+        time_.monotonic() - t_start,
+    )
+
+    return result_ts
