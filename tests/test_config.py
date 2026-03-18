@@ -343,33 +343,41 @@ class TestFromTomlStandard:
 
 
 class TestPathResolution:
-    def test_source_path_is_absolute(self, tmp_path):
+    def test_source_path_as_is(self, tmp_path):
         cfg = Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
-        assert cfg.sources["cohort"].path.is_absolute()
+        assert cfg.sources["cohort"].path == "samples.vcz"
 
-    def test_source_path_resolved_relative_to_cwd(self, tmp_path):
+    def test_ancestors_path_as_is(self, tmp_path):
         cfg = Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
-        assert cfg.sources["cohort"].path == Path.cwd() / "samples.vcz"
+        assert cfg.ancestors.path == "ancestors.vcz"
 
-    def test_ancestors_path_resolved(self, tmp_path):
+    def test_match_output_as_is(self, tmp_path):
         cfg = Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
-        assert cfg.ancestors.path == Path.cwd() / "ancestors.vcz"
+        assert cfg.match.output == "final.trees"
 
-    def test_match_output_resolved(self, tmp_path):
+    def test_ancestral_state_path_as_is(self, tmp_path):
         cfg = Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
-        assert cfg.match.output == Path.cwd() / "final.trees"
+        assert cfg.ancestral_state.path == "annotations.vcz"
 
-    def test_ancestral_state_path_resolved(self, tmp_path):
-        cfg = Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
-        assert cfg.ancestral_state.path == Path.cwd() / "annotations.vcz"
+    def test_absolute_path_preserved(self, tmp_path):
+        toml = """\
+[[source]]
+name = "cohort"
+path = "/data/samples.vcz"
 
-    def test_config_in_subdirectory(self, tmp_path):
-        subdir = tmp_path / "subdir"
-        subdir.mkdir()
-        toml_path = subdir / "inference.toml"
-        toml_path.write_text(_STANDARD_TOML)
-        cfg = Config.from_toml(toml_path)
-        assert cfg.sources["cohort"].path == Path.cwd() / "samples.vcz"
+[ancestors]
+path    = "/data/ancestors.vcz"
+sources = ["cohort"]
+
+[match]
+sources            = ["ancestors", "cohort"]
+output             = "/data/final.trees"
+recombination_rate = 1e-8
+"""
+        cfg = Config.from_toml(_write_toml(tmp_path, toml))
+        assert cfg.sources["cohort"].path == "/data/samples.vcz"
+        assert cfg.ancestors.path == "/data/ancestors.vcz"
+        assert cfg.match.output == "/data/final.trees"
 
     def test_remote_url_unchanged(self, tmp_path):
         toml = """\
@@ -389,7 +397,7 @@ recombination_rate = 1e-8
         cfg = Config.from_toml(_write_toml(tmp_path, toml))
         assert str(cfg.sources["cohort"].path) == "s3://bucket/samples.vcz"
 
-    def test_reference_ts_path_resolved(self, tmp_path):
+    def test_reference_ts_path_as_is(self, tmp_path):
         toml = """\
 [[source]]
 name = "cohort"
@@ -402,7 +410,7 @@ recombination_rate = 1e-8
 reference_ts       = "ref.trees"
 """
         cfg = Config.from_toml(_write_toml(tmp_path, toml))
-        assert cfg.match.reference_ts == Path.cwd() / "ref.trees"
+        assert cfg.match.reference_ts == "ref.trees"
 
 
 # ---------------------------------------------------------------------------
