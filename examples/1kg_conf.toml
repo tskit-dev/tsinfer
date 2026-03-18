@@ -5,7 +5,7 @@
 # vcf2zarr encode 1kgp_chr20.icf 1kgp_chr20.vcz -p 4
 [[source]]
 name = "1kgp_chr20"
-path = "../data/1kgp_chr20.vcz"
+path = "data/1kgp_chr20.vcz"
 # First 5Mb for development
 regions = "chr20:1-10000000"
 include = 'TYPE="snp"'
@@ -16,18 +16,18 @@ include = 'TYPE="snp"'
 # vcf2zarr encode homo_sapiens-chr20.icf homo_sapiens-chr20.vcz -p 4
 
 [ancestral_state]
-path = "../data/homo_sapiens-chr20.vcz"
+path = "data/homo_sapiens-chr20.vcz"
 field = "variant_AA"
 
 [ancestors]
-path = "../data/ancestors.vcz"          # output path for the ancestor store
+path = "data/ancestors.vcz"          # output path for the ancestor store
 sources = ["1kgp_chr20"]             # which source(s) to build from
-max_gap_length = 500_000             
+max_gap_length = 500_000
 genotype_encoding = "one_bit"
 # samples_chunk_size  = 1000         # default: 1000 (ancestor dimension)
 # variants_chunk_size = 1000         # default: 1000 (site dimension)
 
 [match]
 sources = ["1kgp_chr20"]             # which source(s) to match
-output = "../data/output.trees"         # output tree sequence path
+output = "output.trees"         # output tree sequence path
 recombination_rate=1e-8
