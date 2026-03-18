@@ -240,7 +240,10 @@ def match(
         seq_len = float(np.max(seq_intervals)) if len(seq_intervals) > 0 else 1.0
 
     # 3. Create lazy reader
-    reader = vcz_mod.HaplotypeReader(cfg.ancestors.path, cfg.sources, positions)
+    ancestral_alleles = site_alleles[:, 0]
+    reader = vcz_mod.HaplotypeReader(
+        cfg.ancestors.path, cfg.sources, positions, ancestral_alleles
+    )
 
     # 4. Build initial root TS (or resume from workdir checkpoint)
     if workdir_starting_ts is not None:
