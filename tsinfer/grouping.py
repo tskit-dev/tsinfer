@@ -91,25 +91,13 @@ def collect_haplotype_metadata(cfg: Config) -> HaplotypeMetadata:
     num_anc = len(anc_times)
     logger.info("Loaded %d ancestors from %s", num_anc, cfg.ancestors.path)
 
-    # Virtual root
-    if len(positions) > 0:
-        virtual_start = np.array([int(positions[0])], dtype=np.int32)
-        virtual_end = np.array([int(positions[-1])], dtype=np.int32)
-    else:
-        virtual_start = np.zeros(1, dtype=np.int32)
-        virtual_end = np.zeros(1, dtype=np.int32)
-
-    anc_times = np.concatenate([np.array([1.0], dtype=np.float64), anc_times])
-    anc_start = np.concatenate([virtual_start, anc_start])
-    anc_end = np.concatenate([virtual_end, anc_end])
-    total_anc = num_anc + 1
-    anc_is_ancestor = np.ones(total_anc, dtype=bool)
+    anc_is_ancestor = np.ones(num_anc, dtype=bool)
 
     # Per-haplotype identity for ancestors
     anc_ids = [str(x) for x in anc_store["sample_id"][:].tolist()]
-    anc_source: list[str] = ["ancestors"] * total_anc
-    anc_sample_id: list[str] = ["virtual_root"] + anc_ids
-    anc_ploidy_index: list[int] = [0] * total_anc
+    anc_source: list[str] = ["ancestors"] * num_anc
+    anc_sample_id: list[str] = anc_ids
+    anc_ploidy_index: list[int] = [0] * num_anc
 
     # --- Sample sources ---
     sample_times_list: list[np.ndarray] = []
@@ -414,8 +402,7 @@ def compute_groups(
     """
     Return an ordered list of haplotype-index arrays, oldest group first.
 
-    - Index 0 (virtual root) is always returned alone as groups[0].
-    - Remaining haplotypes are ordered by descending time.
+    - Haplotypes are ordered by descending time.
     - At the same time, ancestor groups come before sample groups.
     - Same-time ancestors with overlapping intervals are placed in the SAME
       group so they don't match against each other. Grouping is determined
@@ -428,13 +415,10 @@ def compute_groups(
     start_positions = np.asarray(start_positions, dtype=np.int32)
     end_positions = np.asarray(end_positions, dtype=np.int32)
 
-    # Group 0: virtual root is always index 0
-    groups = [np.array([0], dtype=np.int32)]
+    groups: list[np.ndarray] = []
 
-    # Separate remaining ancestors and samples
+    # Separate ancestors and samples
     anc_indices = np.where(is_ancestor)[0]
-    anc_indices = anc_indices[anc_indices != 0]  # exclude virtual root
-
     sample_indices = np.where(~is_ancestor)[0]
 
     # Ancestor groups via linesweep

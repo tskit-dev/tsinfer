@@ -188,9 +188,14 @@ def make_root_ts(
     sequence_intervals: np.ndarray,  # (n_intervals, 2) int32
 ) -> tskit.TreeSequence:
     """
-    Build the empty root tree sequence that starts the match loop.
-    Stores sequence_intervals in the tree sequence top-level metadata.
-    No nodes are added (the virtual root node is added in the match loop).
+    Build the root tree sequence that starts the match loop.
+
+    Creates two nodes — an ultimate root (time=2.0) and a virtual root
+    (time=1.0) — connected by an edge spanning ``[positions[0],
+    sequence_length)``.  This gives ``AncestorMatcher`` a valid tree to
+    copy from when matching the first ancestor.
+
+    Stores *sequence_intervals* in the tree sequence top-level metadata.
     """
     tables = tskit.TableCollection(sequence_length=float(sequence_length))
     tables.metadata_schema = tskit.MetadataSchema({"codec": "json"})
@@ -200,6 +205,21 @@ def make_root_ts(
     for pos in positions:
         tables.sites.add_row(position=float(pos), ancestral_state="0")
 
+    # Node 0: ultimate root (time=2.0)
+    tables.nodes.add_row(time=2.0, flags=0)
+    # Node 1: virtual root (time=1.0)
+    tables.nodes.add_row(time=1.0, flags=0)
+
+    if len(positions) > 0:
+        tables.edges.add_row(
+            left=float(positions[0]),
+            right=float(sequence_length),
+            parent=0,
+            child=1,
+        )
+
+    tables.sort()
+    tables.build_index()
     return tables.tree_sequence()
 
 
@@ -338,6 +358,16 @@ def extend_ts(
         else:
             i += 1
 
+    # Build full metadata list: preserve existing node metadata, append new
+    existing_meta = []
+    has_existing_meta = ts.tables.nodes.metadata_schema.schema is not None
+    for node in ts.nodes():
+        if has_existing_meta and node.metadata:
+            existing_meta.append(node.metadata)
+        else:
+            existing_meta.append(None)
+    full_node_metadata = existing_meta + list(node_metadata)
+
     return _ts_from_tsb(
         tsb,
         num_sites,
@@ -345,4 +375,5 @@ def extend_ts(
         seq_len,
         meta,
         individuals if len(individuals) > 0 else None,
+        node_metadata=full_node_metadata,
     )

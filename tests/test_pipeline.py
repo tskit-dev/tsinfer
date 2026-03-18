@@ -489,8 +489,8 @@ class TestComputeGroupsJson:
         assert isinstance(records, list)
         assert len(records) > 0
 
-    def test_virtual_root_is_first_record(self):
-        """First record should be the virtual root in group 0."""
+    def test_first_record_is_ancestor(self):
+        """First record should be an ancestor in group 0."""
         import json
 
         sim_ts = _simulate(num_samples=4, random_seed=41)
@@ -501,9 +501,9 @@ class TestComputeGroupsJson:
         records = json.loads(compute_groups_json(cfg))
         rec0 = records[0]
         assert rec0["haplotype_index"] == 0
-        assert rec0["time"] == 1.0
         assert rec0["group"] == 0
-        assert rec0["sample_id"] == "virtual_root"
+        assert rec0["source"] == "ancestors"
+        assert rec0["sample_id"] != "virtual_root"
 
     def test_all_indices_covered(self):
         """All haplotype indices should appear exactly once."""

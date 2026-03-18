@@ -31,8 +31,6 @@ import numpy as np
 import tqdm
 import tskit
 
-import _tsinfer
-
 from . import vcz as vcz_mod
 from .ancestors import infer_ancestors
 from .config import Config
@@ -41,7 +39,7 @@ from .grouping import (
     compute_groups_json,  # noqa: F401 — re-export
     compute_match_jobs,  # noqa: F401 — re-export
 )
-from .matching import _ts_from_tsb
+from .matching import Matcher, extend_ts, make_root_ts
 
 logger = logging.getLogger(__name__)
 
@@ -175,9 +173,9 @@ def match(
     """
     Run the unified match loop over all sources listed in cfg.match.
 
-    Iterates over MatchJob objects, lazily reading one haplotype at a time
-    via HaplotypeReader, and matches each against the incrementally-built
-    tree sequence.
+    Uses the ``make_root_ts → Matcher → extend_ts`` cycle: each group of
+    haplotypes is matched against the current tree sequence, then the tree
+    sequence is extended with the results.
     """
     recombination_rate = kwargs.get("recombination_rate", cfg.match.recombination_rate)
     mismatch_ratio = kwargs.get("mismatch_ratio", cfg.match.mismatch_ratio)
@@ -193,7 +191,6 @@ def match(
     anc_store = vcz_mod.open_store(cfg.ancestors.path)
     positions = np.asarray(anc_store["variant_position"][:], dtype=np.int32)
     seq_intervals = np.asarray(anc_store["sequence_intervals"][:], dtype=np.int32)
-    num_sites = len(positions)
 
     # Derive seq_len from first sample source (or seq_intervals fallback)
     seq_len = None
@@ -207,155 +204,144 @@ def match(
     # 3. Create lazy reader
     reader = vcz_mod.HaplotypeReader(cfg.ancestors.path, cfg.sources, positions)
 
-    # 4. Build TSB
-    num_alleles = [2] * num_sites
-    tsb = _tsinfer.TreeSequenceBuilder(num_alleles)
-    metadata = {"sequence_intervals": seq_intervals.tolist()}
+    # 4. Build initial root TS (2 nodes: ultimate root + virtual root)
+    ts = make_root_ts(seq_len, positions, seq_intervals)
 
     logger.info(
         "Match: %d haplotypes, %d sites, seq_len=%.0f",
         len(jobs),
-        num_sites,
+        len(positions),
         seq_len,
     )
 
-    # 5. Perturb times
-    match_times = [j.time for j in jobs]
-    eps = 1e-10
-    seen_times = {}
-    for i, t in enumerate(match_times):
-        if t in seen_times:
-            seen_times[t] += 1
-            match_times[i] = t - eps * seen_times[t]
-        else:
-            seen_times[t] = 0
-
-    # 6. Derive ploidy from jobs
+    # 5. Derive ploidy from jobs
     sample_jobs = [j for j in jobs if j.source != "ancestors"]
     ploidy = (
         max((j.ploidy_index for j in sample_jobs), default=0) + 1 if sample_jobs else 1
     )
 
-    # 7. Match loop — iterate jobs, read haplotypes lazily
-    ordered_node_metadata = []
-    individual_groups = []
-    current_ind_nodes = []
-    individual_jobs = []  # first job of each individual
+    # 6. Group jobs by group index
+    groups_dict: dict[int, list[tuple[int, MatchJob]]] = {}
+    for idx, job in enumerate(jobs):
+        groups_dict.setdefault(job.group, []).append((idx, job))
 
-    match_iter = enumerate(jobs)
+    # 7. Match loop — process groups in order
+    individual_jobs: list[MatchJob] = []  # first job of each individual
+
+    group_iter = sorted(groups_dict.keys())
     if progress:
-        match_iter = tqdm.tqdm(
-            match_iter, total=len(jobs), desc="Matching", unit="haplotypes"
+        group_iter = tqdm.tqdm(
+            group_iter, total=len(group_iter), desc="Matching", unit="groups"
         )
 
-    for step, job in match_iter:
-        hap = reader.read_haplotype(job)
-        time = float(match_times[step])
+    for group_idx in group_iter:
+        group_jobs = groups_dict[group_idx]
 
-        if step == 0:
-            # Virtual root — add directly with no matching
-            tsb.add_node(time)
-            ordered_node_metadata.append(None)
-        else:
-            # Freeze, create matcher, match, then add
-            tsb.freeze_indexes()
+        # Read haplotypes for this group
+        haplotypes = []
+        for _, job in group_jobs:
+            haplotypes.append(reader.read_haplotype(job))
+        haplotypes_arr = np.array(haplotypes, dtype=np.int8)
 
-            d = np.diff(positions.astype(np.float64), prepend=float(positions[0]))
-            rho = float(recombination_rate) * np.maximum(d, 1.0)
-            rho = np.clip(rho, 1e-10, 1.0 - 1e-10)
+        # Match against current TS
+        matcher = Matcher(
+            ts,
+            positions,
+            recombination_rate=recombination_rate,
+            mismatch_ratio=mismatch_ratio,
+            path_compression=path_compression,
+        )
+        results = matcher.match(haplotypes_arr)
 
-            num_match = max(1, tsb.num_match_nodes)
-            mu = np.full(num_sites, mismatch_ratio / num_match)
-            mu = np.clip(mu, 1e-10, 1.0 - 1e-10)
+        # Build per-node arrays for extend_ts
+        node_times = np.array([j.time for _, j in group_jobs], dtype=np.float64)
+        node_metadata = []
+        create_individuals = np.zeros(len(group_jobs), dtype=bool)
 
-            matcher = _tsinfer.AncestorMatcher(tsb, rho.tolist(), mu.tolist())
-
-            hap_arr = np.asarray(hap, dtype=np.int8)
-            match_out = np.zeros(num_sites, dtype=np.int8)
-            non_missing = np.where(hap_arr >= 0)[0]
-            if len(non_missing) == 0:
-                start, end = 0, num_sites
-            else:
-                start = int(non_missing[0])
-                end = int(non_missing[-1]) + 1
-
-            left, right, parent = matcher.find_path(hap_arr, start, end, match_out)
-
-            in_range = np.zeros(num_sites, dtype=bool)
-            in_range[start:end] = True
-            mutation_mask = in_range & (hap_arr != match_out) & (hap_arr >= 0)
-            mutation_sites = np.where(mutation_mask)[0].astype(np.int32)
-            mutation_state = hap_arr[mutation_sites].astype(np.int8)
-
+        current_ind_count = 0
+        for i, (_, job) in enumerate(group_jobs):
             node_meta = {
                 "source": job.source,
                 "sample_id": job.sample_id,
             }
             if job.source != "ancestors":
                 node_meta["ploidy_index"] = job.ploidy_index
+                create_individuals[i] = True
+                current_ind_count += 1
+                if current_ind_count == 1:
+                    individual_jobs.append(job)
+                if current_ind_count == ploidy:
+                    current_ind_count = 0
+            node_metadata.append(node_meta)
 
-            node_id = tsb.add_node(time)
-            ordered_node_metadata.append(node_meta)
+        # Extend the tree sequence
+        ts = extend_ts(
+            ts,
+            node_times=node_times,
+            results=results,
+            node_metadata=node_metadata,
+            create_individuals=create_individuals,
+            ploidy=ploidy,
+            path_compression=path_compression,
+        )
 
-            if len(left) > 0:
-                tsb.add_path(
-                    child=node_id,
-                    left=list(left),
-                    right=list(right),
-                    parent=list(parent),
-                    compress=path_compression,
-                )
-
-            if len(mutation_sites) > 0:
-                tsb.add_mutations(
-                    node=node_id,
-                    site=mutation_sites.tolist(),
-                    derived_state=mutation_state.tolist(),
-                )
-
-        # Track individuals — samples only (ancestors never create individuals)
-        if job.source != "ancestors":
-            current_ind_nodes.append(tsb.num_nodes - 1)
-            if len(current_ind_nodes) == 1:
-                individual_jobs.append(job)
-            if len(current_ind_nodes) == ploidy:
-                individual_groups.append(current_ind_nodes)
-                current_ind_nodes = []
-
-    # Handle any remaining partial individual
-    if current_ind_nodes:
-        individual_groups.append(current_ind_nodes)
-
-    # Build individual metadata and populations
+    # 8. Apply individual/population metadata as post-processing
     ind_result = _build_individual_metadata(cfg, individual_jobs, ploidy)
+
+    if ind_result.metadata is not None or ind_result.population_names is not None:
+        ts = _apply_individual_metadata(ts, ind_result)
 
     logger.info(
         "Match complete: %d nodes, %d individuals",
-        tsb.num_nodes,
-        len(individual_groups),
-    )
-
-    # Convert TSB to tree sequence
-    ts = _ts_from_tsb(
-        tsb,
-        num_sites,
-        positions,
-        seq_len,
-        metadata,
-        individual_groups if individual_groups else None,
-        node_metadata=ordered_node_metadata if any(ordered_node_metadata) else None,
-        individual_metadata=ind_result.metadata
-        if ind_result.metadata is not None
-        else None,
-        populations=ind_result.population_indices
-        if ind_result.population_indices is not None
-        else None,
-        population_names=ind_result.population_names
-        if ind_result.population_names is not None
-        else None,
+        ts.num_nodes,
+        ts.num_individuals,
     )
 
     return ts
+
+
+def _apply_individual_metadata(
+    ts: tskit.TreeSequence,
+    ind_result: _IndividualMetadataResult,
+) -> tskit.TreeSequence:
+    """Apply individual metadata and population assignments to a tree sequence."""
+    tables = ts.dump_tables()
+
+    # Add populations if specified
+    if ind_result.population_names is not None:
+        tables.populations.metadata_schema = tskit.MetadataSchema({"codec": "json"})
+        for pop_name in ind_result.population_names:
+            tables.populations.add_row(metadata={"name": pop_name})
+
+    # Apply individual metadata
+    if ind_result.metadata is not None and tables.individuals.num_rows > 0:
+        tables.individuals.metadata_schema = tskit.MetadataSchema({"codec": "json"})
+        old_inds = tables.individuals.copy()
+        tables.individuals.clear()
+        for i in range(old_inds.num_rows):
+            md = ind_result.metadata[i] if i < len(ind_result.metadata) else None
+            if md is not None:
+                tables.individuals.add_row(metadata=md)
+            else:
+                tables.individuals.add_row()
+
+    # Apply population assignments
+    if ind_result.population_indices is not None:
+        pop_lookup = {
+            ind_id: ind_result.population_indices[ind_id]
+            for ind_id in range(len(ind_result.population_indices))
+            if ind_id < tables.individuals.num_rows
+        }
+        for node_id in range(tables.nodes.num_rows):
+            row = tables.nodes[node_id]
+            if row.individual >= 0 and row.individual in pop_lookup:
+                pop_id = pop_lookup[row.individual]
+                if pop_id >= 0:
+                    tables.nodes[node_id] = row.replace(population=pop_id)
+
+    tables.sort()
+    tables.build_index()
+    return tables.tree_sequence()
 
 
 def post_process(

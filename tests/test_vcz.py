@@ -333,22 +333,6 @@ def _make_ancestor_and_sample_stores():
 
 
 class TestHaplotypeReader:
-    def test_virtual_root_returns_zeros(self):
-        anc_store, sample_store, source, positions = _make_ancestor_and_sample_stores()
-        reader = HaplotypeReader(anc_store, {"test": source}, positions)
-        job = MatchJob(
-            haplotype_index=0,
-            source="ancestors",
-            sample_id="virtual_root",
-            ploidy_index=0,
-            time=1.0,
-            start_position=100,
-            end_position=300,
-            group=0,
-        )
-        hap = reader.read_haplotype(job)
-        np.testing.assert_array_equal(hap, [0, 0, 0])
-
     def test_ancestor_haplotype(self):
         anc_store, sample_store, source, positions = _make_ancestor_and_sample_stores()
         reader = HaplotypeReader(anc_store, {"test": source}, positions)
