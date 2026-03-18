@@ -28,7 +28,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-import tqdm
 import tskit
 
 from . import vcz as vcz_mod
@@ -228,13 +227,7 @@ def match(
     # 7. Match loop — process groups in order
     individual_jobs: list[MatchJob] = []  # first job of each individual
 
-    group_iter = sorted(groups_dict.keys())
-    if progress:
-        group_iter = tqdm.tqdm(
-            group_iter, total=len(group_iter), desc="Matching", unit="groups"
-        )
-
-    for group_idx in group_iter:
+    for group_idx in sorted(groups_dict.keys()):
         group_jobs = groups_dict[group_idx]
 
         # Match against current TS (haplotypes read on demand via reader)
@@ -246,36 +239,41 @@ def match(
             path_compression=path_compression,
         )
         job_list = [job for _, job in group_jobs]
-        results = matcher.match(job_list, reader)
+        paired_results = matcher.match(job_list, reader, progress=progress)
 
-        # Build per-node arrays for extend_ts
-        node_times = np.array([j.time for _, j in group_jobs], dtype=np.float64)
+        # Build per-node arrays for extend_ts from (job, result) pairs
+        node_times = []
         node_metadata = []
-        create_individuals = np.zeros(len(group_jobs), dtype=bool)
-
+        results = []
+        create_individuals_list = []
         current_ind_count = 0
-        for i, (_, job) in enumerate(group_jobs):
+
+        for job, result in paired_results:
+            node_times.append(job.time)
+            results.append(result)
             node_meta = {
                 "source": job.source,
                 "sample_id": job.sample_id,
             }
             if job.source != "ancestors":
                 node_meta["ploidy_index"] = job.ploidy_index
-                create_individuals[i] = True
+                create_individuals_list.append(True)
                 current_ind_count += 1
                 if current_ind_count == 1:
                     individual_jobs.append(job)
                 if current_ind_count == ploidy:
                     current_ind_count = 0
+            else:
+                create_individuals_list.append(False)
             node_metadata.append(node_meta)
 
         # Extend the tree sequence
         ts = extend_ts(
             ts,
-            node_times=node_times,
+            node_times=np.array(node_times, dtype=np.float64),
             results=results,
             node_metadata=node_metadata,
-            create_individuals=create_individuals,
+            create_individuals=np.array(create_individuals_list, dtype=bool),
             ploidy=ploidy,
             path_compression=path_compression,
         )

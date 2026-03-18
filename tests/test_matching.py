@@ -92,6 +92,11 @@ def _jobs(n):
     return [None] * n
 
 
+def _results_only(paired):
+    """Extract MatchResult list from [(job, result), ...] pairs."""
+    return [result for _, result in paired]
+
+
 def _dummy_result():
     """A MatchResult with no edges or mutations."""
     return MatchResult(path=[], mutations=[])
@@ -195,7 +200,7 @@ class TestMatcher:
         matcher = Matcher(ts, self.positions, recombination_rate=1e-4)
         results = matcher.match(_jobs(1), _ArrayReader([hap]))
         assert len(results) == 1
-        r = results[0]
+        _, r = results[0]
         # Should have path segments (copy from some ancestor)
         assert len(r.path) > 0
 
@@ -209,7 +214,7 @@ class TestMatcher:
             ts, self.positions, recombination_rate=1e-4, mismatch_ratio=1.0
         )
         results = matcher.match(_jobs(1), _ArrayReader([query_hap]))
-        r = results[0]
+        _, r = results[0]
         # There should be a mutation at position 20 (site index 1)
         mut_positions = [m.position for m in r.mutations]
         assert 20.0 in mut_positions
@@ -231,7 +236,7 @@ class TestMatcher:
         matcher = Matcher(ts, self.positions, recombination_rate=1e-4)
         results = matcher.match(_jobs(1), _ArrayReader([query_hap]))
         assert len(results) == 1
-        r = results[0]
+        _, r = results[0]
         # Missing site (position 10) should not appear in mutations
         mut_positions = [m.position for m in r.mutations]
         assert 10.0 not in mut_positions
@@ -251,7 +256,7 @@ class TestMatcher:
         ts = self._make_ts_with_one_ancestor(hap)
         matcher = Matcher(ts, self.positions, recombination_rate=1e-4)
         results = matcher.match(_jobs(1), _ArrayReader([hap]))
-        r = results[0]
+        _, r = results[0]
         assert isinstance(r.path, list)
         assert isinstance(r.mutations, list)
         for seg in r.path:
@@ -266,7 +271,7 @@ class TestMatcher:
         ts = self._make_ts_with_one_ancestor(hap)
         matcher = Matcher(ts, self.positions, recombination_rate=1e-4)
         results = matcher.match(_jobs(1), _ArrayReader([hap]))
-        r = results[0]
+        _, r = results[0]
         for seg in r.path:
             assert seg.left < seg.right
 
@@ -277,7 +282,7 @@ class TestMatcher:
         query = np.array([1, 1, 0], dtype=np.int8)
         matcher = Matcher(ts, self.positions, recombination_rate=1e-4)
         results = matcher.match(_jobs(1), _ArrayReader([query]))
-        r = results[0]
+        _, r = results[0]
         assert len(r.mutations) > 0
         for m in r.mutations:
             assert isinstance(m, Mutation)
@@ -452,7 +457,7 @@ class TestMatcherExtendCycle:
         ts2 = extend_ts(
             ts,
             node_times=np.array([0.5]),
-            results=results,
+            results=_results_only(results),
             node_metadata=[{}],
             create_individuals=np.array([False]),
         )
@@ -469,7 +474,7 @@ class TestMatcherExtendCycle:
         ts2 = extend_ts(
             ts,
             node_times=np.array([0.5]),
-            results=results,
+            results=_results_only(results),
             node_metadata=[{}],
             create_individuals=np.array([False]),
         )
@@ -478,7 +483,7 @@ class TestMatcherExtendCycle:
         sample_hap = np.array([0, 0, 1, 1, 0], dtype=np.int8)
         matcher2 = Matcher(ts2, self.positions, recombination_rate=1e-4)
         results2 = matcher2.match(_jobs(1), _ArrayReader([sample_hap]))
-        r = results2[0]
+        _, r = results2[0]
         # Should have at least one path edge
         assert len(r.path) > 0
 
@@ -495,7 +500,7 @@ class TestMatcherExtendCycle:
         ts2 = extend_ts(
             ts,
             node_times=np.array([0.7]),
-            results=results1,
+            results=_results_only(results1),
             node_metadata=[{}],
             create_individuals=np.array([False]),
         )
@@ -507,7 +512,7 @@ class TestMatcherExtendCycle:
         ts3 = extend_ts(
             ts2,
             node_times=np.array([0.5]),
-            results=results2,
+            results=_results_only(results2),
             node_metadata=[{}],
             create_individuals=np.array([False]),
         )
@@ -519,7 +524,7 @@ class TestMatcherExtendCycle:
         ts4 = extend_ts(
             ts3,
             node_times=np.array([0.0]),
-            results=results4,
+            results=_results_only(results4),
             node_metadata=[{}],
             create_individuals=np.array([False]),
         )
@@ -534,7 +539,7 @@ class TestMatcherExtendCycle:
         ts2 = extend_ts(
             ts,
             node_times=np.array([0.5]),
-            results=results,
+            results=_results_only(results),
             node_metadata=[{}],
             create_individuals=np.array([False]),
         )

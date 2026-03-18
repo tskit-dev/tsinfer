@@ -23,9 +23,12 @@ Matching engine: Matcher, grouping algorithm, and tree sequence extension.
 from __future__ import annotations
 
 import logging
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 
 import numpy as np
+import tqdm as tqdm_mod
 import tskit
 
 import _tsinfer
@@ -276,9 +279,55 @@ class Matcher:
         self._matcher = _tsinfer.AncestorMatcher(tsb, rho.tolist(), mu.tolist())
         self._num_sites_val = self._num_sites
 
-    def match(self, jobs, reader) -> list[MatchResult]:
+    def _match_one(self, job, reader) -> tuple:
+        """Match a single haplotype: read, run HMM, convert to result."""
+        num_sites = self._num_sites_val
+        pos = self._positions.astype(np.float64)
+        seq_len = self._sequence_length
+
+        h = np.asarray(reader.read_haplotype(job), dtype=np.int8)
+        match_out = np.zeros(num_sites, dtype=np.int8)
+        non_missing = np.where(h >= 0)[0]
+        if len(non_missing) == 0:
+            start, end = 0, num_sites
+        else:
+            start = int(non_missing[0])
+            end = int(non_missing[-1]) + 1
+
+        with self._lock:
+            left, right, parent = self._matcher.find_path(h, start, end, match_out)
+
+        # Convert site-index edges to absolute-position PathSegments
+        path = []
+        for li, ri, pi in zip(left, right, parent):
+            l_pos = float(pos[li])
+            r_pos = float(pos[ri]) if ri < num_sites else float(seq_len)
+            path.append(PathSegment(left=l_pos, right=r_pos, parent=int(pi)))
+
+        # Detect mutations and convert to absolute positions
+        in_range = np.zeros(num_sites, dtype=bool)
+        in_range[start:end] = True
+        mutation_mask = in_range & (h != match_out) & (h >= 0)
+        mut_site_idxs = np.where(mutation_mask)[0]
+        mutations = [
+            Mutation(position=float(pos[si]), derived_state=int(h[si]))
+            for si in mut_site_idxs
+        ]
+
+        return (job, MatchResult(path=path, mutations=mutations))
+
+    def match(
+        self,
+        jobs,
+        reader,
+        num_threads: int = 1,
+        progress: bool = False,
+    ) -> list[tuple]:
         """
         Run the HMM for each job, reading haplotypes on demand via *reader*.
+
+        Returns a list of ``(job, MatchResult)`` tuples.  When
+        *num_threads* > 1 the order may differ from the input *jobs*.
 
         Parameters
         ----------
@@ -286,44 +335,30 @@ class Matcher:
             Objects passed to ``reader.read_haplotype(job)`` one at a time.
         reader : object
             Anything with a ``read_haplotype(job) -> np.ndarray`` method.
+        num_threads : int
+            Maximum worker threads (default 1 — sequential).
+        progress : bool
+            If True, display a tqdm progress bar updated as jobs complete.
         """
-        num_sites = self._num_sites_val
-        pos = self._positions.astype(np.float64)
-        seq_len = self._sequence_length
+        jobs = list(jobs)
+        self._lock = threading.Lock()
+
         results = []
-        for job in jobs:
-            h = np.asarray(reader.read_haplotype(job), dtype=np.int8)
-            match_out = np.zeros(num_sites, dtype=np.int8)
-            non_missing = np.where(h >= 0)[0]
-            if len(non_missing) == 0:
-                start, end = 0, num_sites
-            else:
-                start = int(non_missing[0])
-                end = int(non_missing[-1]) + 1
-
-            left, right, parent = self._matcher.find_path(h, start, end, match_out)
-
-            # Convert site-index edges to absolute-position PathSegments
-            path = []
-            for li, ri, pi in zip(left, right, parent):
-                l_pos = float(pos[li])
-                r_pos = float(pos[ri]) if ri < num_sites else float(seq_len)
-                path.append(PathSegment(left=l_pos, right=r_pos, parent=int(pi)))
-
-            # Detect mutations and convert to absolute positions
-            in_range = np.zeros(num_sites, dtype=bool)
-            in_range[start:end] = True
-            mutation_mask = in_range & (h != match_out) & (h >= 0)
-            mut_site_idxs = np.where(mutation_mask)[0]
-            mutations = [
-                Mutation(
-                    position=float(pos[si]),
-                    derived_state=int(h[si]),
+        with ThreadPoolExecutor(max_workers=num_threads) as executor:
+            futures = {
+                executor.submit(self._match_one, job, reader): job for job in jobs
+            }
+            completed = as_completed(futures)
+            if progress:
+                completed = tqdm_mod.tqdm(
+                    completed,
+                    total=len(futures),
+                    desc="Matching",
+                    unit="haplotypes",
                 )
-                for si in mut_site_idxs
-            ]
+            for future in completed:
+                results.append(future.result())
 
-            results.append(MatchResult(path=path, mutations=mutations))
         return results
 
 
