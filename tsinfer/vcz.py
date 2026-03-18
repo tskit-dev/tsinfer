@@ -1183,6 +1183,7 @@ class VCZHaplotypeReader:
         self._num_ref_sites = len(self._ref_positions)
         self._samples_selection = samples_selection
         self._cache_size = cache_size
+        self._cache_lock = threading.Lock()
         self._chunk_cache: dict[int, np.ndarray] = {}
         self._cache_order: list[int] = []
 
@@ -1235,14 +1236,20 @@ class VCZHaplotypeReader:
                     break
 
     def _load_sample_chunk(self, chunk_idx: int) -> np.ndarray:
-        """Load a sample chunk from the zarr store, return raw int8 array."""
-        if chunk_idx in self._chunk_cache:
-            # Move to end (most recently used)
-            self._cache_order.remove(chunk_idx)
-            self._cache_order.append(chunk_idx)
-            return self._chunk_cache[chunk_idx]
+        """Load a sample chunk from the zarr store, return raw int8 array.
 
-        # Load the chunk: all variants × samples_in_chunk × all ploidy
+        Thread-safe: a lock protects the cache dict and LRU order list.
+        The returned numpy array remains valid even if later evicted from
+        the cache, because Python's reference counting keeps it alive.
+        """
+        with self._cache_lock:
+            if chunk_idx in self._chunk_cache:
+                # Move to end (most recently used)
+                self._cache_order.remove(chunk_idx)
+                self._cache_order.append(chunk_idx)
+                return self._chunk_cache[chunk_idx]
+
+        # Load outside the lock — zarr I/O can proceed concurrently
         col_start = chunk_idx * self._sample_chunk_size
         col_end = min(
             col_start + self._sample_chunk_size,
@@ -1253,14 +1260,19 @@ class VCZHaplotypeReader:
             dtype=np.int8,
         )
 
-        # Evict oldest if at capacity
-        if len(self._cache_order) >= self._cache_size:
-            evict_key = self._cache_order.pop(0)
-            del self._chunk_cache[evict_key]
+        with self._cache_lock:
+            # Re-check: another thread may have loaded the same chunk
+            if chunk_idx in self._chunk_cache:
+                return self._chunk_cache[chunk_idx]
 
-        self._chunk_cache[chunk_idx] = chunk_data
-        self._cache_order.append(chunk_idx)
-        return chunk_data
+            # Evict oldest if at capacity
+            if len(self._cache_order) >= self._cache_size:
+                evict_key = self._cache_order.pop(0)
+                del self._chunk_cache[evict_key]
+
+            self._chunk_cache[chunk_idx] = chunk_data
+            self._cache_order.append(chunk_idx)
+            return chunk_data
 
     def read_haplotype(self, sample_id: str, ploidy_index: int = 0) -> np.ndarray:
         """
@@ -1344,22 +1356,31 @@ class HaplotypeReader:
                 ancestor_store_path, positions, cache_size=cache_size
             ),
         }
+        self._readers_lock = threading.Lock()
 
     def _get_reader(self, source_name: str) -> VCZHaplotypeReader:
+        # Fast path: reader already exists (read-only check, safe without lock
+        # because dict reads are atomic in CPython and once a reader is
+        # inserted it is never removed).
         if source_name in self._readers:
             return self._readers[source_name]
 
-        source = self._sources[source_name]
-        store = open_store(source.path)
-        samples_selection = resolve_samples_selection(store, source.samples)
-        reader = VCZHaplotypeReader(
-            store,
-            self._positions,
-            samples_selection=samples_selection,
-            cache_size=self._cache_size,
-        )
-        self._readers[source_name] = reader
-        return reader
+        with self._readers_lock:
+            # Re-check under lock — another thread may have created it
+            if source_name in self._readers:
+                return self._readers[source_name]
+
+            source = self._sources[source_name]
+            store = open_store(source.path)
+            samples_selection = resolve_samples_selection(store, source.samples)
+            reader = VCZHaplotypeReader(
+                store,
+                self._positions,
+                samples_selection=samples_selection,
+                cache_size=self._cache_size,
+            )
+            self._readers[source_name] = reader
+            return reader
 
     def read_haplotype(self, job) -> np.ndarray:
         """
