@@ -330,13 +330,16 @@ def _make_ancestor_and_sample_stores():
         sequence_length=1000,
     )
     source = Source(path=sample_store, name="test")
-    return anc_store, sample_store, source, positions
+    ancestral_alleles = np.asarray(anc_store["variant_allele"][:])[:, 0]
+    return anc_store, sample_store, source, positions, ancestral_alleles
 
 
 class TestHaplotypeReader:
     def test_ancestor_haplotype(self):
-        anc_store, sample_store, source, positions = _make_ancestor_and_sample_stores()
-        reader = HaplotypeReader(anc_store, {"test": source}, positions)
+        anc_store, sample_store, source, positions, anc_alleles = (
+            _make_ancestor_and_sample_stores()
+        )
+        reader = HaplotypeReader(anc_store, {"test": source}, positions, anc_alleles)
         # a0 has genotype [0, 1, 0]
         job = MatchJob(
             haplotype_index=1,
@@ -352,8 +355,10 @@ class TestHaplotypeReader:
         np.testing.assert_array_equal(hap, [0, 1, 0])
 
     def test_ancestor_haplotype_second(self):
-        anc_store, sample_store, source, positions = _make_ancestor_and_sample_stores()
-        reader = HaplotypeReader(anc_store, {"test": source}, positions)
+        anc_store, sample_store, source, positions, anc_alleles = (
+            _make_ancestor_and_sample_stores()
+        )
+        reader = HaplotypeReader(anc_store, {"test": source}, positions, anc_alleles)
         # a1 has genotype [1, 0, 1]
         job = MatchJob(
             haplotype_index=2,
@@ -369,8 +374,10 @@ class TestHaplotypeReader:
         np.testing.assert_array_equal(hap, [1, 0, 1])
 
     def test_sample_haplotype_encoding(self):
-        anc_store, sample_store, source, positions = _make_ancestor_and_sample_stores()
-        reader = HaplotypeReader(anc_store, {"test": source}, positions)
+        anc_store, sample_store, source, positions, anc_alleles = (
+            _make_ancestor_and_sample_stores()
+        )
+        reader = HaplotypeReader(anc_store, {"test": source}, positions, anc_alleles)
         # sample_0: gt [0, 1, 1] → encoded [0=anc, 1=derived, 1=derived]
         job = MatchJob(
             haplotype_index=3,
@@ -386,8 +393,10 @@ class TestHaplotypeReader:
         np.testing.assert_array_equal(hap, [0, 1, 1])
 
     def test_sample_haplotype_second(self):
-        anc_store, sample_store, source, positions = _make_ancestor_and_sample_stores()
-        reader = HaplotypeReader(anc_store, {"test": source}, positions)
+        anc_store, sample_store, source, positions, anc_alleles = (
+            _make_ancestor_and_sample_stores()
+        )
+        reader = HaplotypeReader(anc_store, {"test": source}, positions, anc_alleles)
         # sample_1: gt [1, 0, 0] → encoded [1=derived, 0=anc, 0=anc]
         job = MatchJob(
             haplotype_index=4,
@@ -427,7 +436,8 @@ class TestHaplotypeReader:
             sequence_length=1000,
         )
         source = Source(path=sample_store, name="test")
-        reader = HaplotypeReader(anc_store, {"test": source}, positions)
+        anc_alleles = np.asarray(anc_store["variant_allele"][:])[:, 0]
+        reader = HaplotypeReader(anc_store, {"test": source}, positions, anc_alleles)
         job = MatchJob(
             haplotype_index=2,
             source="test",
@@ -476,7 +486,8 @@ class TestHaplotypeReader:
             "src_a": Source(path=store_a, name="src_a"),
             "src_b": Source(path=store_b, name="src_b"),
         }
-        reader = HaplotypeReader(anc_store, sources, positions)
+        anc_alleles = np.asarray(anc_store["variant_allele"][:])[:, 0]
+        reader = HaplotypeReader(anc_store, sources, positions, anc_alleles)
 
         job_a = MatchJob(
             haplotype_index=2,
@@ -512,23 +523,25 @@ class TestHaplotypeReader:
 class TestVCZHaplotypeReader:
     def test_ancestor_store_direct(self):
         """VCZHaplotypeReader reads ancestor haplotypes correctly."""
-        anc_store, _, _, positions = _make_ancestor_and_sample_stores()
-        reader = VCZHaplotypeReader(anc_store, positions)
+        anc_store, _, _, positions, anc_alleles = _make_ancestor_and_sample_stores()
+        reader = VCZHaplotypeReader(anc_store, positions, anc_alleles)
         hap = reader.read_haplotype("a0", ploidy_index=0)
         np.testing.assert_array_equal(hap, [0, 1, 0])
 
     def test_sample_store_direct(self):
         """VCZHaplotypeReader reads and polarises sample haplotypes."""
-        _, sample_store, _, positions = _make_ancestor_and_sample_stores()
-        reader = VCZHaplotypeReader(sample_store, positions)
+        _, sample_store, _, positions, anc_alleles = _make_ancestor_and_sample_stores()
+        reader = VCZHaplotypeReader(sample_store, positions, anc_alleles)
         # sample_0: gt [0, 1, 1] → encoded [0, 1, 1]
         hap = reader.read_haplotype("sample_0", ploidy_index=0)
         np.testing.assert_array_equal(hap, [0, 1, 1])
 
     def test_cache_hit(self):
         """Second read for a sample in the same chunk uses the cache."""
-        anc_store, sample_store, _, positions = _make_ancestor_and_sample_stores()
-        reader = VCZHaplotypeReader(sample_store, positions, cache_size=3)
+        anc_store, sample_store, _, positions, anc_alleles = (
+            _make_ancestor_and_sample_stores()
+        )
+        reader = VCZHaplotypeReader(sample_store, positions, anc_alleles, cache_size=3)
         reader.read_haplotype("sample_0")
         # Both samples are in the same chunk for this small store
         assert len(reader._chunk_cache) == 1
@@ -559,7 +572,8 @@ class TestVCZHaplotypeReader:
             chunks=(1, 2, 1),
         )
         cg.attrs["_ARRAY_DIMENSIONS"] = ["variants", "samples", "ploidy"]
-        reader = VCZHaplotypeReader(sample_store, positions, cache_size=2)
+        anc_alleles = np.array(["A"])
+        reader = VCZHaplotypeReader(sample_store, positions, anc_alleles, cache_size=2)
         # Read from chunk 0
         reader.read_haplotype("sample_0")
         assert len(reader._chunk_cache) == 1
@@ -582,7 +596,8 @@ class TestVCZHaplotypeReader:
             ancestral_state=np.array(["A", "A"]),
             sequence_length=1000,
         )
-        reader = VCZHaplotypeReader(sample_store, positions)
+        anc_alleles = np.array(["A", "A"])
+        reader = VCZHaplotypeReader(sample_store, positions, anc_alleles)
         hap = reader.read_haplotype("sample_0")
         assert hap[0] == -1
         assert hap[1] == 0
@@ -602,6 +617,9 @@ class TestVCZHaplotypeReader:
         )
         # Select only sample_1
         selection = np.array([1])
-        reader = VCZHaplotypeReader(sample_store, positions, samples_selection=selection)
+        anc_alleles = np.array(["A"])
+        reader = VCZHaplotypeReader(
+            sample_store, positions, anc_alleles, samples_selection=selection
+        )
         hap = reader.read_haplotype("sample_1")
         np.testing.assert_array_equal(hap, [1])

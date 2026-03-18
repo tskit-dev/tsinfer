@@ -1175,6 +1175,7 @@ class VCZHaplotypeReader:
         self,
         store,
         positions: np.ndarray,
+        ancestral_alleles: np.ndarray,
         samples_selection: np.ndarray | None = None,
         cache_size: int = 3,
     ):
@@ -1220,18 +1221,26 @@ class VCZHaplotypeReader:
             else np.empty((0, 2), dtype=np.int32)
         )
 
-        # Build ancestral allele index for polarisation
+        # Build ancestral allele index for polarisation using the
+        # authoritative ancestral alleles from the ancestor store, not
+        # the local store's variant_ancestral_allele field.
         src_alleles = np.asarray(self._store["variant_allele"][:])
         num_src_sites = len(src_positions)
-        if "variant_ancestral_allele" in self._store:
-            src_anc_state = np.asarray(self._store["variant_ancestral_allele"][:])
-        else:
-            src_anc_state = np.array([str(a[0]) for a in src_alleles], dtype=object)
+
+        # Map ref-site ancestral alleles to a position-keyed lookup
+        anc_by_pos = {
+            int(p): str(ancestral_alleles[i])
+            for i, p in enumerate(self._ref_positions.tolist())
+        }
 
         self._ancestral_allele_index = np.full(num_src_sites, -1, dtype=np.int8)
         for i in range(num_src_sites):
+            pos = int(src_positions[i])
+            anc_str = anc_by_pos.get(pos)
+            if anc_str is None:
+                continue
             for j, a in enumerate(src_alleles[i].tolist()):
-                if a and str(a) == str(src_anc_state[i]):
+                if a and str(a) == anc_str:
                     self._ancestral_allele_index[i] = j
                     break
 
@@ -1332,6 +1341,7 @@ class HaplotypeReader:
         ancestor_store_path,
         sources: dict,
         positions: np.ndarray,
+        ancestral_alleles: np.ndarray,
         cache_size: int = 3,
     ):
         """
@@ -1343,17 +1353,24 @@ class HaplotypeReader:
             cfg.sources mapping (name → Source).
         positions : np.ndarray
             Reference variant positions (the coordinate system).
+        ancestral_alleles : np.ndarray
+            (num_sites,) array of ancestral allele strings, one per
+            reference position.  Authoritative source for polarisation.
         cache_size : int
             Per-source sample chunk cache size.
         """
         self._positions = np.asarray(positions, dtype=np.int32)
+        self._ancestral_alleles = ancestral_alleles
         self._sources = sources
         self._cache_size = cache_size
 
         # Create reader for ancestors
         self._readers: dict[str, VCZHaplotypeReader] = {
             "ancestors": VCZHaplotypeReader(
-                ancestor_store_path, positions, cache_size=cache_size
+                ancestor_store_path,
+                positions,
+                ancestral_alleles,
+                cache_size=cache_size,
             ),
         }
         self._readers_lock = threading.Lock()
@@ -1376,6 +1393,7 @@ class HaplotypeReader:
             reader = VCZHaplotypeReader(
                 store,
                 self._positions,
+                self._ancestral_alleles,
                 samples_selection=samples_selection,
                 cache_size=self._cache_size,
             )
