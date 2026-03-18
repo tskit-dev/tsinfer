@@ -301,10 +301,7 @@ class Matcher:
         self,
         ts: tskit.TreeSequence,
         positions: np.ndarray,  # (num_sites,) int32 — inference site positions
-        recombination_rate,  # float or msprime.RateMap
-        mismatch_ratio: float = 1.0,
         path_compression: bool = True,
-        num_threads: int = 1,
     ):
         self._positions = np.asarray(positions, dtype=np.int32)
         self._num_sites = len(positions)
@@ -313,17 +310,8 @@ class Matcher:
 
         self._tsb = _tsb_from_ts(ts, self._num_sites, self._positions)
 
-        d = np.diff(
-            self._positions.astype(np.float64), prepend=float(self._positions[0])
-        )
-        self._rho = np.clip(
-            float(recombination_rate) * np.maximum(d, 1.0), 1e-10, 1.0 - 1e-10
-        )
-
-        num_match = max(1, self._tsb.num_match_nodes)
-        self._mu = np.clip(
-            np.full(self._num_sites, mismatch_ratio / num_match), 1e-10, 1.0 - 1e-10
-        )
+        self._rho = np.full(self._num_sites, 1e-2)
+        self._mu = np.full(self._num_sites, 1e-20)
 
     def _match_one(self, job, reader) -> tuple:
         """Match a single haplotype: read, run HMM, convert to result."""

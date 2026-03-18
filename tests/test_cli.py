@@ -76,7 +76,6 @@ sources = ["test"]
 [match]
 sources = ["test"]
 output = "{output_path}"
-recombination_rate = 1e-4
 """
     config_path = os.path.join(tmp_dir, "config.toml")
     with open(config_path, "w") as f:
@@ -101,7 +100,6 @@ sources = ["test"]
 [match]
 sources = ["test"]
 output = "{output_path}"
-recombination_rate = 1e-4
 """
     config_path = os.path.join(tmp_dir, "config.toml")
     with open(config_path, "w") as f:
@@ -142,7 +140,7 @@ class TestConfigShow:
             assert result.exit_code == 0, result.output
             assert "[source.test]" in result.output
             assert "[match]" in result.output
-            assert "recombination_rate" in result.output
+            assert "path_compression" in result.output
 
     def test_show_includes_ancestors(self):
         runner = CliRunner()
@@ -184,7 +182,6 @@ sources = ["test"]
 [match]
 sources = ["test"]
 output = "out.trees"
-recombination_rate = 1e-4
 """
             config_path = os.path.join(tmp_dir, "config.toml")
             with open(config_path, "w") as f:
@@ -236,7 +233,6 @@ sources = ["test"]
 [match]
 sources = ["test"]
 output = "{out_path}"
-recombination_rate = 1e-4
 """
             config_path = os.path.join(tmp_dir, "config.toml")
             with open(config_path, "w") as f:
@@ -266,7 +262,6 @@ sources = ["nonexistent"]
 [match]
 sources = ["test"]
 output = "{out_path}"
-recombination_rate = 1e-4
 """
             config_path = os.path.join(tmp_dir, "config.toml")
             with open(config_path, "w") as f:

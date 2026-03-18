@@ -212,8 +212,6 @@ def match(
     haplotypes is matched against the current tree sequence, then the tree
     sequence is extended with the results.
     """
-    recombination_rate = kwargs.get("recombination_rate", cfg.match.recombination_rate)
-    mismatch_ratio = kwargs.get("mismatch_ratio", cfg.match.mismatch_ratio)
     path_compression = kwargs.get("path_compression", cfg.match.path_compression)
 
     # 1. Get ordered MatchJob list (and workdir state if applicable)
@@ -295,8 +293,6 @@ def match(
         matcher = Matcher(
             ts,
             positions,
-            recombination_rate=recombination_rate,
-            mismatch_ratio=mismatch_ratio,
             path_compression=path_compression,
         )
         job_list = [job for _, job in group_jobs]

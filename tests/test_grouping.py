@@ -629,7 +629,6 @@ def _make_cfg(sample_store, ancestor_store):
         match=MatchConfig(
             sources=["test"],
             output="output.trees",
-            recombination_rate=1e-4,
         ),
     )
 
