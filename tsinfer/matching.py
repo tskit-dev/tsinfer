@@ -87,9 +87,14 @@ def _tsb_from_ts(ts: tskit.TreeSequence, num_sites: int, positions: np.ndarray):
         tsb.restore_edges(el[order], er[order], ep[order], ec[order])
 
     if ts.num_mutations > 0:
+        # Map allele strings back to TSB indices (0=ancestral, 1=derived)
+        site_anc = [s.ancestral_state for s in ts.sites()]
         ms = np.array([m.site for m in ts.mutations()], dtype=np.int32)
         mn = np.array([m.node for m in ts.mutations()], dtype=np.int32)
-        md = np.array([int(m.derived_state) for m in ts.mutations()], dtype=np.int8)
+        md = np.array(
+            [0 if m.derived_state == site_anc[m.site] else 1 for m in ts.mutations()],
+            dtype=np.int8,
+        )
         mp = np.array([m.parent for m in ts.mutations()], dtype=np.int32)
         tsb.restore_mutations(ms, mn, md, mp)
 
@@ -101,6 +106,7 @@ def _ts_from_tsb(
     tsb,
     num_sites: int,
     positions: np.ndarray,
+    site_alleles: np.ndarray | None,
     sequence_length: float,
     metadata: dict,
     individuals: list[list[int]] | None = None,
@@ -113,6 +119,9 @@ def _ts_from_tsb(
 
     Parameters
     ----------
+    site_alleles:
+        (num_sites, 2) array of allele strings per site, ordered
+        [ancestral, derived].  When *None*, falls back to ``"0"``/``"1"``.
     node_metadata:
         Per-node metadata dicts, one per node in TSB order.
     individual_metadata:
@@ -127,8 +136,13 @@ def _ts_from_tsb(
         tables.metadata_schema = tskit.MetadataSchema({"codec": "json"})
         tables.metadata = metadata
 
-    for pos in positions:
-        tables.sites.add_row(position=float(pos), ancestral_state="0")
+    if site_alleles is None:
+        site_alleles = np.array([["0", "1"]] * num_sites, dtype=object)
+
+    for idx, pos in enumerate(positions):
+        tables.sites.add_row(
+            position=float(pos), ancestral_state=str(site_alleles[idx, 0])
+        )
 
     # Create populations if specified
     if population_names is not None:
@@ -189,11 +203,13 @@ def _ts_from_tsb(
     t_edges = time_.monotonic() - t0
 
     t0 = time_.monotonic()
-    alleles = ["0", "1"]
     ms, mn, md, _mp = tsb.dump_mutations()
     for s, n, d in zip(ms, mn, md):
         tables.mutations.add_row(
-            site=int(s), node=int(n), derived_state=alleles[int(d)], parent=-1
+            site=int(s),
+            node=int(n),
+            derived_state=str(site_alleles[int(s), int(d)]),
+            parent=-1,
         )
     t_mutations = time_.monotonic() - t0
 
@@ -230,6 +246,7 @@ def make_root_ts(
     sequence_length: float,
     positions: np.ndarray,  # (num_sites,) int32
     sequence_intervals: np.ndarray,  # (n_intervals, 2) int32
+    site_alleles: np.ndarray | None = None,  # (num_sites, 2) str or None
 ) -> tskit.TreeSequence:
     """
     Build the root tree sequence that starts the match loop.
@@ -246,8 +263,12 @@ def make_root_ts(
     tables.metadata = {"sequence_intervals": np.asarray(sequence_intervals).tolist()}
 
     positions = np.asarray(positions)
-    for pos in positions:
-        tables.sites.add_row(position=float(pos), ancestral_state="0")
+    if site_alleles is None:
+        site_alleles = np.array([["0", "1"]] * len(positions), dtype=object)
+    for idx, pos in enumerate(positions):
+        tables.sites.add_row(
+            position=float(pos), ancestral_state=str(site_alleles[idx, 0])
+        )
 
     # Node 0: ultimate root (time=2.0)
     tables.nodes.add_row(time=2.0, flags=0)
@@ -394,6 +415,8 @@ class Matcher:
 
 def extend_ts(
     ts: tskit.TreeSequence,
+    *,
+    site_alleles: np.ndarray | None = None,  # (num_sites, 2) str or None
     node_times: np.ndarray,  # (n_haplotypes,) float64
     results: list[MatchResult],
     node_metadata: list[dict],  # provenance metadata per haplotype
@@ -486,6 +509,7 @@ def extend_ts(
         tsb,
         num_sites,
         positions,
+        site_alleles,
         seq_len,
         meta,
         individuals if len(individuals) > 0 else None,
