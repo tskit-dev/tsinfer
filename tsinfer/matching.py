@@ -311,26 +311,30 @@ class Matcher:
         self._sequence_length = ts.sequence_length
         self._path_compression = path_compression
 
-        tsb = _tsb_from_ts(ts, self._num_sites, self._positions)
+        self._tsb = _tsb_from_ts(ts, self._num_sites, self._positions)
 
         d = np.diff(
             self._positions.astype(np.float64), prepend=float(self._positions[0])
         )
-        rho = float(recombination_rate) * np.maximum(d, 1.0)
-        rho = np.clip(rho, 1e-10, 1.0 - 1e-10)
+        self._rho = np.clip(
+            float(recombination_rate) * np.maximum(d, 1.0), 1e-10, 1.0 - 1e-10
+        )
 
-        num_match = max(1, tsb.num_match_nodes)
-        mu = np.full(self._num_sites, mismatch_ratio / num_match)
-        mu = np.clip(mu, 1e-10, 1.0 - 1e-10)
-
-        self._matcher = _tsinfer.AncestorMatcher(tsb, rho.tolist(), mu.tolist())
-        self._num_sites_val = self._num_sites
+        num_match = max(1, self._tsb.num_match_nodes)
+        self._mu = np.clip(
+            np.full(self._num_sites, mismatch_ratio / num_match), 1e-10, 1.0 - 1e-10
+        )
 
     def _match_one(self, job, reader) -> tuple:
         """Match a single haplotype: read, run HMM, convert to result."""
-        num_sites = self._num_sites_val
+        num_sites = self._num_sites
         pos = self._positions.astype(np.float64)
         seq_len = self._sequence_length
+
+        # Each call gets its own AncestorMatcher so threads don't share state
+        t0 = time_.monotonic()
+        matcher = _tsinfer.AncestorMatcher(self._tsb, self._rho, self._mu)
+        t_init = time_.monotonic() - t0
 
         t0 = time_.monotonic()
         h = np.asarray(reader.read_haplotype(job), dtype=np.int8)
@@ -345,7 +349,7 @@ class Matcher:
             end = int(non_missing[-1]) + 1
 
         t1 = time_.monotonic()
-        left, right, parent = self._matcher.find_path(h, start, end, match_out)
+        left, right, parent = matcher.find_path(h, start, end, match_out)
         t_match = time_.monotonic() - t1
 
         # Convert site-index edges to absolute-position PathSegments
@@ -366,18 +370,19 @@ class Matcher:
         ]
 
         logger.debug(
-            "Matched job %s: read=%.4fs match=%.4fs "
+            "Matched job %s: init=%.4fs read=%.4fs match=%.4fs "
             "edges=%d mutations=%d sites=%d..%d "
             "matcher_mem=%.1fMiB mean_tb=%.1f",
             getattr(job, "haplotype_index", "?"),
+            t_init,
             t_read,
             t_match,
             len(path),
             len(mutations),
             start,
             end,
-            self._matcher.total_memory / (1024 * 1024),
-            self._matcher.mean_traceback_size,
+            matcher.total_memory / (1024 * 1024),
+            matcher.mean_traceback_size,
         )
 
         return (job, MatchResult(path=path, mutations=mutations))
