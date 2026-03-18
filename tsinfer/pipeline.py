@@ -299,7 +299,7 @@ def match(
             path_compression=path_compression,
         )
         job_list = [job for _, job in group_jobs]
-        match_iter = matcher.match(job_list, reader)
+        match_iter = matcher.match(job_list, reader, num_threads=cfg.match.num_threads)
         if progress:
             match_iter = tqdm.tqdm(
                 match_iter,
