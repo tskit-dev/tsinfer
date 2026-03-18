@@ -161,7 +161,7 @@ def match_cmd(config, workdir, keep_intermediates, threads, force, progress, ver
         cfg.match.keep_intermediates = True
     _check_output(cfg.match.output, force)
     logger.info("Running match")
-    ts = pipeline_match(cfg, progress=progress)
+    ts = pipeline_match(cfg, progress=progress, num_threads=threads)
     ts.dump(str(cfg.match.output))
     logger.info("Match complete: %d nodes, %d edges", ts.num_nodes, ts.num_edges)
 

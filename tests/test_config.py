@@ -155,7 +155,6 @@ class TestMatchConfigConstruction:
         )
         assert m.mismatch_ratio == 1.0
         assert m.path_compression is True
-        assert m.num_threads == 1
         assert m.reference_ts is None
 
     def test_with_reference_ts(self):

@@ -410,7 +410,7 @@ class Matcher:
             Maximum worker threads (default 1 — sequential).
         """
         jobs = list(jobs)
-        with ThreadPoolExecutor(max_workers=num_threads) as executor:
+        with ThreadPoolExecutor(max_workers=max(1, num_threads)) as executor:
             futures = {
                 executor.submit(self._match_one, job, reader): job for job in jobs
             }

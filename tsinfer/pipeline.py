@@ -202,6 +202,7 @@ def match(
     cfg: Config,
     reference_ts: tskit.TreeSequence | None = None,
     progress: bool = False,
+    num_threads: int = 0,
     **kwargs,
 ) -> tskit.TreeSequence:
     """
@@ -299,7 +300,7 @@ def match(
             path_compression=path_compression,
         )
         job_list = [job for _, job in group_jobs]
-        match_iter = matcher.match(job_list, reader, num_threads=cfg.match.num_threads)
+        match_iter = matcher.match(job_list, reader, num_threads=num_threads)
         if progress:
             match_iter = tqdm.tqdm(
                 match_iter,
@@ -514,7 +515,7 @@ def run(
     cfg.ancestors.path = ancestor_store
 
     try:
-        ts = match(cfg, progress=progress, **kwargs)
+        ts = match(cfg, progress=progress, num_threads=num_threads, **kwargs)
         ts = post_process(ts, cfg, **kwargs)
     finally:
         cfg.ancestors.path = original_path
