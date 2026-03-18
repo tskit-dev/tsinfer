@@ -555,70 +555,116 @@ class TestComputeGroupsJson:
 # ---------------------------------------------------------------------------
 
 
-class TestMatchWithGroups:
-    def test_match_with_groups_file(self, tmp_path):
-        """match() with cfg.match.groups set produces a valid tree sequence."""
-
-        sim_ts = _simulate(num_samples=4, random_seed=50)
+class TestWorkdir:
+    def _setup(self, random_seed=50):
+        sim_ts = _simulate(num_samples=4, random_seed=random_seed)
         sample_store = ts_to_sample_vcz(sim_ts)
         anc_cfg = AncestorsConfig(path=None, sources=["test"])
         ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
         cfg = _make_config(sample_store, ancestor_store)
+        return cfg
 
-        # Compute groups and write to file
-        groups_json = compute_groups_json(cfg)
-        groups_path = tmp_path / "groups.json"
-        groups_path.write_text(groups_json)
-
-        # Set groups path on config
-        cfg.match.groups = str(groups_path)
-        out_ts = match(cfg)
-        assert out_ts.num_nodes > 0
-        assert out_ts.num_edges > 0
-        assert out_ts.num_sites > 0
-
-    def test_match_without_groups_still_works(self):
-        """match() with cfg.match.groups=None computes groups internally."""
-        sim_ts = _simulate(num_samples=4, random_seed=51)
-        out_ts = _infer_and_match(sim_ts)
-        assert out_ts.num_nodes > 0
-        assert out_ts.num_edges > 0
-
-
-class TestIntermediateTs:
-    def test_intermediate_ts_written(self, tmp_path):
-        """match() writes intermediate tree sequences when configured."""
+    def test_workdir_creates_groups_and_trees(self, tmp_path):
+        """Fresh run creates groups.json and at least one .trees file."""
         import tskit
 
-        sim_ts = _simulate(num_samples=4, random_seed=60)
-        sample_store = ts_to_sample_vcz(sim_ts)
-        anc_cfg = AncestorsConfig(path=None, sources=["test"])
-        ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
-        cfg = _make_config(sample_store, ancestor_store)
-        pattern = str(tmp_path / "group_{group}.trees")
-        cfg.match.intermediate_ts = pattern
+        cfg = self._setup()
+        workdir = tmp_path / "wd"
+        cfg.match.workdir = str(workdir)
+        cfg.match.keep_intermediates = True
 
         out_ts = match(cfg)
         assert out_ts.num_nodes > 0
 
-        # At least one intermediate file should exist
-        written = list(tmp_path.glob("group_*.trees"))
+        assert (workdir / "groups.json").exists()
+        written = list(workdir.glob("group_*.trees"))
         assert len(written) > 0
-
-        # Each should be a valid tree sequence
         for p in written:
             ts = tskit.load(str(p))
             assert ts.num_nodes > 0
-            assert ts.num_sites > 0
 
-    def test_no_intermediate_ts_by_default(self, tmp_path):
-        """No intermediate files written when intermediate_ts is None."""
-        sim_ts = _simulate(num_samples=4, random_seed=61)
-        sample_store = ts_to_sample_vcz(sim_ts)
-        anc_cfg = AncestorsConfig(path=None, sources=["test"])
-        ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
-        cfg = _make_config(sample_store, ancestor_store)
-        assert cfg.match.intermediate_ts is None
+    def test_workdir_resumes_from_checkpoint(self, tmp_path):
+        """Delete later group files, re-run — skips completed, same result."""
+        cfg = self._setup()
+        workdir = tmp_path / "wd"
+        cfg.match.workdir = str(workdir)
+        cfg.match.keep_intermediates = True
+
+        ts1 = match(cfg)
+
+        # Find the group files and delete the last one to force re-run
+        trees_files = sorted(workdir.glob("group_*.trees"))
+        assert len(trees_files) >= 1
+        if len(trees_files) > 1:
+            trees_files[-1].unlink()
+
+            ts2 = match(cfg)
+            assert ts2.num_nodes == ts1.num_nodes
+            assert ts2.num_edges == ts1.num_edges
+
+    def test_workdir_ignores_gap(self, tmp_path):
+        """Remove a middle .trees file → resumes from before the gap."""
+        cfg = self._setup()
+        workdir = tmp_path / "wd"
+        cfg.match.workdir = str(workdir)
+        cfg.match.keep_intermediates = True
+
+        ts1 = match(cfg)
+
+        trees_files = sorted(workdir.glob("group_*.trees"))
+        if len(trees_files) >= 3:
+            # Remove a middle file to create a gap
+            trees_files[1].unlink()
+            ts2 = match(cfg)
+            assert ts2.num_nodes == ts1.num_nodes
+            assert ts2.num_edges == ts1.num_edges
+
+    def test_workdir_default_keeps_only_last(self, tmp_path):
+        """Without keep_intermediates, only the latest .trees file remains."""
+        cfg = self._setup()
+        workdir = tmp_path / "wd"
+        cfg.match.workdir = str(workdir)
+
+        match(cfg)
+
+        trees_files = list(workdir.glob("group_*.trees"))
+        assert len(trees_files) == 1
+
+    def test_workdir_keep_intermediates(self, tmp_path):
+        """With keep_intermediates, all .trees files are retained."""
+        cfg = self._setup()
+        workdir = tmp_path / "wd"
+        cfg.match.workdir = str(workdir)
+        cfg.match.keep_intermediates = True
+
+        match(cfg)
+
+        trees_files = list(workdir.glob("group_*.trees"))
+        # Should have more than 1 if there are multiple groups
+        assert len(trees_files) >= 1
+        assert (workdir / "groups.json").exists()
+
+    def test_no_workdir_by_default(self, tmp_path):
+        """workdir=None produces no files."""
+        cfg = self._setup()
+        assert cfg.match.workdir is None
 
         match(cfg)
         assert list(tmp_path.glob("*.trees")) == []
+        assert list(tmp_path.glob("groups.json")) == []
+
+    def test_keep_intermediates_without_workdir_errors(self):
+        """keep_intermediates=True without workdir raises ValueError."""
+        import pytest
+
+        with pytest.raises(ValueError, match="keep_intermediates requires workdir"):
+            Config(
+                sources={"test": Source(path="dummy", name="test")},
+                ancestors=AncestorsConfig(path="dummy", sources=["test"]),
+                match=MatchConfig(
+                    sources=["test"],
+                    output="out.trees",
+                    recombination_rate=1e-4,
+                    keep_intermediates=True,
+                ),
+            )

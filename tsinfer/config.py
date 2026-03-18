@@ -132,9 +132,8 @@ class MatchConfig:
     path_compression: bool = True
     num_threads: int = 1
     reference_ts: str | Path | None = None
-    groups: str | Path | None = None
-    # Path pattern, e.g. "intermediates/group_{group}.trees"
-    intermediate_ts: str | None = None
+    workdir: str | Path | None = None
+    keep_intermediates: bool = False
 
 
 @dataclass
@@ -179,6 +178,8 @@ class Config:
                 "Config must contain either an [ancestors] section "
                 "or [match].reference_ts"
             )
+        if self.match.keep_intermediates and self.match.workdir is None:
+            raise ValueError("keep_intermediates requires workdir to be set")
 
     def format(self) -> str:
         """Return the resolved config as a human-readable string."""
@@ -224,8 +225,10 @@ class Config:
         lines.append(f"  num_threads = {self.match.num_threads}")
         if self.match.reference_ts is not None:
             lines.append(f"  reference_ts = {self.match.reference_ts}")
-        if self.match.groups is not None:
-            lines.append(f"  groups = {self.match.groups}")
+        if self.match.workdir is not None:
+            lines.append(f"  workdir = {self.match.workdir}")
+        if self.match.keep_intermediates:
+            lines.append(f"  keep_intermediates = {self.match.keep_intermediates}")
         lines.append("")
 
         if self.post_process is not None:
@@ -288,11 +291,6 @@ class Config:
                 errors.append(
                     f"Match reference_ts path does not exist: {self.match.reference_ts}"
                 )
-
-        if self.match.groups is not None:
-            p = Path(str(self.match.groups))
-            if not p.exists():
-                errors.append(f"Match groups path does not exist: {self.match.groups}")
 
         if self.ancestral_state is not None:
             p = Path(str(self.ancestral_state.path))
@@ -359,8 +357,8 @@ _KNOWN_MATCH_KEYS = {
     "path_compression",
     "num_threads",
     "reference_ts",
-    "groups",
-    "intermediate_ts",
+    "workdir",
+    "keep_intermediates",
 }
 
 _KNOWN_INDIVIDUAL_METADATA_KEYS = {"fields", "population"}
@@ -463,8 +461,8 @@ def _parse_match(raw: dict) -> MatchConfig:
             path_compression=bool(entry.get("path_compression", True)),
             num_threads=int(entry.get("num_threads", 1)),
             reference_ts=_resolve_path(entry.get("reference_ts")),
-            groups=_resolve_path(entry.get("groups")),
-            intermediate_ts=entry.get("intermediate_ts"),
+            workdir=_resolve_path(entry.get("workdir")),
+            keep_intermediates=bool(entry.get("keep_intermediates", False)),
         )
     except KeyError as e:
         raise ValueError(f"[match] missing required key: {e}") from e

@@ -27,7 +27,6 @@ Commands:
   match             Run the unified match loop.
   post-process      Post-process a matched tree sequence.
   run               All steps in sequence.
-  compute-groups    Compute and print haplotype grouping as JSON.
   config show       Print resolved config with defaults filled in.
   config check      Validate config and verify all input paths.
 """
@@ -44,7 +43,6 @@ import tskit
 
 from .ancestors import infer_ancestors
 from .config import Config
-from .pipeline import compute_groups_json
 from .pipeline import match as pipeline_match
 from .pipeline import post_process as pipeline_post_process
 from .pipeline import run as pipeline_run
@@ -142,18 +140,25 @@ def infer_ancestors_cmd(config, threads, force, progress, verbose):
 @main.command("match")
 @_config_arg
 @click.option(
-    "--groups",
-    type=click.Path(exists=True),
+    "--workdir",
+    type=click.Path(),
     default=None,
-    help="Path to groups JSON from compute-groups.",
+    help="Directory for checkpoints; enables resume on restart.",
+)
+@click.option(
+    "--keep-intermediates",
+    is_flag=True,
+    help="Keep all intermediate .trees files in workdir.",
 )
 @_add_options(_runtime_options)
-def match_cmd(config, groups, threads, force, progress, verbose):
+def match_cmd(config, workdir, keep_intermediates, threads, force, progress, verbose):
     """Run the unified match loop (ancestors + samples)."""
     _setup_logging(verbose)
     cfg = Config.from_toml(config)
-    if groups is not None:
-        cfg.match.groups = groups
+    if workdir is not None:
+        cfg.match.workdir = workdir
+    if keep_intermediates:
+        cfg.match.keep_intermediates = True
     _check_output(cfg.match.output, force)
     logger.info("Running match")
     ts = pipeline_match(cfg, progress=progress)
@@ -206,30 +211,6 @@ def run_cmd(config, threads, force, progress, verbose):
 # ---------------------------------------------------------------------------
 # Inspection commands
 # ---------------------------------------------------------------------------
-
-
-@main.command("compute-groups")
-@_config_arg
-@click.option(
-    "-o",
-    "--output",
-    "output_file",
-    type=click.Path(),
-    default=None,
-    help="Write groups JSON to file (default: stdout).",
-)
-@_add_options(_runtime_options)
-def compute_groups_cmd(config, output_file, threads, force, progress, verbose):
-    """Compute the haplotype grouping and print as JSON."""
-    _setup_logging(verbose)
-    cfg = Config.from_toml(config)
-    result = compute_groups_json(cfg)
-    if output_file:
-        _check_output(output_file, force)
-        Path(output_file).write_text(result)
-        logger.info("Wrote groups to %s", output_file)
-    else:
-        click.echo(result)
 
 
 # ---------------------------------------------------------------------------

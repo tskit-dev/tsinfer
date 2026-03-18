@@ -22,7 +22,6 @@ Tests for the tsinfer CLI (click commands).
 
 from __future__ import annotations
 
-import json
 import os
 import tempfile
 from pathlib import Path
@@ -362,124 +361,45 @@ class TestPostProcess:
 
 
 # ---------------------------------------------------------------------------
-# TestComputeGroups
+# TestMatchWorkdirCLI
 # ---------------------------------------------------------------------------
 
 
-class TestComputeGroups:
-    def test_help(self):
-        runner = CliRunner()
-        result = runner.invoke(main, ["compute-groups", "--help"])
-        assert result.exit_code == 0
-        assert "grouping" in result.output.lower()
-
-    def test_outputs_valid_json(self):
+class TestMatchWorkdirCLI:
+    def test_match_with_workdir(self):
+        """match --workdir creates groups.json and checkpoint files."""
         runner = CliRunner()
         with tempfile.TemporaryDirectory() as tmp_dir:
             sample_path = _write_sample_vcz_to_disk(tmp_dir)
             config_path = _write_run_config(tmp_dir, sample_path)
             result = runner.invoke(main, ["infer-ancestors", config_path])
             assert result.exit_code == 0, result.output
-            result = runner.invoke(main, ["compute-groups", config_path])
-            assert result.exit_code == 0, result.output
-            records = json.loads(result.output)
-            assert isinstance(records, list)
-            assert len(records) > 0
-
-    def test_record_structure(self):
-        runner = CliRunner()
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            sample_path = _write_sample_vcz_to_disk(tmp_dir)
-            config_path = _write_run_config(tmp_dir, sample_path)
-            runner.invoke(main, ["infer-ancestors", config_path])
-            result = runner.invoke(main, ["compute-groups", config_path])
-            assert result.exit_code == 0, result.output
-            records = json.loads(result.output)
-            # First record should be an ancestor in group 0
-            rec0 = records[0]
-            assert rec0["haplotype_index"] == 0
-            assert rec0["group"] == 0
-            assert rec0["source"] == "ancestors"
-            # Every record has the expected keys
-            expected_keys = {
-                "haplotype_index",
-                "source",
-                "sample_id",
-                "ploidy_index",
-                "time",
-                "start_position",
-                "end_position",
-                "group",
-            }
-            for rec in records:
-                assert set(rec.keys()) == expected_keys
-
-    def test_all_haplotypes_accounted_for(self):
-        runner = CliRunner()
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            sample_path = _write_sample_vcz_to_disk(tmp_dir)
-            config_path = _write_run_config(tmp_dir, sample_path)
-            runner.invoke(main, ["infer-ancestors", config_path])
-            result = runner.invoke(main, ["compute-groups", config_path])
-            assert result.exit_code == 0, result.output
-            records = json.loads(result.output)
-            all_indices = {r["haplotype_index"] for r in records}
-            assert all_indices == set(range(len(records)))
-
-    def test_output_flag(self):
-        """--output writes groups JSON to file."""
-        runner = CliRunner()
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            sample_path = _write_sample_vcz_to_disk(tmp_dir)
-            config_path = _write_run_config(tmp_dir, sample_path)
-            runner.invoke(main, ["infer-ancestors", config_path])
-            output_path = os.path.join(tmp_dir, "groups.json")
-            result = runner.invoke(
-                main, ["compute-groups", config_path, "-o", output_path]
-            )
-            assert result.exit_code == 0, result.output
-            assert Path(output_path).exists()
-            records = json.loads(Path(output_path).read_text())
-            assert isinstance(records, list)
-            assert len(records) > 0
-
-    def test_output_flag_force(self):
-        """--output with existing file requires --force."""
-        runner = CliRunner()
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            sample_path = _write_sample_vcz_to_disk(tmp_dir)
-            config_path = _write_run_config(tmp_dir, sample_path)
-            runner.invoke(main, ["infer-ancestors", config_path])
-            output_path = os.path.join(tmp_dir, "groups.json")
-            # First write
-            result = runner.invoke(
-                main, ["compute-groups", config_path, "-o", output_path]
-            )
-            assert result.exit_code == 0, result.output
-            # Second write without --force should fail
-            result = runner.invoke(
-                main, ["compute-groups", config_path, "-o", output_path]
-            )
-            assert result.exit_code != 0
-            # With --force should succeed
-            result = runner.invoke(
-                main, ["compute-groups", config_path, "-o", output_path, "--force"]
-            )
-            assert result.exit_code == 0, result.output
-
-    def test_compute_groups_then_match_with_groups(self):
-        """Integration: compute-groups -o groups.json → match --groups groups.json."""
-        runner = CliRunner()
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            sample_path = _write_sample_vcz_to_disk(tmp_dir)
-            config_path = _write_run_config(tmp_dir, sample_path)
-            runner.invoke(main, ["infer-ancestors", config_path])
-            groups_path = os.path.join(tmp_dir, "groups.json")
-            result = runner.invoke(
-                main, ["compute-groups", config_path, "-o", groups_path]
-            )
-            assert result.exit_code == 0, result.output
-            result = runner.invoke(main, ["match", config_path, "--groups", groups_path])
+            workdir = os.path.join(tmp_dir, "workdir")
+            result = runner.invoke(main, ["match", config_path, "--workdir", workdir])
             assert result.exit_code == 0, result.output
             output_path = os.path.join(tmp_dir, "out.trees")
             assert Path(output_path).exists()
+            assert Path(workdir, "groups.json").exists()
+
+    def test_match_with_keep_intermediates(self):
+        """match --workdir --keep-intermediates retains all .trees files."""
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sample_path = _write_sample_vcz_to_disk(tmp_dir)
+            config_path = _write_run_config(tmp_dir, sample_path)
+            result = runner.invoke(main, ["infer-ancestors", config_path])
+            assert result.exit_code == 0, result.output
+            workdir = os.path.join(tmp_dir, "workdir")
+            result = runner.invoke(
+                main,
+                [
+                    "match",
+                    config_path,
+                    "--workdir",
+                    workdir,
+                    "--keep-intermediates",
+                ],
+            )
+            assert result.exit_code == 0, result.output
+            trees_files = list(Path(workdir).glob("group_*.trees"))
+            assert len(trees_files) >= 1
