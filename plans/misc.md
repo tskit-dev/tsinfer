@@ -8,3 +8,6 @@ of the last group to be processed. This will help with testing.
 
 - It's not clear that HaplotypeReader is behaving correctly on chunk reading with samples_selection.
   This needs careful consideration.
+
+- Get ruff to enforce no imports except at the start of the file, as Claude just loves
+using them
