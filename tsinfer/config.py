@@ -133,6 +133,8 @@ class MatchConfig:
     num_threads: int = 1
     reference_ts: str | Path | None = None
     groups: str | Path | None = None
+    # Path pattern, e.g. "intermediates/group_{group}.trees"
+    intermediate_ts: str | None = None
 
 
 @dataclass
@@ -395,6 +397,9 @@ def _parse_match(raw: dict, base: Path) -> MatchConfig:
     try:
         ref_ts = entry.get("reference_ts")
         groups = entry.get("groups")
+        intermediate_ts = entry.get("intermediate_ts")
+        if intermediate_ts is not None:
+            intermediate_ts = str(Path(base / intermediate_ts))
         return MatchConfig(
             sources=list(entry["sources"]),
             output=_resolve_path(entry["output"], base),
@@ -404,6 +409,7 @@ def _parse_match(raw: dict, base: Path) -> MatchConfig:
             num_threads=int(entry.get("num_threads", 1)),
             reference_ts=_resolve_path(ref_ts, base),
             groups=_resolve_path(groups, base),
+            intermediate_ts=intermediate_ts,
         )
     except KeyError as e:
         raise ValueError(f"[match] missing required key: {e}") from e

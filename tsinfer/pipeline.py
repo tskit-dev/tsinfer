@@ -303,6 +303,13 @@ def match(
             path_compression=path_compression,
         )
 
+        # Write intermediate tree sequence if configured
+        if cfg.match.intermediate_ts is not None:
+            path = cfg.match.intermediate_ts.format(group=group_idx)
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            ts.dump(path)
+            logger.info("Wrote intermediate tree sequence to %s", path)
+
     # 8. Apply individual/population metadata as post-processing
     ind_result = _build_individual_metadata(cfg, individual_jobs, ploidy)
 
