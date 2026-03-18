@@ -912,3 +912,60 @@ class TestConfigValidate:
         )
         errors = cfg.validate()
         assert errors == []
+
+
+# ---------------------------------------------------------------------------
+# Unknown keys
+# ---------------------------------------------------------------------------
+
+_MINIMAL_TOML = """\
+[[source]]
+name = "cohort"
+path = "samples.vcz"
+
+[ancestors]
+path    = "ancestors.vcz"
+sources = ["cohort"]
+
+[match]
+sources            = ["cohort"]
+output             = "out.trees"
+recombination_rate = 1e-8
+"""
+
+
+class TestUnknownKeys:
+    def test_unknown_top_level_key(self, tmp_path):
+        toml = _MINIMAL_TOML + '\n[bogus]\nfoo = "bar"\n'
+        with pytest.raises(ValueError, match="Unrecognised.*top-level.*bogus"):
+            Config.from_toml(_write_toml(tmp_path, toml))
+
+    def test_unknown_source_key(self, tmp_path):
+        toml = _MINIMAL_TOML.replace(
+            'path = "samples.vcz"',
+            'path = "samples.vcz"\nflavour = "vanilla"',
+        )
+        with pytest.raises(ValueError, match="Unrecognised.*source.*flavour"):
+            Config.from_toml(_write_toml(tmp_path, toml))
+
+    def test_unknown_ancestors_key(self, tmp_path):
+        toml = _MINIMAL_TOML.replace(
+            'sources = ["cohort"]',
+            'sources = ["cohort"]\nfoo = 1',
+            1,  # only replace first occurrence (ancestors section)
+        )
+        with pytest.raises(ValueError, match="Unrecognised.*ancestors.*foo"):
+            Config.from_toml(_write_toml(tmp_path, toml))
+
+    def test_unknown_match_key(self, tmp_path):
+        toml = _MINIMAL_TOML + "magic = true\n"
+        with pytest.raises(ValueError, match="Unrecognised.*match.*magic"):
+            Config.from_toml(_write_toml(tmp_path, toml))
+
+    def test_unknown_post_process_key(self, tmp_path):
+        toml = _MINIMAL_TOML + "\n[post_process]\nturbo = true\n"
+        with pytest.raises(ValueError, match="Unrecognised.*post_process.*turbo"):
+            Config.from_toml(_write_toml(tmp_path, toml))
+
+    def test_valid_config_no_error(self, tmp_path):
+        Config.from_toml(_write_toml(tmp_path, _MINIMAL_TOML))
