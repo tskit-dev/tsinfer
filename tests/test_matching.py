@@ -28,6 +28,8 @@ import tskit
 from tsinfer.matching import (
     Matcher,
     MatchResult,
+    Mutation,
+    PathSegment,
     extend_ts,
     make_root_ts,
 )
@@ -90,15 +92,9 @@ def _jobs(n):
     return [None] * n
 
 
-def _dummy_result(num_sites):
+def _dummy_result():
     """A MatchResult with no edges or mutations."""
-    return MatchResult(
-        path_left=np.array([], dtype=np.int32),
-        path_right=np.array([], dtype=np.int32),
-        path_parent=np.array([], dtype=np.int32),
-        mutation_sites=np.array([], dtype=np.int32),
-        mutation_state=np.array([], dtype=np.int8),
-    )
+    return MatchResult(path=[], mutations=[])
 
 
 # ---------------------------------------------------------------------------
@@ -200,10 +196,8 @@ class TestMatcher:
         results = matcher.match(_jobs(1), _ArrayReader([hap]))
         assert len(results) == 1
         r = results[0]
-        # Should have path edges (copy from some ancestor)
-        assert len(r.path_left) > 0
-        # Path left/right/parent should be consistent
-        assert len(r.path_left) == len(r.path_right) == len(r.path_parent)
+        # Should have path segments (copy from some ancestor)
+        assert len(r.path) > 0
 
     def test_match_with_mutation(self):
         """Haplotype that differs from ancestor gets a mutation."""
@@ -216,8 +210,9 @@ class TestMatcher:
         )
         results = matcher.match(_jobs(1), _ArrayReader([query_hap]))
         r = results[0]
-        # There should be a mutation at site 1 (index 1)
-        assert 1 in r.mutation_sites
+        # There should be a mutation at position 20 (site index 1)
+        mut_positions = [m.position for m in r.mutations]
+        assert 20.0 in mut_positions
 
     def test_match_all_missing(self):
         """All-missing haplotype should still return a MatchResult."""
@@ -237,8 +232,9 @@ class TestMatcher:
         results = matcher.match(_jobs(1), _ArrayReader([query_hap]))
         assert len(results) == 1
         r = results[0]
-        # Missing site should not appear in mutation_sites
-        assert 0 not in r.mutation_sites
+        # Missing site (position 10) should not appear in mutations
+        mut_positions = [m.position for m in r.mutations]
+        assert 10.0 not in mut_positions
 
     def test_match_returns_one_result_per_haplotype(self):
         """match() returns one MatchResult per input haplotype."""
@@ -249,37 +245,44 @@ class TestMatcher:
         results = matcher.match(_jobs(3), _ArrayReader(haplotypes))
         assert len(results) == 3
 
-    def test_match_result_arrays_are_numpy(self):
-        """MatchResult arrays should be numpy arrays."""
+    def test_match_result_types(self):
+        """MatchResult should contain PathSegment and Mutation objects."""
         hap = np.array([0, 1, 0], dtype=np.int8)
         ts = self._make_ts_with_one_ancestor(hap)
         matcher = Matcher(ts, self.positions, recombination_rate=1e-4)
         results = matcher.match(_jobs(1), _ArrayReader([hap]))
         r = results[0]
-        assert isinstance(r.path_left, np.ndarray)
-        assert isinstance(r.path_right, np.ndarray)
-        assert isinstance(r.path_parent, np.ndarray)
-        assert isinstance(r.mutation_sites, np.ndarray)
-        assert isinstance(r.mutation_state, np.ndarray)
+        assert isinstance(r.path, list)
+        assert isinstance(r.mutations, list)
+        for seg in r.path:
+            assert isinstance(seg, PathSegment)
+            assert isinstance(seg.left, float)
+            assert isinstance(seg.right, float)
+            assert isinstance(seg.parent, int)
 
-    def test_match_path_left_right_consistent(self):
-        """path_left, path_right, path_parent should have the same length."""
+    def test_path_segments_have_valid_coordinates(self):
+        """PathSegment left < right for every segment."""
         hap = np.array([0, 1, 0], dtype=np.int8)
         ts = self._make_ts_with_one_ancestor(hap)
         matcher = Matcher(ts, self.positions, recombination_rate=1e-4)
         results = matcher.match(_jobs(1), _ArrayReader([hap]))
         r = results[0]
-        assert len(r.path_left) == len(r.path_right) == len(r.path_parent)
+        for seg in r.path:
+            assert seg.left < seg.right
 
-    def test_match_mutation_sites_state_consistent(self):
-        """mutation_sites and mutation_state should have the same length."""
+    def test_mutations_have_valid_fields(self):
+        """Mutation objects should have position and derived_state."""
         hap = np.array([0, 0, 0], dtype=np.int8)
         ts = self._make_ts_with_one_ancestor(hap)
         query = np.array([1, 1, 0], dtype=np.int8)
         matcher = Matcher(ts, self.positions, recombination_rate=1e-4)
         results = matcher.match(_jobs(1), _ArrayReader([query]))
         r = results[0]
-        assert len(r.mutation_sites) == len(r.mutation_state)
+        assert len(r.mutations) > 0
+        for m in r.mutations:
+            assert isinstance(m, Mutation)
+            assert isinstance(m.position, float)
+            assert isinstance(m.derived_state, int)
 
 
 # ---------------------------------------------------------------------------
@@ -298,12 +301,11 @@ class TestExtendTs:
 
     def _simple_match_result(self, parent_id, num_sites):
         """A MatchResult that copies from parent_id across all sites."""
+        left_pos = float(self.positions[0])
+        right_pos = self.seq_len
         return MatchResult(
-            path_left=np.array([0], dtype=np.int32),
-            path_right=np.array([num_sites], dtype=np.int32),
-            path_parent=np.array([parent_id], dtype=np.int32),
-            mutation_sites=np.array([], dtype=np.int32),
-            mutation_state=np.array([], dtype=np.int8),
+            path=[PathSegment(left=left_pos, right=right_pos, parent=parent_id)],
+            mutations=[],
         )
 
     def test_node_count_increases(self):
@@ -337,11 +339,8 @@ class TestExtendTs:
         ts = self._root_ts()
         # Add node with a mutation at site 1 (parent=1 is virtual root)
         result_with_mut = MatchResult(
-            path_left=np.array([0], dtype=np.int32),
-            path_right=np.array([3], dtype=np.int32),
-            path_parent=np.array([1], dtype=np.int32),
-            mutation_sites=np.array([1], dtype=np.int32),
-            mutation_state=np.array([1], dtype=np.int8),
+            path=[PathSegment(left=10.0, right=100.0, parent=1)],
+            mutations=[Mutation(position=20.0, derived_state=1)],
         )
         ts2 = extend_ts(
             ts,
@@ -481,7 +480,7 @@ class TestMatcherExtendCycle:
         results2 = matcher2.match(_jobs(1), _ArrayReader([sample_hap]))
         r = results2[0]
         # Should have at least one path edge
-        assert len(r.path_left) > 0
+        assert len(r.path) > 0
 
     def test_num_nodes_accumulates(self):
         """Each extend_ts call should add the expected number of nodes."""
