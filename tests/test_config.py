@@ -969,3 +969,54 @@ class TestUnknownKeys:
 
     def test_valid_config_no_error(self, tmp_path):
         Config.from_toml(_write_toml(tmp_path, _MINIMAL_TOML))
+
+
+class TestWorkdirConfig:
+    def test_workdir_parsed_from_toml(self, tmp_path):
+        toml = _MINIMAL_TOML + 'workdir = "checkpoints"\n'
+        cfg = Config.from_toml(_write_toml(tmp_path, toml))
+        assert cfg.match.workdir == "checkpoints"
+
+    def test_keep_intermediates_parsed_from_toml(self, tmp_path):
+        toml = _MINIMAL_TOML + 'workdir = "checkpoints"\nkeep_intermediates = true\n'
+        cfg = Config.from_toml(_write_toml(tmp_path, toml))
+        assert cfg.match.keep_intermediates is True
+        assert cfg.match.workdir == "checkpoints"
+
+    def test_keep_intermediates_without_workdir_errors(self):
+        with pytest.raises(ValueError, match="keep_intermediates requires workdir"):
+            Config(
+                sources={"t": Source(path="x", name="t")},
+                ancestors=AncestorsConfig(path="a", sources=["t"]),
+                match=MatchConfig(
+                    sources=["t"],
+                    output="o.trees",
+                    recombination_rate=1e-8,
+                    keep_intermediates=True,
+                ),
+            )
+
+    def test_workdir_defaults_to_none(self):
+        cfg = Config(
+            sources={"t": Source(path="x", name="t")},
+            ancestors=AncestorsConfig(path="a", sources=["t"]),
+            match=MatchConfig(
+                sources=["t"],
+                output="o.trees",
+                recombination_rate=1e-8,
+            ),
+        )
+        assert cfg.match.workdir is None
+        assert cfg.match.keep_intermediates is False
+
+    def test_intermediate_ts_rejected(self, tmp_path):
+        """Old intermediate_ts key is rejected as unknown."""
+        toml = _MINIMAL_TOML + 'intermediate_ts = "foo_{group}.trees"\n'
+        with pytest.raises(ValueError, match="Unrecognised.*match.*intermediate_ts"):
+            Config.from_toml(_write_toml(tmp_path, toml))
+
+    def test_groups_rejected(self, tmp_path):
+        """Old groups key is rejected as unknown."""
+        toml = _MINIMAL_TOML + 'groups = "groups.json"\n'
+        with pytest.raises(ValueError, match="Unrecognised.*match.*groups"):
+            Config.from_toml(_write_toml(tmp_path, toml))

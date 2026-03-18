@@ -36,8 +36,7 @@ from .ancestors import infer_ancestors
 from .config import Config
 from .grouping import (
     MatchJob,
-    compute_groups_json,  # noqa: F401 — re-export
-    compute_match_jobs,  # noqa: F401 — re-export
+    compute_match_jobs,
 )
 from .matching import Matcher, extend_ts, make_root_ts
 
@@ -55,6 +54,54 @@ def _load_match_jobs(path) -> list[MatchJob]:
     """Read a groups JSON file and return a list of MatchJob objects."""
     records = json.loads(Path(path).read_text())
     return [MatchJob(**rec) for rec in records]
+
+
+def _setup_workdir(workdir, cfg):
+    """
+    Set up workdir: create dir, write or load groups.json.
+
+    Returns (jobs, last_completed_group_idx, starting_ts_or_None).
+    """
+    import dataclasses
+
+    workdir = Path(workdir)
+    workdir.mkdir(parents=True, exist_ok=True)
+    groups_path = workdir / "groups.json"
+
+    if groups_path.exists():
+        logger.info("Loading existing groups from %s", groups_path)
+        jobs = _load_match_jobs(groups_path)
+    else:
+        jobs = compute_match_jobs(cfg)
+        json_str = json.dumps([dataclasses.asdict(j) for j in jobs], indent=2)
+        groups_path.write_text(json_str)
+        logger.info("Wrote groups to %s", groups_path)
+
+    # Scan for completed group files
+    groups_dict: dict[int, list[MatchJob]] = {}
+    for job in jobs:
+        groups_dict.setdefault(job.group, [])
+    sorted_groups = sorted(groups_dict.keys())
+
+    completed = []
+    for group_idx in sorted_groups:
+        p = workdir / f"group_{group_idx}.trees"
+        if p.exists():
+            completed.append(group_idx)
+        else:
+            break
+
+    starting_ts = None
+    if completed:
+        last_path = workdir / f"group_{completed[-1]}.trees"
+        starting_ts = tskit.load(str(last_path))
+        logger.info(
+            "Resuming from group %d (%d groups already completed)",
+            completed[-1],
+            len(completed),
+        )
+
+    return jobs, set(completed), starting_ts
 
 
 def _build_individual_metadata(cfg, individual_jobs, ploidy):
@@ -181,9 +228,12 @@ def match(
     mismatch_ratio = kwargs.get("mismatch_ratio", cfg.match.mismatch_ratio)
     path_compression = kwargs.get("path_compression", cfg.match.path_compression)
 
-    # 1. Get ordered MatchJob list
-    if cfg.match.groups is not None:
-        jobs = _load_match_jobs(cfg.match.groups)
+    # 1. Get ordered MatchJob list (and workdir state if applicable)
+    workdir = cfg.match.workdir
+    completed_groups: set[int] = set()
+    workdir_starting_ts = None
+    if workdir is not None:
+        jobs, completed_groups, workdir_starting_ts = _setup_workdir(workdir, cfg)
     else:
         jobs = compute_match_jobs(cfg)
 
@@ -204,8 +254,11 @@ def match(
     # 3. Create lazy reader
     reader = vcz_mod.HaplotypeReader(cfg.ancestors.path, cfg.sources, positions)
 
-    # 4. Build initial root TS (2 nodes: ultimate root + virtual root)
-    ts = make_root_ts(seq_len, positions, seq_intervals)
+    # 4. Build initial root TS (or resume from workdir checkpoint)
+    if workdir_starting_ts is not None:
+        ts = workdir_starting_ts
+    else:
+        ts = make_root_ts(seq_len, positions, seq_intervals)
 
     logger.info(
         "Match: %d haplotypes, %d sites, seq_len=%.0f",
@@ -232,9 +285,17 @@ def match(
     total_haps = len(jobs)
     completed_haps = 0
 
+    prev_written_group = None
     for gi, group_idx in enumerate(sorted_groups):
         group_jobs = groups_dict[group_idx]
         num_in_group = len(group_jobs)
+
+        # Skip groups already completed in workdir
+        if group_idx in completed_groups:
+            completed_haps += num_in_group
+            logger.info("Group %d/%d: skipped (already in workdir)", gi + 1, num_groups)
+            continue
+
         logger.info("Group %d/%d: %d haplotypes", gi + 1, num_groups, num_in_group)
 
         # Match against current TS (haplotypes read on demand via reader)
@@ -303,12 +364,18 @@ def match(
             path_compression=path_compression,
         )
 
-        # Write intermediate tree sequence if configured
-        if cfg.match.intermediate_ts is not None:
-            path = cfg.match.intermediate_ts.format(group=group_idx)
-            Path(path).parent.mkdir(parents=True, exist_ok=True)
-            ts.dump(path)
-            logger.info("Wrote intermediate tree sequence to %s", path)
+        # Write checkpoint to workdir if configured
+        if workdir is not None:
+            wd = Path(workdir)
+            ts_path = wd / f"group_{group_idx}.trees"
+            ts.dump(str(ts_path))
+            logger.info("Wrote checkpoint to %s", ts_path)
+            # Clean up previous group file unless keep_intermediates
+            if not cfg.match.keep_intermediates and prev_written_group is not None:
+                prev_path = wd / f"group_{prev_written_group}.trees"
+                if prev_path.exists():
+                    prev_path.unlink()
+            prev_written_group = group_idx
 
     # 8. Apply individual/population metadata as post-processing
     ind_result = _build_individual_metadata(cfg, individual_jobs, ploidy)
