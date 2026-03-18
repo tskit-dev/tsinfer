@@ -247,17 +247,24 @@ def make_root_ts(
     positions: np.ndarray,  # (num_sites,) int32
     sequence_intervals: np.ndarray,  # (n_intervals, 2) int32
     site_alleles: np.ndarray | None = None,  # (num_sites, 2) str or None
+    max_time: float = 0.0,
 ) -> tskit.TreeSequence:
     """
     Build the root tree sequence that starts the match loop.
 
-    Creates two nodes — an ultimate root (time=2.0) and a virtual root
-    (time=1.0) — connected by an edge spanning ``[positions[0],
-    sequence_length)``.  This gives ``AncestorMatcher`` a valid tree to
-    copy from when matching the first ancestor.
+    Creates two nodes — an ultimate root and a virtual root — connected by
+    an edge spanning ``[positions[0], sequence_length)``.  This gives
+    ``AncestorMatcher`` a valid tree to copy from when matching the first
+    ancestor.
+
+    The virtual root is placed at ``max_time + 1`` and the ultimate root at
+    ``max_time + 2``, ensuring both are strictly older than any ancestor.
 
     Stores *sequence_intervals* in the tree sequence top-level metadata.
     """
+    virtual_root_time = max_time + 1
+    ultimate_root_time = max_time + 2
+
     tables = tskit.TableCollection(sequence_length=float(sequence_length))
     tables.metadata_schema = tskit.MetadataSchema({"codec": "json"})
     tables.metadata = {"sequence_intervals": np.asarray(sequence_intervals).tolist()}
@@ -270,10 +277,10 @@ def make_root_ts(
             position=float(pos), ancestral_state=str(site_alleles[idx, 0])
         )
 
-    # Node 0: ultimate root (time=2.0)
-    tables.nodes.add_row(time=2.0, flags=0)
-    # Node 1: virtual root (time=1.0)
-    tables.nodes.add_row(time=1.0, flags=0)
+    # Node 0: ultimate root
+    tables.nodes.add_row(time=ultimate_root_time, flags=0)
+    # Node 1: virtual root
+    tables.nodes.add_row(time=virtual_root_time, flags=0)
 
     if len(positions) > 0:
         tables.edges.add_row(

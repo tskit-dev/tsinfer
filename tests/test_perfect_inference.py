@@ -177,11 +177,25 @@ def build_perfect_ancestors(ts):
     mutations. Returns (sample_vcz, ancestor_vcz).
     """
     A = get_ancestral_haplotypes(ts)
-    # Non-sample nodes, reversed to forward time order
+    # Non-sample node IDs, reversed to forward time order
+    nonsample_ids = np.arange(ts.num_nodes - 1, ts.num_samples - 1, -1)
     A = A[ts.num_samples :][::-1]
     ancestors, start, end, focal_sites = get_ancestor_descriptors(A)
 
-    # Skip ancestors[0] — the all-zeros root — make_root_ts() creates one
+    # Skip ancestors[0] — the all-zeros root — make_root_ts() creates one.
+    # get_ancestor_descriptors prepends a synthetic root that doesn't
+    # correspond to any original node, so ancestor indices 1..N map to the
+    # rows of A that were kept.  We track which original rows those are
+    # so we can look up the real coalescent times.
+    kept_indices = []
+    idx = 0
+    for a in A:
+        segment = np.where(a != UNKNOWN_ALLELE)[0]
+        if segment.shape[0] > 0:
+            kept_indices.append(idx)
+        idx += 1
+    # kept_indices[i] corresponds to ancestors[i+1] (after the synthetic root)
+
     ancestors = ancestors[1:]
     start = start[1:]
     end = end[1:]
@@ -198,8 +212,9 @@ def build_perfect_ancestors(ts):
         hap = ancestors[i][s:e].astype(np.int8)
         genotypes[s:e, i, 0] = hap
 
-    # Times: oldest first, all < 1.0 (virtual root is at time 1.0)
-    times = np.arange(N, 0, -1, dtype=float) / (N + 1)
+    # Use real coalescent times from the original tree sequence
+    node_times = np.array([ts.node(int(n)).time for n in nonsample_ids])
+    times = np.array([node_times[ki] for ki in kept_indices], dtype=float)
 
     # Alleles
     alleles = np.array([["0", "1"]] * num_sites)
@@ -265,12 +280,15 @@ def _make_config(
 def assert_topologies_equal(original_ts, inferred_ts):
     """
     Verify exact topology recovery by simplifying both tree sequences
-    to only the leaf sample nodes, then comparing topologies via KC
-    distance (lambda=0, topology only).
+    to only the leaf sample nodes, then comparing via KC distance
+    (topology-only, lambda=0).
 
-    The inferred TS has artificial node times and ancestor nodes marked
-    as samples, so we identify the real sample nodes (time=0) and
-    simplify to just those before comparing.
+    KC distance = 0 means every tree has the same branching structure
+    for every pair of samples at every position along the genome.
+
+    Edge-table equality is not used because the original tree sequence
+    may contain multiple root nodes at different time intervals that
+    are consolidated into a single root by the inference process.
     """
     # Identify real sample nodes in the inferred TS (time=0, flagged)
     inf_samples = [
