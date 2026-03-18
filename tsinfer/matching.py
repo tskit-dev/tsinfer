@@ -27,7 +27,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 
 import numpy as np
-import tqdm as tqdm_mod
 import tskit
 
 import _tsinfer
@@ -319,13 +318,13 @@ class Matcher:
         jobs,
         reader,
         num_threads: int = 1,
-        progress: bool = False,
-    ) -> list[tuple]:
+    ):
         """
-        Run the HMM for each job, reading haplotypes on demand via *reader*.
+        Run the HMM for each job, yielding ``(job, MatchResult)`` pairs
+        as they complete.
 
-        Returns a list of ``(job, MatchResult)`` tuples.  When
-        *num_threads* > 1 the order may differ from the input *jobs*.
+        When *num_threads* > 1 the completion order may differ from the
+        input *jobs* order.
 
         Parameters
         ----------
@@ -335,28 +334,14 @@ class Matcher:
             Anything with a ``read_haplotype(job) -> np.ndarray`` method.
         num_threads : int
             Maximum worker threads (default 1 — sequential).
-        progress : bool
-            If True, display a tqdm progress bar updated as jobs complete.
         """
         jobs = list(jobs)
-
-        results = []
         with ThreadPoolExecutor(max_workers=num_threads) as executor:
             futures = {
                 executor.submit(self._match_one, job, reader): job for job in jobs
             }
-            completed = as_completed(futures)
-            if progress:
-                completed = tqdm_mod.tqdm(
-                    completed,
-                    total=len(futures),
-                    desc="Matching",
-                    unit="haplotypes",
-                )
-            for future in completed:
-                results.append(future.result())
-
-        return results
+            for future in as_completed(futures):
+                yield future.result()
 
 
 def extend_ts(
