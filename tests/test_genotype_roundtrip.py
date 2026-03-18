@@ -64,15 +64,11 @@ def _check_genotypes(input_store, output_ts, ploidy=1):
     """Assert output TS sample genotypes match input VCZ genotypes.
 
     Pre-filters to biallelic polymorphic inference sites, then compares
-    resolved allele strings.  The output encodes 0 = ancestral,
-    1 = derived; the input may have the ancestral allele at any index,
-    so we build a small index map to resolve output genotypes through
-    the input allele array.
+    resolved allele strings from both sides.
     """
     input_gt = input_store["call_genotype"][:]  # (S, N, P)
     input_pos = input_store["variant_position"][:]  # (S,)
     input_alleles = input_store["variant_allele"][:]  # (S, A)
-    input_anc = input_store["variant_ancestral_allele"][:]  # (S,)
 
     num_samples = input_gt.shape[1]
 
@@ -98,9 +94,8 @@ def _check_genotypes(input_store, output_ts, ploidy=1):
             continue
         i = pos_to_idx.pop(pos)
 
-        alleles = np.asarray(input_alleles[i])
-        expected = alleles[input_gt[i].reshape(-1)]
-        observed = alleles[variant.genotypes[sample_node_ids]]
+        expected = np.asarray(input_alleles[i])[input_gt[i].reshape(-1)]
+        observed = np.array(variant.alleles)[variant.genotypes[sample_node_ids]]
 
         np.testing.assert_array_equal(
             observed,

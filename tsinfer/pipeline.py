@@ -227,6 +227,7 @@ def match(
     # 2. Load lightweight ancestor metadata (no genotypes)
     anc_store = vcz_mod.open_store(cfg.ancestors.path)
     positions = np.asarray(anc_store["variant_position"][:], dtype=np.int32)
+    site_alleles = np.asarray(anc_store["variant_allele"][:])
     seq_intervals = np.asarray(anc_store["sequence_intervals"][:], dtype=np.int32)
 
     # Derive seq_len from first sample source (or seq_intervals fallback)
@@ -245,7 +246,7 @@ def match(
     if workdir_starting_ts is not None:
         ts = workdir_starting_ts
     else:
-        ts = make_root_ts(seq_len, positions, seq_intervals)
+        ts = make_root_ts(seq_len, positions, seq_intervals, site_alleles)
 
     logger.info(
         "Match: %d haplotypes, %d sites, seq_len=%.0f",
@@ -344,6 +345,7 @@ def match(
         # Extend the tree sequence
         ts = extend_ts(
             ts,
+            site_alleles=site_alleles,
             node_times=np.array(node_times, dtype=np.float64),
             results=results,
             node_metadata=node_metadata,
