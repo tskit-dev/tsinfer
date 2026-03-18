@@ -245,10 +245,14 @@ def match(
     )
 
     # 4. Build initial root TS (or resume from workdir checkpoint)
+    anc_times = np.asarray(anc_store["sample_time"][:], dtype=np.float64)
+    max_anc_time = float(np.max(anc_times)) if len(anc_times) > 0 else 0.0
     if workdir_starting_ts is not None:
         ts = workdir_starting_ts
     else:
-        ts = make_root_ts(seq_len, positions, seq_intervals, site_alleles)
+        ts = make_root_ts(
+            seq_len, positions, seq_intervals, site_alleles, max_time=max_anc_time
+        )
 
     logger.info(
         "Match: %d haplotypes, %d sites, seq_len=%.0f",
