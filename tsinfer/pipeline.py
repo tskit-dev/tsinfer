@@ -240,6 +240,7 @@ def match(
         )
         job_list = [job for _, job in group_jobs]
         paired_results = matcher.match(job_list, reader, progress=progress)
+        paired_results.sort(key=lambda pair: pair[0].haplotype_index)
 
         # Build per-node arrays for extend_ts from (job, result) pairs
         node_times = []
