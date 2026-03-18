@@ -156,7 +156,7 @@ def match_cmd(config, groups, threads, force, progress, verbose):
         cfg.match.groups = groups
     _check_output(cfg.match.output, force)
     logger.info("Running match")
-    ts = pipeline_match(cfg)
+    ts = pipeline_match(cfg, progress=progress)
     ts.dump(str(cfg.match.output))
     logger.info("Match complete: %d nodes, %d edges", ts.num_nodes, ts.num_edges)
 
