@@ -30,6 +30,7 @@ from helpers import make_sample_vcz
 from tsinfer.grouping import MatchJob
 from tsinfer.vcz import (
     HaplotypeReader,
+    VCZHaplotypeReader,
     num_contigs,
     open_store,
     resolve_field,
@@ -501,3 +502,106 @@ class TestHaplotypeReader:
         hap_b = reader.read_haplotype(job_b)
         np.testing.assert_array_equal(hap_a, [0, 1])
         np.testing.assert_array_equal(hap_b, [1, 0])
+
+
+# ---------------------------------------------------------------------------
+# VCZHaplotypeReader
+# ---------------------------------------------------------------------------
+
+
+class TestVCZHaplotypeReader:
+    def test_ancestor_store_direct(self):
+        """VCZHaplotypeReader reads ancestor haplotypes correctly."""
+        anc_store, _, _, positions = _make_ancestor_and_sample_stores()
+        reader = VCZHaplotypeReader(anc_store, positions)
+        hap = reader.read_haplotype("a0", ploidy_index=0)
+        np.testing.assert_array_equal(hap, [0, 1, 0])
+
+    def test_sample_store_direct(self):
+        """VCZHaplotypeReader reads and polarises sample haplotypes."""
+        _, sample_store, _, positions = _make_ancestor_and_sample_stores()
+        reader = VCZHaplotypeReader(sample_store, positions)
+        # sample_0: gt [0, 1, 1] → encoded [0, 1, 1]
+        hap = reader.read_haplotype("sample_0", ploidy_index=0)
+        np.testing.assert_array_equal(hap, [0, 1, 1])
+
+    def test_cache_hit(self):
+        """Second read for a sample in the same chunk uses the cache."""
+        anc_store, sample_store, _, positions = _make_ancestor_and_sample_stores()
+        reader = VCZHaplotypeReader(sample_store, positions, cache_size=3)
+        reader.read_haplotype("sample_0")
+        # Both samples are in the same chunk for this small store
+        assert len(reader._chunk_cache) == 1
+        reader.read_haplotype("sample_1")
+        # Should still be just 1 cached chunk
+        assert len(reader._chunk_cache) == 1
+
+    def test_cache_eviction(self):
+        """Oldest chunk is evicted when cache is full."""
+        positions = np.array([100], dtype=np.int32)
+        # Create a store with 6 samples to span multiple chunks
+        n_samples = 6
+        gt = np.zeros((1, n_samples, 1), dtype=np.int8)
+        sample_ids = np.array([f"sample_{i}" for i in range(n_samples)])
+        sample_store = make_sample_vcz(
+            genotypes=gt,
+            positions=positions,
+            alleles=np.array([["A", "T"]]),
+            ancestral_state=np.array(["A"]),
+            sequence_length=1000,
+            sample_ids=sample_ids,
+        )
+        # Replace call_genotype with one that has small sample chunks
+        del sample_store["call_genotype"]
+        cg = sample_store.create_array(
+            "call_genotype",
+            data=gt,
+            chunks=(1, 2, 1),
+        )
+        cg.attrs["_ARRAY_DIMENSIONS"] = ["variants", "samples", "ploidy"]
+        reader = VCZHaplotypeReader(sample_store, positions, cache_size=2)
+        # Read from chunk 0
+        reader.read_haplotype("sample_0")
+        assert len(reader._chunk_cache) == 1
+        # Read from chunk 1
+        reader.read_haplotype("sample_2")
+        assert len(reader._chunk_cache) == 2
+        # Read from chunk 2 — should evict chunk 0
+        reader.read_haplotype("sample_4")
+        assert len(reader._chunk_cache) == 2
+        assert 0 not in reader._chunk_cache
+
+    def test_missing_genotype(self):
+        """Missing genotypes encode as -1."""
+        positions = np.array([100, 200], dtype=np.int32)
+        gt = np.array([[[-1]], [[0]]], dtype=np.int8)
+        sample_store = make_sample_vcz(
+            genotypes=gt,
+            positions=positions,
+            alleles=np.array([["A", "T"], ["A", "T"]]),
+            ancestral_state=np.array(["A", "A"]),
+            sequence_length=1000,
+        )
+        reader = VCZHaplotypeReader(sample_store, positions)
+        hap = reader.read_haplotype("sample_0")
+        assert hap[0] == -1
+        assert hap[1] == 0
+
+    def test_samples_selection(self):
+        """VCZHaplotypeReader respects samples_selection."""
+        positions = np.array([100], dtype=np.int32)
+        gt = np.array([[[0], [1], [0]]], dtype=np.int8)
+        sample_ids = np.array(["sample_0", "sample_1", "sample_2"])
+        sample_store = make_sample_vcz(
+            genotypes=gt,
+            positions=positions,
+            alleles=np.array([["A", "T"]]),
+            ancestral_state=np.array(["A"]),
+            sequence_length=1000,
+            sample_ids=sample_ids,
+        )
+        # Select only sample_1
+        selection = np.array([1])
+        reader = VCZHaplotypeReader(sample_store, positions, samples_selection=selection)
+        hap = reader.read_haplotype("sample_1")
+        np.testing.assert_array_equal(hap, [1])

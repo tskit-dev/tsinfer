@@ -1148,137 +1148,153 @@ def finalize_ancestor_zarr(root, focal_positions_acc, compressor=None):
 # ---------------------------------------------------------------------------
 
 
-@dataclass
-class _SourceContext:
-    """Cached per-source state for HaplotypeReader."""
+class VCZHaplotypeReader:
+    """
+    Reads and polarises haplotypes from a single VCZ store.
 
-    store: zarr.Group
-    position_map: (
-        np.ndarray
-    )  # (n_aligned, 2) int32 — (ancestor_site_idx, source_site_idx)
-    ancestral_allele_index: np.ndarray  # (n_source_sites,) int8
-    sample_id_to_col: dict  # sample_id → column index
-    samples_selection: np.ndarray | None
+    Handles both ancestor and sample stores uniformly: positions are
+    aligned to a reference coordinate system, and genotypes are polarised
+    so that the ancestral allele is always 0.
 
+    Maintains an LRU cache of sample chunks to avoid repeated zarr reads
+    when successive haplotypes fall in the same chunk.
 
-class HaplotypeReader:
-    """Lazily reads and encodes individual haplotypes from VCZ stores."""
+    Parameters
+    ----------
+    store : zarr.Group or path
+        The VCZ store to read from.
+    positions : np.ndarray
+        Reference variant positions (the coordinate system to align to).
+    samples_selection : np.ndarray or None
+        Optional subset of sample indices to use.
+    cache_size : int
+        Maximum number of sample chunks to keep in the cache.
+    """
 
-    def __init__(self, ancestor_store_path, sources, positions):
-        """
-        Parameters
-        ----------
-        ancestor_store_path : path or zarr.Group
-            Path to ancestor VCZ (or in-memory Group).
-        sources : dict[str, Source]
-            cfg.sources mapping (name → Source).
-        positions : np.ndarray
-            Ancestor variant positions (the reference coordinate system).
-        """
-        self._anc_store = open_store(ancestor_store_path)
-        self._positions = np.asarray(positions, dtype=np.int32)
-        self._sources = sources
-        self._source_contexts: dict[str, _SourceContext] = {}
-        self._num_sites = len(positions)
+    def __init__(
+        self,
+        store,
+        positions: np.ndarray,
+        samples_selection: np.ndarray | None = None,
+        cache_size: int = 3,
+    ):
+        self._store = open_store(store)
+        self._ref_positions = np.asarray(positions, dtype=np.int32)
+        self._num_ref_sites = len(self._ref_positions)
+        self._samples_selection = samples_selection
+        self._cache_size = cache_size
+        self._chunk_cache: dict[int, np.ndarray] = {}
+        self._cache_order: list[int] = []
 
-        # Build ancestor sample_id → column mapping
-        anc_ids = [str(x) for x in self._anc_store["sample_id"][:].tolist()]
-        self._anc_id_to_col = {sid: i for i, sid in enumerate(anc_ids)}
-
-    def _get_source_context(self, source_name: str) -> _SourceContext:
-        if source_name in self._source_contexts:
-            return self._source_contexts[source_name]
-
-        source = self._sources[source_name]
-        store = open_store(source.path)
-
-        # Build sample_id → column mapping (respecting samples_selection)
-        samples_selection = resolve_samples_selection(store, source.samples)
-        raw_ids = store["sample_id"][:]
+        # Build sample_id → column mapping
+        raw_ids = self._store["sample_id"][:]
         if samples_selection is not None:
             raw_ids = raw_ids[samples_selection]
-        sample_id_to_col = {str(sid): i for i, sid in enumerate(raw_ids.tolist())}
+        self._sample_id_to_col = {str(sid): i for i, sid in enumerate(raw_ids.tolist())}
+
+        # Determine sample chunk size from zarr array
+        call_gt = self._store["call_genotype"]
+        if hasattr(call_gt, "chunks") and call_gt.chunks is not None:
+            self._sample_chunk_size = call_gt.chunks[1]
+        else:
+            self._sample_chunk_size = call_gt.shape[1]
+        self._ploidy = call_gt.shape[2]
+        self._num_store_samples = call_gt.shape[1]
 
         # Build position alignment map
-        src_positions = np.asarray(store["variant_position"][:], dtype=np.int32)
+        src_positions = np.asarray(self._store["variant_position"][:], dtype=np.int32)
         src_pos_to_idx = {}
         for i, p in enumerate(src_positions.tolist()):
             src_pos_to_idx[p] = i
 
         anc_idxs = []
         src_idxs = []
-        for site_idx, pos in enumerate(self._positions.tolist()):
+        for site_idx, pos in enumerate(self._ref_positions.tolist()):
             if pos in src_pos_to_idx:
                 anc_idxs.append(site_idx)
                 src_idxs.append(src_pos_to_idx[pos])
-        position_map = (
+        self._position_map = (
             np.array(list(zip(anc_idxs, src_idxs)), dtype=np.int32).reshape(-1, 2)
             if anc_idxs
             else np.empty((0, 2), dtype=np.int32)
         )
 
-        # Build ancestral allele index
-        src_alleles = np.asarray(store["variant_allele"][:])
+        # Build ancestral allele index for polarisation
+        src_alleles = np.asarray(self._store["variant_allele"][:])
         num_src_sites = len(src_positions)
-        if "variant_ancestral_allele" in store:
-            src_anc_state = np.asarray(store["variant_ancestral_allele"][:])
+        if "variant_ancestral_allele" in self._store:
+            src_anc_state = np.asarray(self._store["variant_ancestral_allele"][:])
         else:
             src_anc_state = np.array([str(a[0]) for a in src_alleles], dtype=object)
 
-        ancestral_allele_index = np.full(num_src_sites, -1, dtype=np.int8)
+        self._ancestral_allele_index = np.full(num_src_sites, -1, dtype=np.int8)
         for i in range(num_src_sites):
             for j, a in enumerate(src_alleles[i].tolist()):
                 if a and str(a) == str(src_anc_state[i]):
-                    ancestral_allele_index[i] = j
+                    self._ancestral_allele_index[i] = j
                     break
 
-        ctx = _SourceContext(
-            store=store,
-            position_map=position_map,
-            ancestral_allele_index=ancestral_allele_index,
-            sample_id_to_col=sample_id_to_col,
-            samples_selection=samples_selection,
+    def _load_sample_chunk(self, chunk_idx: int) -> np.ndarray:
+        """Load a sample chunk from the zarr store, return raw int8 array."""
+        if chunk_idx in self._chunk_cache:
+            # Move to end (most recently used)
+            self._cache_order.remove(chunk_idx)
+            self._cache_order.append(chunk_idx)
+            return self._chunk_cache[chunk_idx]
+
+        # Load the chunk: all variants × samples_in_chunk × all ploidy
+        col_start = chunk_idx * self._sample_chunk_size
+        col_end = min(
+            col_start + self._sample_chunk_size,
+            self._num_store_samples,
         )
-        self._source_contexts[source_name] = ctx
-        return ctx
+        chunk_data = np.asarray(
+            self._store["call_genotype"][:, col_start:col_end, :],
+            dtype=np.int8,
+        )
 
-    def read_haplotype(self, job) -> np.ndarray:
+        # Evict oldest if at capacity
+        if len(self._cache_order) >= self._cache_size:
+            evict_key = self._cache_order.pop(0)
+            del self._chunk_cache[evict_key]
+
+        self._chunk_cache[chunk_idx] = chunk_data
+        self._cache_order.append(chunk_idx)
+        return chunk_data
+
+    def read_haplotype(self, sample_id: str, ploidy_index: int = 0) -> np.ndarray:
         """
-        Read and encode a single haplotype for the given MatchJob.
+        Read and polarise a single haplotype.
 
-        Returns (num_ancestor_sites,) int8 array:
+        Returns (num_ref_sites,) int8 array:
         0=ancestral, 1=derived, -1=missing.
         """
-        if job.source == "ancestors":
-            anc_col = self._anc_id_to_col[job.sample_id]
-            return np.asarray(
-                self._anc_store["call_genotype"][:, anc_col, 0], dtype=np.int8
-            )
+        col = self._sample_id_to_col[sample_id]
 
-        # Sample source
-        ctx = self._get_source_context(job.source)
-        col = ctx.sample_id_to_col[job.sample_id]
-
-        # Read from the underlying store, applying samples_selection
-        if ctx.samples_selection is not None:
-            # col is relative to the filtered set; map back to store column
-            store_col = int(ctx.samples_selection[col])
+        # Map to store column (respecting samples_selection)
+        if self._samples_selection is not None:
+            store_col = int(self._samples_selection[col])
         else:
             store_col = col
 
-        raw_gt = np.asarray(
-            ctx.store["call_genotype"][:, store_col, job.ploidy_index], dtype=np.int8
-        )
+        # Determine chunk and offset
+        chunk_idx = store_col // self._sample_chunk_size
+        chunk_offset = store_col % self._sample_chunk_size
 
-        hap = np.full(self._num_sites, np.int8(-1), dtype=np.int8)
+        # Read from cache
+        chunk_data = self._load_sample_chunk(chunk_idx)
+        raw_gt = chunk_data[:, chunk_offset, ploidy_index]
 
-        if len(ctx.position_map) == 0:
+        # Align to reference positions and polarise
+        hap = np.full(self._num_ref_sites, np.int8(-1), dtype=np.int8)
+
+        if len(self._position_map) == 0:
             return hap
 
-        anc_idxs = ctx.position_map[:, 0]
-        src_idxs = ctx.position_map[:, 1]
+        anc_idxs = self._position_map[:, 0]
+        src_idxs = self._position_map[:, 1]
         raw = raw_gt[src_idxs]
-        ai = ctx.ancestral_allele_index[src_idxs]
+        ai = self._ancestral_allele_index[src_idxs]
         valid = ai >= 0
         raw_v = raw[valid]
         ai_v = ai[valid]
@@ -1290,6 +1306,70 @@ class HaplotypeReader:
         )
         hap[anc_v] = encoded
         return hap
+
+
+class HaplotypeReader:
+    """
+    Facade that routes haplotype reads to per-source VCZHaplotypeReaders.
+
+    All sources (including ancestors) are treated uniformly as VCZ stores.
+    """
+
+    def __init__(
+        self,
+        ancestor_store_path,
+        sources: dict,
+        positions: np.ndarray,
+        cache_size: int = 3,
+    ):
+        """
+        Parameters
+        ----------
+        ancestor_store_path : path or zarr.Group
+            Path to ancestor VCZ (or in-memory Group).
+        sources : dict[str, Source]
+            cfg.sources mapping (name → Source).
+        positions : np.ndarray
+            Reference variant positions (the coordinate system).
+        cache_size : int
+            Per-source sample chunk cache size.
+        """
+        self._positions = np.asarray(positions, dtype=np.int32)
+        self._sources = sources
+        self._cache_size = cache_size
+
+        # Create reader for ancestors
+        self._readers: dict[str, VCZHaplotypeReader] = {
+            "ancestors": VCZHaplotypeReader(
+                ancestor_store_path, positions, cache_size=cache_size
+            ),
+        }
+
+    def _get_reader(self, source_name: str) -> VCZHaplotypeReader:
+        if source_name in self._readers:
+            return self._readers[source_name]
+
+        source = self._sources[source_name]
+        store = open_store(source.path)
+        samples_selection = resolve_samples_selection(store, source.samples)
+        reader = VCZHaplotypeReader(
+            store,
+            self._positions,
+            samples_selection=samples_selection,
+            cache_size=self._cache_size,
+        )
+        self._readers[source_name] = reader
+        return reader
+
+    def read_haplotype(self, job) -> np.ndarray:
+        """
+        Read and encode a single haplotype for the given MatchJob.
+
+        Returns (num_ref_sites,) int8 array:
+        0=ancestral, 1=derived, -1=missing.
+        """
+        reader = self._get_reader(job.source)
+        return reader.read_haplotype(job.sample_id, job.ploidy_index)
 
 
 def write_empty_ancestor_vcz(
