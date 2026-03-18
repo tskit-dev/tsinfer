@@ -227,9 +227,15 @@ def match(
 
     # 7. Match loop — process groups in order
     individual_jobs: list[MatchJob] = []  # first job of each individual
+    sorted_groups = sorted(groups_dict.keys())
+    num_groups = len(sorted_groups)
+    total_haps = len(jobs)
+    completed_haps = 0
 
-    for group_idx in sorted(groups_dict.keys()):
+    for gi, group_idx in enumerate(sorted_groups):
         group_jobs = groups_dict[group_idx]
+        num_in_group = len(group_jobs)
+        logger.info("Group %d/%d: %d haplotypes", gi + 1, num_groups, num_in_group)
 
         # Match against current TS (haplotypes read on demand via reader)
         matcher = Matcher(
@@ -245,10 +251,20 @@ def match(
             match_iter = tqdm.tqdm(
                 match_iter,
                 total=len(job_list),
-                desc="Matching",
+                desc=f"Group {gi + 1}/{num_groups}",
                 unit="haplotypes",
             )
         paired_results = sorted(match_iter, key=lambda pair: pair[0].haplotype_index)
+
+        completed_haps += num_in_group
+        logger.info(
+            "Group %d/%d done: %d/%d haplotypes completed (%.1f%%)",
+            gi + 1,
+            num_groups,
+            completed_haps,
+            total_haps,
+            100.0 * completed_haps / total_haps if total_haps > 0 else 0,
+        )
 
         # Build per-node arrays for extend_ts from (job, result) pairs
         node_times = []

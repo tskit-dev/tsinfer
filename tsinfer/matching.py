@@ -23,6 +23,7 @@ Matching engine: Matcher, grouping algorithm, and tree sequence extension.
 from __future__ import annotations
 
 import logging
+import time as time_
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 
@@ -283,7 +284,10 @@ class Matcher:
         pos = self._positions.astype(np.float64)
         seq_len = self._sequence_length
 
+        t0 = time_.monotonic()
         h = np.asarray(reader.read_haplotype(job), dtype=np.int8)
+        t_read = time_.monotonic() - t0
+
         match_out = np.zeros(num_sites, dtype=np.int8)
         non_missing = np.where(h >= 0)[0]
         if len(non_missing) == 0:
@@ -292,7 +296,9 @@ class Matcher:
             start = int(non_missing[0])
             end = int(non_missing[-1]) + 1
 
+        t1 = time_.monotonic()
         left, right, parent = self._matcher.find_path(h, start, end, match_out)
+        t_match = time_.monotonic() - t1
 
         # Convert site-index edges to absolute-position PathSegments
         path = []
@@ -310,6 +316,21 @@ class Matcher:
             Mutation(position=float(pos[si]), derived_state=int(h[si]))
             for si in mut_site_idxs
         ]
+
+        logger.debug(
+            "Matched job %s: read=%.4fs match=%.4fs "
+            "edges=%d mutations=%d sites=%d..%d "
+            "matcher_mem=%.1fMiB mean_tb=%.1f",
+            getattr(job, "haplotype_index", "?"),
+            t_read,
+            t_match,
+            len(path),
+            len(mutations),
+            start,
+            end,
+            self._matcher.total_memory / (1024 * 1024),
+            self._matcher.mean_traceback_size,
+        )
 
         return (job, MatchResult(path=path, mutations=mutations))
 
