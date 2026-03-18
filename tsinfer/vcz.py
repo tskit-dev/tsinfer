@@ -51,6 +51,8 @@ from typing import Any
 
 import numpy as np
 import zarr
+from vcztools.retrieval import variant_chunk_iter
+from vcztools.samples import parse_samples
 from zarr.core.dtype.npy.string import VariableLengthUTF8
 
 logger = logging.getLogger(__name__)
@@ -205,8 +207,6 @@ def resolve_samples_selection(
     """
     if samples is None:
         return None
-    from vcztools.samples import parse_samples
-
     _, selection = parse_samples(samples, store["sample_id"][:])
     return selection
 
@@ -231,8 +231,6 @@ def iter_variants(
     Each yielded dict maps zarr array names to per-variant values
     (variants dimension removed).
     """
-    from vcztools.retrieval import variant_chunk_iter
-
     for chunk_data in variant_chunk_iter(
         store,
         fields=fields,

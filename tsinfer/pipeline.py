@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+import tqdm
 import tskit
 
 import _tsinfer
@@ -243,8 +244,6 @@ def match(
 
     match_iter = enumerate(jobs)
     if progress:
-        import tqdm
-
         match_iter = tqdm.tqdm(
             match_iter, total=len(jobs), desc="Matching", unit="haplotypes"
         )

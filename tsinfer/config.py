@@ -27,6 +27,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import zarr
+
 # ---------------------------------------------------------------------------
 # Field specification type
 # ---------------------------------------------------------------------------
@@ -241,8 +243,6 @@ class Config:
 
     def validate(self) -> list[str]:
         """Check that all input paths exist. Return list of error strings."""
-        import zarr
-
         errors = []
 
         for name, src in self.sources.items():
@@ -303,9 +303,9 @@ class Config:
 
     @classmethod
     def from_toml(cls, path: str | Path) -> Config:
-        """Load and parse a TOML config file; paths resolve relative to its location."""
+        """Load and parse a TOML config file; paths resolve relative to cwd."""
         path = Path(path).resolve()
-        base = path.parent
+        base = Path.cwd()
 
         with open(path, "rb") as f:
             raw = tomllib.load(f)

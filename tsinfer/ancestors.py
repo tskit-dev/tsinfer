@@ -26,7 +26,9 @@ import logging
 import time
 from dataclasses import dataclass
 
+import numcodecs
 import numpy as np
+import psutil
 import tqdm as tqdm_mod
 import zarr
 
@@ -40,8 +42,6 @@ logger = logging.getLogger(__name__)
 
 def _memory_usage_mb():
     """Return current RSS in MiB."""
-    import psutil
-
     return psutil.Process().memory_info().rss / (1024 * 1024)
 
 
@@ -511,8 +511,6 @@ def infer_ancestors(
     store = _open_source(source)
 
     # Build compressor from config
-    import numcodecs
-
     compressor = numcodecs.Blosc(
         cname=cfg.compressor,
         clevel=cfg.compression_level,

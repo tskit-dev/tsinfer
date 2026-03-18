@@ -347,21 +347,21 @@ class TestPathResolution:
         cfg = Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
         assert cfg.sources["cohort"].path.is_absolute()
 
-    def test_source_path_resolved_relative_to_config(self, tmp_path):
+    def test_source_path_resolved_relative_to_cwd(self, tmp_path):
         cfg = Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
-        assert cfg.sources["cohort"].path == tmp_path / "samples.vcz"
+        assert cfg.sources["cohort"].path == Path.cwd() / "samples.vcz"
 
     def test_ancestors_path_resolved(self, tmp_path):
         cfg = Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
-        assert cfg.ancestors.path == tmp_path / "ancestors.vcz"
+        assert cfg.ancestors.path == Path.cwd() / "ancestors.vcz"
 
     def test_match_output_resolved(self, tmp_path):
         cfg = Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
-        assert cfg.match.output == tmp_path / "final.trees"
+        assert cfg.match.output == Path.cwd() / "final.trees"
 
     def test_ancestral_state_path_resolved(self, tmp_path):
         cfg = Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
-        assert cfg.ancestral_state.path == tmp_path / "annotations.vcz"
+        assert cfg.ancestral_state.path == Path.cwd() / "annotations.vcz"
 
     def test_config_in_subdirectory(self, tmp_path):
         subdir = tmp_path / "subdir"
@@ -369,7 +369,7 @@ class TestPathResolution:
         toml_path = subdir / "inference.toml"
         toml_path.write_text(_STANDARD_TOML)
         cfg = Config.from_toml(toml_path)
-        assert cfg.sources["cohort"].path == subdir / "samples.vcz"
+        assert cfg.sources["cohort"].path == Path.cwd() / "samples.vcz"
 
     def test_remote_url_unchanged(self, tmp_path):
         toml = """\
@@ -402,7 +402,7 @@ recombination_rate = 1e-8
 reference_ts       = "ref.trees"
 """
         cfg = Config.from_toml(_write_toml(tmp_path, toml))
-        assert cfg.match.reference_ts == tmp_path / "ref.trees"
+        assert cfg.match.reference_ts == Path.cwd() / "ref.trees"
 
 
 # ---------------------------------------------------------------------------

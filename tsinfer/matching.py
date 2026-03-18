@@ -30,8 +30,6 @@ import tskit
 
 import _tsinfer
 
-from .grouping import compute_groups  # noqa: F401 — re-export for backward compat
-
 logger = logging.getLogger(__name__)
 
 
