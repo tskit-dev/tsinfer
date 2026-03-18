@@ -63,6 +63,10 @@ Vendored dependencies in `lib/subprojects/`: tskit C library and kastore.
 
 Sample VCZ → `infer_ancestors` → Ancestor VCZ → `match` → raw `tskit.TreeSequence` → `post_process` → final tree sequence
 
+## Git usage
+
+- Don't include Co-authored-By lines in git commits.
+
 ## Code Style
 
 - Prefer tuples over dataclasses when returning multiple values
@@ -75,5 +79,4 @@ Sample VCZ → `infer_ancestors` → Ancestor VCZ → `match` → raw `tskit.Tre
 
 - Test helpers are in `tests/helpers.py` (e.g., `make_sample_vcz`, `make_ancestor_vcz`)
 - `tests/algorithm.py` contains Python reference implementations used to verify C code
-- Fixtures defined in `tests/conftest.py` provide small/medium tree sequences and sample data
 - `msprime` is used to simulate test data
