@@ -603,7 +603,7 @@ def infer_ancestors(
     # --- 5. Pass 2: per-interval ancestor building ---
     t_pass2 = time.monotonic()
     encoding_name = "one_bit" if cfg.genotype_encoding == 1 else "eight_bit"
-    write_threads = getattr(cfg, "write_threads", 4)
+    write_threads = max(1, num_threads)
     if num_threads > 0:
         logger.info(
             "Pass 2: building ancestors per interval "

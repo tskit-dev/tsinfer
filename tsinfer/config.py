@@ -118,7 +118,6 @@ class AncestorsConfig:
     genotype_encoding: int = 0  # 0 = eight-bit, 1 = one-bit
     compressor: str = "zstd"  # blosc cname: zstd, lz4, lz4hc, etc.
     compression_level: int = 7
-    write_threads: int = 4
 
 
 @dataclass
@@ -130,7 +129,6 @@ class MatchConfig:
     recombination_rate: float | Any  # float or msprime.RateMap
     mismatch_ratio: float = 1.0
     path_compression: bool = True
-    num_threads: int = 1
     reference_ts: str | Path | None = None
     workdir: str | Path | None = None
     keep_intermediates: bool = False
@@ -222,7 +220,6 @@ class Config:
         lines.append(f"  recombination_rate = {self.match.recombination_rate}")
         lines.append(f"  mismatch_ratio = {self.match.mismatch_ratio}")
         lines.append(f"  path_compression = {self.match.path_compression}")
-        lines.append(f"  num_threads = {self.match.num_threads}")
         if self.match.reference_ts is not None:
             lines.append(f"  reference_ts = {self.match.reference_ts}")
         if self.match.workdir is not None:
@@ -346,7 +343,6 @@ _KNOWN_ANCESTORS_KEYS = {
     "genotype_encoding",
     "compressor",
     "compression_level",
-    "write_threads",
 }
 
 _KNOWN_MATCH_KEYS = {
@@ -355,7 +351,6 @@ _KNOWN_MATCH_KEYS = {
     "recombination_rate",
     "mismatch_ratio",
     "path_compression",
-    "num_threads",
     "reference_ts",
     "workdir",
     "keep_intermediates",
@@ -441,7 +436,6 @@ def _parse_ancestors(raw: dict) -> AncestorsConfig | None:
             genotype_encoding=int(genotype_encoding),
             compressor=str(entry.get("compressor", "zstd")),
             compression_level=int(entry.get("compression_level", 7)),
-            write_threads=int(entry.get("write_threads", 4)),
         )
     except KeyError as e:
         raise ValueError(f"[ancestors] missing required key: {e}") from e
@@ -459,7 +453,6 @@ def _parse_match(raw: dict) -> MatchConfig:
             recombination_rate=float(entry["recombination_rate"]),
             mismatch_ratio=float(entry.get("mismatch_ratio", 1.0)),
             path_compression=bool(entry.get("path_compression", True)),
-            num_threads=int(entry.get("num_threads", 1)),
             reference_ts=_resolve_path(entry.get("reference_ts")),
             workdir=_resolve_path(entry.get("workdir")),
             keep_intermediates=bool(entry.get("keep_intermediates", False)),
