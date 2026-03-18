@@ -61,7 +61,14 @@ def _run_pipeline(sample_store, recombination_rate=1e-4):
 
 
 def _check_genotypes(input_store, output_ts, ploidy=1):
-    """Assert output TS sample genotypes match input VCZ genotypes."""
+    """Assert output TS sample genotypes match input VCZ genotypes.
+
+    Pre-filters to biallelic polymorphic inference sites, then compares
+    resolved allele strings.  The output encodes 0 = ancestral,
+    1 = derived; the input may have the ancestral allele at any index,
+    so we build a small index map to resolve output genotypes through
+    the input allele array.
+    """
     input_gt = input_store["call_genotype"][:]  # (S, N, P)
     input_pos = input_store["variant_position"][:]  # (S,)
     input_alleles = input_store["variant_allele"][:]  # (S, A)
@@ -69,25 +76,21 @@ def _check_genotypes(input_store, output_ts, ploidy=1):
 
     num_samples = input_gt.shape[1]
 
-    # Identify the real sample nodes: those assigned to individuals (time=0)
+    # Identify the real sample nodes: those assigned to individuals
     sample_node_ids = []
     for ind in output_ts.individuals():
         sample_node_ids.extend(ind.nodes)
     assert len(sample_node_ids) == num_samples * ploidy
 
-    # Build position -> input row index map (biallelic, polymorphic sites only)
+    # Only check biallelic, polymorphic sites
     pos_to_idx = {}
     for i, p in enumerate(input_pos):
         allele_list = [str(a) for a in input_alleles[i] if str(a) != ""]
         if len(allele_list) != 2:
             continue
-        # Map to ancestral/derived and check polymorphism
-        anc_allele = str(input_anc[i])
-        anc_idx = allele_list.index(anc_allele)
-        flat = input_gt[i].reshape(-1)
-        mapped = np.where(flat == anc_idx, 0, 1)
-        if len(np.unique(mapped)) > 1:
-            pos_to_idx[int(p)] = i
+        if len(np.unique(input_gt[i])) < 2:
+            continue
+        pos_to_idx[int(p)] = i
 
     for variant in output_ts.variants():
         pos = int(variant.site.position)
@@ -95,15 +98,15 @@ def _check_genotypes(input_store, output_ts, ploidy=1):
             continue
         i = pos_to_idx.pop(pos)
 
-        # Map input VCZ genotypes to {ancestral=0, derived=1}
-        anc_allele = str(input_anc[i])
-        allele_list = [str(a) for a in input_alleles[i] if str(a) != ""]
-        anc_idx = allele_list.index(anc_allele)
-        expected_flat = input_gt[i].reshape(-1)  # (N*P,)
-        expected = np.where(expected_flat == anc_idx, 0, 1).astype(np.int8)
+        # Resolve both sides to allele strings via the input allele array.
+        # Output uses 0=ancestral, 1=derived; map to input allele indices.
+        alleles = np.asarray(input_alleles[i])
+        allele_list = [str(a) for a in alleles if str(a) != ""]
+        anc_idx = allele_list.index(str(input_anc[i]))
+        out_to_in = np.array([anc_idx, 1 - anc_idx])
 
-        # Extract genotypes only for real sample nodes
-        observed = variant.genotypes[sample_node_ids]
+        expected = alleles[input_gt[i].reshape(-1)]
+        observed = alleles[out_to_in[variant.genotypes[sample_node_ids]]]
 
         np.testing.assert_array_equal(
             observed,
@@ -111,7 +114,6 @@ def _check_genotypes(input_store, output_ts, ploidy=1):
             err_msg=f"Genotype mismatch at position {pos}",
         )
 
-    # All input positions should have been seen
     assert len(pos_to_idx) == 0, f"Missing output positions: {list(pos_to_idx.keys())}"
 
 
@@ -189,6 +191,30 @@ class TestGenotypeRoundtrip:
         ts = _run_pipeline(store)
         _check_genotypes(store, ts, ploidy=2)
 
+    def test_ancestral_not_ref(self):
+        """Ancestral allele is allele 1 (not REF/allele 0) at every site."""
+        genotypes = np.array(
+            [
+                [[1], [0]],
+                [[0], [1]],
+            ],
+            dtype=np.int8,
+        )  # (2 sites, 2 samples, ploidy=1)
+        positions = np.array([10, 20], dtype=np.int32)
+        # REF is allele 0, but ancestral is allele 1
+        alleles = np.array([["A", "T"], ["C", "G"]])
+        ancestral = np.array(["T", "G"])
+
+        store = make_sample_vcz(
+            genotypes=genotypes,
+            positions=positions,
+            alleles=alleles,
+            ancestral_state=ancestral,
+            sequence_length=100,
+        )
+        ts = _run_pipeline(store)
+        _check_genotypes(store, ts, ploidy=1)
+
     def test_simulated_haploid_small(self):
         """4 haploid samples from msprime simulation."""
         sim_ts = _simulate(
@@ -242,17 +268,11 @@ class TestGenotypeRoundtrip:
 
         alleles = store["variant_allele"][:]
         gt = store["call_genotype"][:]
-        anc_arr = store["variant_ancestral_allele"][:]
         input_pos = set()
         for i, p in enumerate(store["variant_position"][:]):
             allele_list = [str(a) for a in alleles[i] if str(a) != ""]
-            if len(allele_list) != 2:
-                continue
-            anc_allele = str(anc_arr[i])
-            anc_idx = allele_list.index(anc_allele)
-            flat = gt[i].reshape(-1)
-            mapped = np.where(flat == anc_idx, 0, 1)
-            if len(np.unique(mapped)) > 1:
+            n_distinct = len(np.unique(gt[i].reshape(-1)))
+            if len(allele_list) == 2 and n_distinct > 1:
                 input_pos.add(int(p))
         output_pos = set(int(s.position) for s in ts.sites())
         assert input_pos == output_pos
