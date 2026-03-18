@@ -41,27 +41,27 @@ import zarr
 FieldSpec = str | dict | int | float | None
 
 
-def _resolve_path(p: str | Path | None, base: Path) -> str | Path | None:
-    """Resolve p relative to base if it looks like a local path.
+def _resolve_path(p: str | Path | None) -> str | Path | None:
+    """Return *p* as-is (string or Path).
 
     Remote URLs (containing ``://``) are returned unchanged as strings.
-    Local paths are resolved to absolute Path objects.
+    Local paths are returned as strings without resolution — the caller
+    is responsible for interpreting them relative to the working directory.
     """
     if p is None:
         return None
     s = str(p)
-    # Leave remote URLs (e.g. s3://, https://) unchanged
     if "://" in s:
         return s
-    return (base / s).resolve()
+    return s
 
 
-def _resolve_field_spec(spec: FieldSpec, base: Path) -> FieldSpec:
-    """Resolve any path embedded in a field spec dict."""
+def _resolve_field_spec(spec: FieldSpec) -> FieldSpec:
+    """Pass through a field spec, resolving any embedded path."""
     if isinstance(spec, dict):
         resolved = dict(spec)
         if "path" in resolved:
-            resolved["path"] = _resolve_path(resolved["path"], base)
+            resolved["path"] = _resolve_path(resolved["path"])
         return resolved
     return spec
 
@@ -305,14 +305,11 @@ class Config:
 
     @classmethod
     def from_toml(cls, path: str | Path) -> Config:
-        """Load and parse a TOML config file; paths resolve relative to cwd."""
-        path = Path(path).resolve()
-        base = Path.cwd()
-
+        """Load and parse a TOML config file."""
         with open(path, "rb") as f:
             raw = tomllib.load(f)
 
-        return _parse_config(raw, base)
+        return _parse_config(raw)
 
 
 # ---------------------------------------------------------------------------
@@ -320,7 +317,7 @@ class Config:
 # ---------------------------------------------------------------------------
 
 
-def _parse_sources(raw: dict, base: Path) -> dict[str, Source]:
+def _parse_sources(raw: dict) -> dict[str, Source]:
     """Parse [[source]] entries into a name-keyed dict."""
     source_list = raw.get("source", [])
     sources = {}
@@ -333,14 +330,14 @@ def _parse_sources(raw: dict, base: Path) -> dict[str, Source]:
         if raw_path is None:
             raise ValueError(f"Source '{name}' must have a 'path' field")
         src = Source(
-            path=_resolve_path(raw_path, base),
+            path=_resolve_path(raw_path),
             name=name,
             include=entry.get("include"),
             exclude=entry.get("exclude"),
             samples=entry.get("samples"),
             regions=entry.get("regions"),
             targets=entry.get("targets"),
-            sample_time=_resolve_field_spec(entry.get("sample_time"), base),
+            sample_time=_resolve_field_spec(entry.get("sample_time")),
         )
         if name in sources:
             raise ValueError(f"Duplicate source name: '{name}'")
@@ -348,20 +345,20 @@ def _parse_sources(raw: dict, base: Path) -> dict[str, Source]:
     return sources
 
 
-def _parse_ancestral_state(raw: dict, base: Path) -> AncestralState | None:
+def _parse_ancestral_state(raw: dict) -> AncestralState | None:
     entry = raw.get("ancestral_state")
     if entry is None:
         return None
     try:
         return AncestralState(
-            path=_resolve_path(entry["path"], base),
+            path=_resolve_path(entry["path"]),
             field=entry["field"],
         )
     except KeyError as e:
         raise ValueError(f"[ancestral_state] missing required key: {e}") from e
 
 
-def _parse_ancestors(raw: dict, base: Path) -> AncestorsConfig | None:
+def _parse_ancestors(raw: dict) -> AncestorsConfig | None:
     entry = raw.get("ancestors")
     if entry is None:
         return None
@@ -376,7 +373,7 @@ def _parse_ancestors(raw: dict, base: Path) -> AncestorsConfig | None:
                 )
             genotype_encoding = _encoding_names[genotype_encoding.lower()]
         return AncestorsConfig(
-            path=_resolve_path(entry["path"], base),
+            path=_resolve_path(entry["path"]),
             sources=list(entry["sources"]),
             max_gap_length=int(entry.get("max_gap_length", 500_000)),
             samples_chunk_size=int(entry.get("samples_chunk_size", 1000)),
@@ -390,26 +387,21 @@ def _parse_ancestors(raw: dict, base: Path) -> AncestorsConfig | None:
         raise ValueError(f"[ancestors] missing required key: {e}") from e
 
 
-def _parse_match(raw: dict, base: Path) -> MatchConfig:
+def _parse_match(raw: dict) -> MatchConfig:
     entry = raw.get("match")
     if entry is None:
         raise ValueError("Config must contain a [match] section")
     try:
-        ref_ts = entry.get("reference_ts")
-        groups = entry.get("groups")
-        intermediate_ts = entry.get("intermediate_ts")
-        if intermediate_ts is not None:
-            intermediate_ts = str(Path(base / intermediate_ts))
         return MatchConfig(
             sources=list(entry["sources"]),
-            output=_resolve_path(entry["output"], base),
+            output=_resolve_path(entry["output"]),
             recombination_rate=float(entry["recombination_rate"]),
             mismatch_ratio=float(entry.get("mismatch_ratio", 1.0)),
             path_compression=bool(entry.get("path_compression", True)),
             num_threads=int(entry.get("num_threads", 1)),
-            reference_ts=_resolve_path(ref_ts, base),
-            groups=_resolve_path(groups, base),
-            intermediate_ts=intermediate_ts,
+            reference_ts=_resolve_path(entry.get("reference_ts")),
+            groups=_resolve_path(entry.get("groups")),
+            intermediate_ts=entry.get("intermediate_ts"),
         )
     except KeyError as e:
         raise ValueError(f"[match] missing required key: {e}") from e
@@ -435,15 +427,15 @@ def _parse_post_process(raw: dict) -> PostProcessConfig | None:
     )
 
 
-def _parse_config(raw: dict, base: Path) -> Config:
-    sources = _parse_sources(raw, base)
-    ancestors = _parse_ancestors(raw, base)
-    match = _parse_match(raw, base)
+def _parse_config(raw: dict) -> Config:
+    sources = _parse_sources(raw)
+    ancestors = _parse_ancestors(raw)
+    match = _parse_match(raw)
     return Config(
         sources=sources,
         ancestors=ancestors,
         match=match,
-        ancestral_state=_parse_ancestral_state(raw, base),
+        ancestral_state=_parse_ancestral_state(raw),
         individual_metadata=_parse_individual_metadata(raw),
         post_process=_parse_post_process(raw),
     )
