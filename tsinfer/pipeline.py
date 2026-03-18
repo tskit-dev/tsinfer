@@ -22,9 +22,10 @@ High-level pipeline: match, post_process, run.
 
 from __future__ import annotations
 
+import collections
+import dataclasses
 import json
 import logging
-from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -43,7 +44,7 @@ from .matching import Matcher, extend_ts, make_root_ts
 logger = logging.getLogger(__name__)
 
 
-@dataclass
+@dataclasses.dataclass
 class _IndividualMetadataResult:
     metadata: list[dict] | None
     population_indices: list[int] | None
@@ -62,7 +63,6 @@ def _setup_workdir(workdir, cfg):
 
     Returns (jobs, last_completed_group_idx, starting_ts_or_None).
     """
-    import dataclasses
 
     workdir = Path(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
@@ -77,31 +77,18 @@ def _setup_workdir(workdir, cfg):
         groups_path.write_text(json_str)
         logger.info("Wrote groups to %s", groups_path)
 
-    # Scan for completed group files
-    groups_dict: dict[int, list[MatchJob]] = {}
-    for job in jobs:
-        groups_dict.setdefault(job.group, [])
-    sorted_groups = sorted(groups_dict.keys())
-
-    completed = []
-    for group_idx in sorted_groups:
-        p = workdir / f"group_{group_idx}.trees"
-        if p.exists():
-            completed.append(group_idx)
-        else:
-            break
+    max_group_index = -1
+    for path in workdir.glob("group_*.trees"):
+        group_index = int(path.stem.split("_")[1])
+        max_group_index = max(group_index, max_group_index)
 
     starting_ts = None
-    if completed:
-        last_path = workdir / f"group_{completed[-1]}.trees"
+    if max_group_index >= 0:
+        last_path = workdir / f"group_{max_group_index}.trees"
         starting_ts = tskit.load(str(last_path))
-        logger.info(
-            "Resuming from group %d (%d groups already completed)",
-            completed[-1],
-            len(completed),
-        )
+        logger.info("Resuming from group %d ", max_group_index)
 
-    return jobs, set(completed), starting_ts
+    return jobs, max_group_index, starting_ts
 
 
 def _build_individual_metadata(cfg, individual_jobs, ploidy):
@@ -230,10 +217,10 @@ def match(
 
     # 1. Get ordered MatchJob list (and workdir state if applicable)
     workdir = cfg.match.workdir
-    completed_groups: set[int] = set()
+    last_completed_group = -1
     workdir_starting_ts = None
     if workdir is not None:
-        jobs, completed_groups, workdir_starting_ts = _setup_workdir(workdir, cfg)
+        jobs, last_completed_group, workdir_starting_ts = _setup_workdir(workdir, cfg)
     else:
         jobs = compute_match_jobs(cfg)
 
@@ -274,9 +261,10 @@ def match(
     )
 
     # 6. Group jobs by group index
-    groups_dict: dict[int, list[tuple[int, MatchJob]]] = {}
+    groups_dict = collections.defaultdict(list)
     for idx, job in enumerate(jobs):
-        groups_dict.setdefault(job.group, []).append((idx, job))
+        groups_dict[job.group].append((idx, job))
+    sorted_groups = sorted(groups_dict.keys())
 
     # 7. Match loop — process groups in order
     individual_jobs: list[MatchJob] = []  # first job of each individual
@@ -290,10 +278,10 @@ def match(
         group_jobs = groups_dict[group_idx]
         num_in_group = len(group_jobs)
 
-        # Skip groups already completed in workdir
-        if group_idx in completed_groups:
+        # Skip groups already completed
+        if group_idx <= last_completed_group:
             completed_haps += num_in_group
-            logger.info("Group %d/%d: skipped (already in workdir)", gi + 1, num_groups)
+            logger.info("Group %d/%d: skipped (already completed)", gi + 1, num_groups)
             continue
 
         logger.info("Group %d/%d: %d haplotypes", gi + 1, num_groups, num_in_group)
