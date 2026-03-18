@@ -583,3 +583,42 @@ class TestMatchWithGroups:
         out_ts = _infer_and_match(sim_ts)
         assert out_ts.num_nodes > 0
         assert out_ts.num_edges > 0
+
+
+class TestIntermediateTs:
+    def test_intermediate_ts_written(self, tmp_path):
+        """match() writes intermediate tree sequences when configured."""
+        import tskit
+
+        sim_ts = _simulate(num_samples=4, random_seed=60)
+        sample_store = ts_to_sample_vcz(sim_ts)
+        anc_cfg = AncestorsConfig(path=None, sources=["test"])
+        ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
+        cfg = _make_config(sample_store, ancestor_store)
+        pattern = str(tmp_path / "group_{group}.trees")
+        cfg.match.intermediate_ts = pattern
+
+        out_ts = match(cfg)
+        assert out_ts.num_nodes > 0
+
+        # At least one intermediate file should exist
+        written = list(tmp_path.glob("group_*.trees"))
+        assert len(written) > 0
+
+        # Each should be a valid tree sequence
+        for p in written:
+            ts = tskit.load(str(p))
+            assert ts.num_nodes > 0
+            assert ts.num_sites > 0
+
+    def test_no_intermediate_ts_by_default(self, tmp_path):
+        """No intermediate files written when intermediate_ts is None."""
+        sim_ts = _simulate(num_samples=4, random_seed=61)
+        sample_store = ts_to_sample_vcz(sim_ts)
+        anc_cfg = AncestorsConfig(path=None, sources=["test"])
+        ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
+        cfg = _make_config(sample_store, ancestor_store)
+        assert cfg.match.intermediate_ts is None
+
+        match(cfg)
+        assert list(tmp_path.glob("*.trees")) == []
