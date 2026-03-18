@@ -11,3 +11,6 @@ of the last group to be processed. This will help with testing.
 
 - Get ruff to enforce no imports except at the start of the file, as Claude just loves
 using them
+
+- It's not clear why we're using kwargs.get in pipeline.match. This is an antipattern,
+avoid unless there's a very strong reason for it.

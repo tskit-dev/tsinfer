@@ -30,4 +30,3 @@ genotype_encoding = "one_bit"
 [match]
 sources = ["1kgp_chr20"]             # which source(s) to match
 output = "output.trees"         # output tree sequence path
-recombination_rate=1e-8

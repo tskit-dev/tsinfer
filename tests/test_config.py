@@ -55,7 +55,6 @@ def _minimal_match_cfg(**kwargs):
     defaults = dict(
         sources=["ancestors", "cohort"],
         output="out.trees",
-        recombination_rate=1e-8,
     )
     defaults.update(kwargs)
     return MatchConfig(**defaults)
@@ -151,9 +150,7 @@ class TestMatchConfigConstruction:
         m = MatchConfig(
             sources=["ancestors", "cohort"],
             output="out.trees",
-            recombination_rate=1e-8,
         )
-        assert m.mismatch_ratio == 1.0
         assert m.path_compression is True
         assert m.reference_ts is None
 
@@ -161,7 +158,6 @@ class TestMatchConfigConstruction:
         m = MatchConfig(
             sources=["cohort"],
             output="out.trees",
-            recombination_rate=1e-8,
             reference_ts="ref.trees",
         )
         assert str(m.reference_ts) == "ref.trees"
@@ -209,7 +205,6 @@ class TestConfigConstruction:
                 match=MatchConfig(
                     sources=["cohort"],
                     output="out.trees",
-                    recombination_rate=1e-8,
                 ),
             )
 
@@ -220,7 +215,6 @@ class TestConfigConstruction:
             match=MatchConfig(
                 sources=["cohort"],
                 output="out.trees",
-                recombination_rate=1e-8,
                 reference_ts="ref.trees",
             ),
         )
@@ -250,8 +244,6 @@ max_gap_length = 500000
 [match]
 sources            = ["ancestors", "cohort"]
 output             = "final.trees"
-recombination_rate = 1e-8
-mismatch_ratio     = 1.0
 
 [individual_metadata]
 fields     = {sample_id = "sample_id", sex = "sample_sex"}
@@ -320,8 +312,6 @@ class TestFromTomlStandard:
     def test_match(self, tmp_path):
         cfg = Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
         assert cfg.match.sources == ["ancestors", "cohort"]
-        assert cfg.match.recombination_rate == pytest.approx(1e-8)
-        assert cfg.match.mismatch_ratio == pytest.approx(1.0)
 
     def test_individual_metadata(self, tmp_path):
         cfg = Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
@@ -371,7 +361,6 @@ sources = ["cohort"]
 [match]
 sources            = ["ancestors", "cohort"]
 output             = "/data/final.trees"
-recombination_rate = 1e-8
 """
         cfg = Config.from_toml(_write_toml(tmp_path, toml))
         assert cfg.sources["cohort"].path == "/data/samples.vcz"
@@ -391,7 +380,6 @@ sources = ["cohort"]
 [match]
 sources            = ["ancestors", "cohort"]
 output             = "out.trees"
-recombination_rate = 1e-8
 """
         cfg = Config.from_toml(_write_toml(tmp_path, toml))
         assert str(cfg.sources["cohort"].path) == "s3://bucket/samples.vcz"
@@ -405,7 +393,6 @@ path = "samples.vcz"
 [match]
 sources            = ["cohort"]
 output             = "out.trees"
-recombination_rate = 1e-8
 reference_ts       = "ref.trees"
 """
         cfg = Config.from_toml(_write_toml(tmp_path, toml))
@@ -432,7 +419,6 @@ sources = ["cohort"]
 [match]
 sources            = ["ancestors", "cohort"]
 output             = "out.trees"
-recombination_rate = 1e-8
 """
         cfg = Config.from_toml(_write_toml(tmp_path, toml))
         assert cfg.sources["cohort"].include == "QUAL > 30"
@@ -451,7 +437,6 @@ sources = ["cohort"]
 [match]
 sources            = ["ancestors", "cohort"]
 output             = "out.trees"
-recombination_rate = 1e-8
 """
         cfg = Config.from_toml(_write_toml(tmp_path, toml))
         assert cfg.sources["cohort"].exclude == "AC == 0"
@@ -470,7 +455,6 @@ sources = ["cohort"]
 [match]
 sources            = ["ancestors", "cohort"]
 output             = "out.trees"
-recombination_rate = 1e-8
 """
         cfg = Config.from_toml(_write_toml(tmp_path, toml))
         assert cfg.sources["cohort"].samples == "^sample_2,sample_3"
@@ -489,7 +473,6 @@ sources = ["parents"]
 [match]
 sources            = ["ancestors", "parents"]
 output             = "out.trees"
-recombination_rate = 1e-8
 """
         cfg = Config.from_toml(_write_toml(tmp_path, toml))
         assert cfg.sources["parents"].sample_time == 1
@@ -508,7 +491,6 @@ sources = ["ancient"]
 [match]
 sources            = ["ancestors", "ancient"]
 output             = "out.trees"
-recombination_rate = 1e-8
 """
         cfg = Config.from_toml(_write_toml(tmp_path, toml))
         assert cfg.sources["ancient"].sample_time == "sample_age_generations"
@@ -531,7 +513,6 @@ sources = ["cohort"]
 [match]
 sources            = ["ancestors", "cohort", "ancient"]
 output             = "out.trees"
-recombination_rate = 1e-8
 """
         cfg = Config.from_toml(_write_toml(tmp_path, toml))
         assert set(cfg.sources) == {"cohort", "ancient"}
@@ -565,24 +546,6 @@ sources = ["cohort"]
 
 [match]
 output             = "out.trees"
-recombination_rate = 1e-8
-"""
-        with pytest.raises((ValueError, KeyError)):
-            Config.from_toml(_write_toml(tmp_path, toml))
-
-    def test_match_missing_recombination_rate(self, tmp_path):
-        toml = """\
-[[source]]
-name = "cohort"
-path = "samples.vcz"
-
-[ancestors]
-path    = "ancestors.vcz"
-sources = ["cohort"]
-
-[match]
-sources = ["ancestors", "cohort"]
-output  = "out.trees"
 """
         with pytest.raises((ValueError, KeyError)):
             Config.from_toml(_write_toml(tmp_path, toml))
@@ -599,7 +562,6 @@ sources = ["cohort"]
 [match]
 sources            = ["ancestors", "cohort"]
 output             = "out.trees"
-recombination_rate = 1e-8
 """
         with pytest.raises(ValueError, match="name"):
             Config.from_toml(_write_toml(tmp_path, toml))
@@ -616,7 +578,6 @@ sources = ["cohort"]
 [match]
 sources            = ["ancestors", "cohort"]
 output             = "out.trees"
-recombination_rate = 1e-8
 """
         with pytest.raises(ValueError, match="path"):
             Config.from_toml(_write_toml(tmp_path, toml))
@@ -638,7 +599,6 @@ sources = ["cohort"]
 [match]
 sources            = ["ancestors", "cohort"]
 output             = "out.trees"
-recombination_rate = 1e-8
 """
         with pytest.raises(ValueError, match="Duplicate"):
             Config.from_toml(_write_toml(tmp_path, toml))
@@ -652,7 +612,6 @@ path = "samples.vcz"
 [match]
 sources            = ["cohort"]
 output             = "out.trees"
-recombination_rate = 1e-8
 """
         with pytest.raises(ValueError, match="ancestors"):
             Config.from_toml(_write_toml(tmp_path, toml))
@@ -669,7 +628,6 @@ sources = ["cohort"]
 [match]
 sources            = ["ancestors", "cohort"]
 output             = "out.trees"
-recombination_rate = 1e-8
 """
         with pytest.raises((ValueError, KeyError)):
             Config.from_toml(_write_toml(tmp_path, toml))
@@ -691,7 +649,7 @@ class TestConfigFormat:
         cfg = _minimal_config()
         text = cfg.format()
         assert "[match]" in text
-        assert "recombination_rate" in text
+        assert "path_compression" in text
 
     def test_includes_ancestors(self):
         cfg = _minimal_config()
@@ -751,7 +709,6 @@ class TestConfigFormat:
             match=MatchConfig(
                 sources=["s"],
                 output="out.trees",
-                recombination_rate=1e-8,
                 reference_ts="ref.trees",
             ),
         )
@@ -888,7 +845,6 @@ class TestConfigValidate:
             match=MatchConfig(
                 sources=["s"],
                 output="out.trees",
-                recombination_rate=1e-8,
                 reference_ts="/nonexistent/ref.trees",
             ),
         )
@@ -929,7 +885,6 @@ sources = ["cohort"]
 [match]
 sources            = ["cohort"]
 output             = "out.trees"
-recombination_rate = 1e-8
 """
 
 
@@ -990,7 +945,6 @@ class TestWorkdirConfig:
                 match=MatchConfig(
                     sources=["t"],
                     output="o.trees",
-                    recombination_rate=1e-8,
                     keep_intermediates=True,
                 ),
             )
@@ -1002,7 +956,6 @@ class TestWorkdirConfig:
             match=MatchConfig(
                 sources=["t"],
                 output="o.trees",
-                recombination_rate=1e-8,
             ),
         )
         assert cfg.match.workdir is None

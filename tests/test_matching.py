@@ -197,7 +197,7 @@ class TestMatcher:
         """Matching an identical haplotype returns a MatchResult with path edges."""
         hap = np.array([0, 1, 0], dtype=np.int8)
         ts = self._make_ts_with_one_ancestor(hap)
-        matcher = Matcher(ts, self.positions, recombination_rate=1e-4)
+        matcher = Matcher(ts, self.positions)
         results = list(matcher.match(_jobs(1), _ArrayReader([hap])))
         assert len(results) == 1
         _, r = results[0]
@@ -210,9 +210,7 @@ class TestMatcher:
         ts = self._make_ts_with_one_ancestor(ancestor_hap)
         # Query haplotype has derived state at site 1
         query_hap = np.array([0, 1, 0], dtype=np.int8)
-        matcher = Matcher(
-            ts, self.positions, recombination_rate=1e-4, mismatch_ratio=1.0
-        )
+        matcher = Matcher(ts, self.positions)
         results = list(matcher.match(_jobs(1), _ArrayReader([query_hap])))
         _, r = results[0]
         # There should be a mutation at position 20 (site index 1)
@@ -224,7 +222,7 @@ class TestMatcher:
         hap = np.array([0, 1, 0], dtype=np.int8)
         ts = self._make_ts_with_one_ancestor(hap)
         missing_hap = np.array([-1, -1, -1], dtype=np.int8)
-        matcher = Matcher(ts, self.positions, recombination_rate=1e-4)
+        matcher = Matcher(ts, self.positions)
         results = list(matcher.match(_jobs(1), _ArrayReader([missing_hap])))
         assert len(results) == 1
 
@@ -233,7 +231,7 @@ class TestMatcher:
         hap = np.array([0, 1, 0], dtype=np.int8)
         ts = self._make_ts_with_one_ancestor(hap)
         query_hap = np.array([-1, 1, 0], dtype=np.int8)
-        matcher = Matcher(ts, self.positions, recombination_rate=1e-4)
+        matcher = Matcher(ts, self.positions)
         results = list(matcher.match(_jobs(1), _ArrayReader([query_hap])))
         assert len(results) == 1
         _, r = results[0]
@@ -246,7 +244,7 @@ class TestMatcher:
         hap = np.array([0, 1, 0], dtype=np.int8)
         ts = self._make_ts_with_one_ancestor(hap)
         haplotypes = np.array([[0, 1, 0], [0, 0, 1], [1, 0, 0]], dtype=np.int8)
-        matcher = Matcher(ts, self.positions, recombination_rate=1e-4)
+        matcher = Matcher(ts, self.positions)
         results = list(matcher.match(_jobs(3), _ArrayReader(haplotypes)))
         assert len(results) == 3
 
@@ -254,7 +252,7 @@ class TestMatcher:
         """MatchResult should contain PathSegment and Mutation objects."""
         hap = np.array([0, 1, 0], dtype=np.int8)
         ts = self._make_ts_with_one_ancestor(hap)
-        matcher = Matcher(ts, self.positions, recombination_rate=1e-4)
+        matcher = Matcher(ts, self.positions)
         results = list(matcher.match(_jobs(1), _ArrayReader([hap])))
         _, r = results[0]
         assert isinstance(r.path, list)
@@ -269,7 +267,7 @@ class TestMatcher:
         """PathSegment left < right for every segment."""
         hap = np.array([0, 1, 0], dtype=np.int8)
         ts = self._make_ts_with_one_ancestor(hap)
-        matcher = Matcher(ts, self.positions, recombination_rate=1e-4)
+        matcher = Matcher(ts, self.positions)
         results = list(matcher.match(_jobs(1), _ArrayReader([hap])))
         _, r = results[0]
         for seg in r.path:
@@ -280,7 +278,7 @@ class TestMatcher:
         hap = np.array([0, 0, 0], dtype=np.int8)
         ts = self._make_ts_with_one_ancestor(hap)
         query = np.array([1, 1, 0], dtype=np.int8)
-        matcher = Matcher(ts, self.positions, recombination_rate=1e-4)
+        matcher = Matcher(ts, self.positions)
         results = list(matcher.match(_jobs(1), _ArrayReader([query])))
         _, r = results[0]
         assert len(r.mutations) > 0
@@ -452,7 +450,7 @@ class TestMatcherExtendCycle:
         ts = self._build_root_ts()
         # Add an ancestor at time 0.5
         ancestor_hap = np.array([0, 1, 0, 1, 0], dtype=np.int8)
-        matcher = Matcher(ts, self.positions, recombination_rate=1e-4)
+        matcher = Matcher(ts, self.positions)
         results = list(matcher.match(_jobs(1), _ArrayReader([ancestor_hap])))
         ts2 = extend_ts(
             ts,
@@ -469,7 +467,7 @@ class TestMatcherExtendCycle:
         """After adding ancestor, matching a similar haplotype gives a path."""
         ts = self._build_root_ts()
         ancestor_hap = np.array([0, 0, 1, 1, 0], dtype=np.int8)
-        matcher = Matcher(ts, self.positions, recombination_rate=1e-4)
+        matcher = Matcher(ts, self.positions)
         results = list(matcher.match(_jobs(1), _ArrayReader([ancestor_hap])))
         ts2 = extend_ts(
             ts,
@@ -481,7 +479,7 @@ class TestMatcherExtendCycle:
 
         # Now match a sample against ts2
         sample_hap = np.array([0, 0, 1, 1, 0], dtype=np.int8)
-        matcher2 = Matcher(ts2, self.positions, recombination_rate=1e-4)
+        matcher2 = Matcher(ts2, self.positions)
         results2 = list(matcher2.match(_jobs(1), _ArrayReader([sample_hap])))
         _, r = results2[0]
         # Should have at least one path edge
@@ -494,7 +492,7 @@ class TestMatcherExtendCycle:
 
         # Add ancestors one at a time at different time levels to avoid the
         # multi-child-of-root constraint in the C ancestor matcher.
-        matcher = Matcher(ts, self.positions, recombination_rate=1e-4)
+        matcher = Matcher(ts, self.positions)
         hap1 = np.array([[0, 1, 0, 0, 1]], dtype=np.int8)
         results1 = list(matcher.match(_jobs(1), _ArrayReader(hap1)))
         ts2 = extend_ts(
@@ -506,7 +504,7 @@ class TestMatcherExtendCycle:
         )
         assert ts2.num_nodes == 3  # 2 roots + ancestor1
 
-        matcher2 = Matcher(ts2, self.positions, recombination_rate=1e-4)
+        matcher2 = Matcher(ts2, self.positions)
         hap2 = np.array([[1, 0, 0, 1, 0]], dtype=np.int8)
         results2 = list(matcher2.match(_jobs(1), _ArrayReader(hap2)))
         ts3 = extend_ts(
@@ -518,7 +516,7 @@ class TestMatcherExtendCycle:
         )
         assert ts3.num_nodes == 4  # 2 roots + 2 ancestors
 
-        matcher3 = Matcher(ts3, self.positions, recombination_rate=1e-4)
+        matcher3 = Matcher(ts3, self.positions)
         sample_hap = np.array([[0, 1, 0, 0, 1]], dtype=np.int8)
         results4 = list(matcher3.match(_jobs(1), _ArrayReader(sample_hap)))
         ts4 = extend_ts(
@@ -533,7 +531,7 @@ class TestMatcherExtendCycle:
     def test_metadata_survives_multiple_cycles(self):
         """sequence_intervals metadata should survive multiple extend_ts calls."""
         ts = self._build_root_ts()
-        matcher = Matcher(ts, self.positions, recombination_rate=1e-4)
+        matcher = Matcher(ts, self.positions)
         hap = np.array([[0, 1, 0, 0, 1]], dtype=np.int8)
         results = list(matcher.match(_jobs(1), _ArrayReader(hap)))
         ts2 = extend_ts(

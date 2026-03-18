@@ -25,7 +25,6 @@ from __future__ import annotations
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 import zarr
 
@@ -126,8 +125,6 @@ class MatchConfig:
 
     sources: list[str]
     output: str | Path
-    recombination_rate: float | Any  # float or msprime.RateMap
-    mismatch_ratio: float = 1.0
     path_compression: bool = True
     reference_ts: str | Path | None = None
     workdir: str | Path | None = None
@@ -217,8 +214,6 @@ class Config:
         lines.append("[match]")
         lines.append(f"  sources = {self.match.sources}")
         lines.append(f"  output = {self.match.output}")
-        lines.append(f"  recombination_rate = {self.match.recombination_rate}")
-        lines.append(f"  mismatch_ratio = {self.match.mismatch_ratio}")
         lines.append(f"  path_compression = {self.match.path_compression}")
         if self.match.reference_ts is not None:
             lines.append(f"  reference_ts = {self.match.reference_ts}")
@@ -348,8 +343,6 @@ _KNOWN_ANCESTORS_KEYS = {
 _KNOWN_MATCH_KEYS = {
     "sources",
     "output",
-    "recombination_rate",
-    "mismatch_ratio",
     "path_compression",
     "reference_ts",
     "workdir",
@@ -450,8 +443,6 @@ def _parse_match(raw: dict) -> MatchConfig:
         return MatchConfig(
             sources=list(entry["sources"]),
             output=_resolve_path(entry["output"]),
-            recombination_rate=float(entry["recombination_rate"]),
-            mismatch_ratio=float(entry.get("mismatch_ratio", 1.0)),
             path_compression=bool(entry.get("path_compression", True)),
             reference_ts=_resolve_path(entry.get("reference_ts")),
             workdir=_resolve_path(entry.get("workdir")),

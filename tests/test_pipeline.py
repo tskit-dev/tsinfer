@@ -67,7 +67,7 @@ def _simulate(
     return ts
 
 
-def _make_config(sample_store, ancestor_store, recombination_rate=1e-4):
+def _make_config(sample_store, ancestor_store):
     """Build a Config suitable for match() from in-memory stores."""
     src = Source(path=sample_store, name="test")
     return Config(
@@ -76,12 +76,11 @@ def _make_config(sample_store, ancestor_store, recombination_rate=1e-4):
         match=MatchConfig(
             sources=["test"],
             output="output.trees",
-            recombination_rate=recombination_rate,
         ),
     )
 
 
-def _make_config_for_run(sample_store, recombination_rate=1e-4):
+def _make_config_for_run(sample_store):
     """Build a Config suitable for run() from in-memory sample store."""
     src = Source(path=sample_store, name="test")
     return Config(
@@ -90,17 +89,16 @@ def _make_config_for_run(sample_store, recombination_rate=1e-4):
         match=MatchConfig(
             sources=["test"],
             output="output.trees",
-            recombination_rate=recombination_rate,
         ),
     )
 
 
-def _infer_and_match(sim_ts, recombination_rate=1e-4):
+def _infer_and_match(sim_ts):
     """Helper: simulate → sample VCZ → infer ancestors → match → return output ts."""
     sample_store = ts_to_sample_vcz(sim_ts)
     anc_cfg = AncestorsConfig(path=None, sources=["test"])
     ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
-    cfg = _make_config(sample_store, ancestor_store, recombination_rate)
+    cfg = _make_config(sample_store, ancestor_store)
     return match(cfg)
 
 
@@ -176,7 +174,6 @@ class TestPostProcess:
             match=MatchConfig(
                 sources=["test"],
                 output="out.trees",
-                recombination_rate=1e-4,
             ),
             post_process=PostProcessConfig(split_ultimate=False, erase_flanks=False),
         )
@@ -193,7 +190,6 @@ class TestPostProcess:
             match=MatchConfig(
                 sources=["test"],
                 output="out.trees",
-                recombination_rate=1e-4,
             ),
             post_process=None,
         )
@@ -209,7 +205,6 @@ class TestPostProcess:
             match=MatchConfig(
                 sources=["test"],
                 output="out.trees",
-                recombination_rate=1e-4,
             ),
             post_process=PostProcessConfig(split_ultimate=False, erase_flanks=True),
         )
@@ -249,7 +244,6 @@ class TestRun:
             match=MatchConfig(
                 sources=["test"],
                 output="output.trees",
-                recombination_rate=1e-4,
             ),
             post_process=PostProcessConfig(split_ultimate=False, erase_flanks=True),
         )
@@ -359,7 +353,6 @@ class TestIndividualMetadata:
             match=MatchConfig(
                 sources=["test"],
                 output="output.trees",
-                recombination_rate=1e-4,
             ),
             individual_metadata=IndividualMetadataConfig(
                 fields={"sample_id": "sample_id"},
@@ -388,7 +381,6 @@ class TestIndividualMetadata:
             match=MatchConfig(
                 sources=["test"],
                 output="output.trees",
-                recombination_rate=1e-4,
             ),
             individual_metadata=IndividualMetadataConfig(
                 population="sample_population",
@@ -664,7 +656,6 @@ class TestWorkdir:
                 match=MatchConfig(
                     sources=["test"],
                     output="out.trees",
-                    recombination_rate=1e-4,
                     keep_intermediates=True,
                 ),
             )

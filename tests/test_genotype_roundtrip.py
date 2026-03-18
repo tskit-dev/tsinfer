@@ -44,7 +44,7 @@ from tsinfer.pipeline import run
 # ---------------------------------------------------------------------------
 
 
-def _run_pipeline(sample_store, recombination_rate=1e-4):
+def _run_pipeline(sample_store):
     """Build config, run full pipeline, return output tree sequence."""
     src = Source(path=sample_store, name="test")
     cfg = Config(
@@ -53,7 +53,6 @@ def _run_pipeline(sample_store, recombination_rate=1e-4):
         match=MatchConfig(
             sources=["test"],
             output="output.trees",
-            recombination_rate=recombination_rate,
         ),
         post_process=PostProcessConfig(),
     )
