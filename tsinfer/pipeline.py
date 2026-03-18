@@ -237,13 +237,7 @@ def match(
     for group_idx in group_iter:
         group_jobs = groups_dict[group_idx]
 
-        # Read haplotypes for this group
-        haplotypes = []
-        for _, job in group_jobs:
-            haplotypes.append(reader.read_haplotype(job))
-        haplotypes_arr = np.array(haplotypes, dtype=np.int8)
-
-        # Match against current TS
+        # Match against current TS (haplotypes read on demand via reader)
         matcher = Matcher(
             ts,
             positions,
@@ -251,7 +245,8 @@ def match(
             mismatch_ratio=mismatch_ratio,
             path_compression=path_compression,
         )
-        results = matcher.match(haplotypes_arr)
+        job_list = [job for _, job in group_jobs]
+        results = matcher.match(job_list, reader)
 
         # Build per-node arrays for extend_ts
         node_times = np.array([j.time for _, j in group_jobs], dtype=np.float64)

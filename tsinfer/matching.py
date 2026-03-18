@@ -260,18 +260,21 @@ class Matcher:
         self._matcher = _tsinfer.AncestorMatcher(tsb, rho.tolist(), mu.tolist())
         self._num_sites_val = self._num_sites
 
-    def match(
-        self,
-        haplotypes: np.ndarray,  # (n_haplotypes, num_sites) int8
-    ) -> list[MatchResult]:
+    def match(self, jobs, reader) -> list[MatchResult]:
         """
-        Run the HMM for each haplotype. Active range per haplotype is derived from
-        its missing data pattern (first and last non-missing site).
+        Run the HMM for each job, reading haplotypes on demand via *reader*.
+
+        Parameters
+        ----------
+        jobs : iterable
+            Objects passed to ``reader.read_haplotype(job)`` one at a time.
+        reader : object
+            Anything with a ``read_haplotype(job) -> np.ndarray`` method.
         """
         num_sites = self._num_sites_val
         results = []
-        for h in haplotypes:
-            h = np.asarray(h, dtype=np.int8)
+        for job in jobs:
+            h = np.asarray(reader.read_haplotype(job), dtype=np.int8)
             match_out = np.zeros(num_sites, dtype=np.int8)
             non_missing = np.where(h >= 0)[0]
             if len(non_missing) == 0:
