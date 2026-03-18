@@ -213,7 +213,7 @@ class TestComputeInferenceSites:
         # Only positions 10 and 30 are annotated
         np.testing.assert_array_equal(result.positions, [10, 30])
 
-    def test_duplicate_positions_raises(self):
+    def test_duplicate_positions_omitted(self):
         gt = np.zeros((3, 2, 1), dtype=np.int8)
         store = make_sample_vcz(
             gt,
@@ -222,22 +222,26 @@ class TestComputeInferenceSites:
             ancestral_state=["A", "A", "A"],
             sequence_length=100,
         )
-        with pytest.raises(ValueError, match="Duplicate site positions"):
-            compute_inference_sites(store, None)
+        result = compute_inference_sites(store, None)
+        # Both sites at position 10 should be omitted
+        np.testing.assert_array_equal(result.positions, [30])
 
-    def test_duplicate_positions_message_includes_bcftools(self):
-        gt = np.zeros((3, 2, 1), dtype=np.int8)
+    def test_duplicate_positions_logged(self, caplog):
+        import logging
+
+        gt = np.zeros((4, 2, 1), dtype=np.int8)
         store = make_sample_vcz(
             gt,
-            positions=[10, 10, 30],
-            alleles=[["A", "T"]] * 3,
-            ancestral_state=["A", "A", "A"],
+            positions=[10, 10, 20, 30],
+            alleles=[["A", "T"]] * 4,
+            ancestral_state=["A", "A", "A", "A"],
             sequence_length=100,
         )
-        with pytest.raises(ValueError, match="bcftools norm"):
+        with caplog.at_level(logging.INFO, logger="tsinfer"):
             compute_inference_sites(store, None)
+        assert "1 duplicate position" in caplog.text
 
-    def test_duplicate_positions_no_false_positive(self):
+    def test_no_duplicates_keeps_all(self):
         gt = np.zeros((3, 2, 1), dtype=np.int8)
         store = make_sample_vcz(
             gt,
@@ -246,9 +250,8 @@ class TestComputeInferenceSites:
             ancestral_state=["A", "A", "A"],
             sequence_length=100,
         )
-        # Should not raise
         result = compute_inference_sites(store, None)
-        assert len(result.positions) == 3
+        np.testing.assert_array_equal(result.positions, [10, 20, 30])
 
 
 # ---------------------------------------------------------------------------

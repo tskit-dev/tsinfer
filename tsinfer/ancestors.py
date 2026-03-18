@@ -116,39 +116,22 @@ def _compute_site_stats(
     return keep_mask, times
 
 
-def _check_duplicate_positions(positions, include, exclude):
-    """Raise a clear error if any genomic positions appear more than once."""
-    unique, counts = np.unique(positions, return_counts=True)
+def _find_duplicate_positions(store) -> set[int]:
+    """Return the set of genomic positions that appear more than once."""
+    all_positions = np.asarray(store["variant_position"][:], dtype=np.int32)
+    unique, counts = np.unique(all_positions, return_counts=True)
     dup_mask = counts > 1
     if not np.any(dup_mask):
-        return
-
-    dup_positions = unique[dup_mask]
-    n_dups = int(np.sum(counts[dup_mask] - 1))
-    example_positions = dup_positions[:5]
-    examples_str = ", ".join(str(p) for p in example_positions)
-    if len(dup_positions) > 5:
-        examples_str += f", ... ({len(dup_positions)} positions total)"
-
-    # Build a helpful exclude expression for the user
-    filter_parts = []
-    if include is not None:
-        filter_parts.append(f'include = "{include}"')
-    if exclude is not None:
-        filter_parts.append(f'exclude = "{exclude}"')
-    current_filters = (
-        " (current filters: " + ", ".join(filter_parts) + ")" if filter_parts else ""
+        return set()
+    dup_positions = set(unique[dup_mask].tolist())
+    n_dup_sites = int(np.sum(counts[dup_mask]))
+    logger.info(
+        "Found %d duplicate position(s) (%d sites total); "
+        "these will be excluded from inference",
+        len(dup_positions),
+        n_dup_sites,
     )
-
-    raise ValueError(
-        f"Duplicate site positions detected: {n_dups} duplicate(s) at "
-        f"positions {examples_str}.{current_filters}\n"
-        f"tskit requires unique site positions. To fix this, either:\n"
-        f"  1. Pre-filter the VCF before conversion to VCZ:\n"
-        f"       bcftools norm -d none input.vcf.gz | bcftools view -o deduped.vcf.gz\n"
-        f"  2. Keep only SNPs (which are rarely duplicated):\n"
-        f"       include = \"TYPE='snp'\""
-    )
+    return dup_positions
 
 
 # ---------------------------------------------------------------------------
@@ -172,6 +155,9 @@ def compute_inference_sites(
     Variant filtering (include/exclude/regions/targets) is delegated to
     vcztools via ``iter_variants``.
     """
+    # Detect duplicate positions upfront so we can skip them
+    dup_positions = _find_duplicate_positions(store)
+
     # Build external ancestral state lookup if configured
     ann_lookup = None
     if ancestral_state is not None:
@@ -192,6 +178,7 @@ def compute_inference_sites(
     anc_idx_list = []
     num_filtered = 0
     num_no_ancestral = 0
+    num_duplicate = 0
 
     for variant in vcz_mod.iter_variants(
         store,
@@ -203,6 +190,11 @@ def compute_inference_sites(
     ):
         num_filtered += 1
         pos = int(variant["variant_position"])
+
+        if pos in dup_positions:
+            num_duplicate += 1
+            continue
+
         site_alleles = variant["variant_allele"]
 
         if ann_lookup is not None:
@@ -226,9 +218,11 @@ def compute_inference_sites(
         anc_idx_list.append(anc_idx)
 
     logger.info(
-        "Sites passing variant filters: %d; skipped %d (no ancestral allele match)",
+        "Sites passing variant filters: %d; skipped %d (no ancestral allele match)"
+        ", %d (duplicate positions)",
         num_filtered,
         num_no_ancestral,
+        num_duplicate,
     )
 
     if not pos_list:
@@ -238,13 +232,8 @@ def compute_inference_sites(
             ancestral_allele_index=np.zeros(0, dtype=np.int8),
         )
 
-    positions = np.array(pos_list, dtype=np.int32)
-
-    # Check for duplicate positions — these cause downstream errors in tskit
-    _check_duplicate_positions(positions, include, exclude)
-
     return InferenceSites(
-        positions=positions,
+        positions=np.array(pos_list, dtype=np.int32),
         alleles=np.stack(allele_list),
         ancestral_allele_index=np.array(anc_idx_list, dtype=np.int8),
     )
