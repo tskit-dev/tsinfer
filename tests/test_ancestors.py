@@ -213,6 +213,43 @@ class TestComputeInferenceSites:
         # Only positions 10 and 30 are annotated
         np.testing.assert_array_equal(result.positions, [10, 30])
 
+    def test_duplicate_positions_raises(self):
+        gt = np.zeros((3, 2, 1), dtype=np.int8)
+        store = make_sample_vcz(
+            gt,
+            positions=[10, 10, 30],
+            alleles=[["A", "T"]] * 3,
+            ancestral_state=["A", "A", "A"],
+            sequence_length=100,
+        )
+        with pytest.raises(ValueError, match="Duplicate site positions"):
+            compute_inference_sites(store, None)
+
+    def test_duplicate_positions_message_includes_bcftools(self):
+        gt = np.zeros((3, 2, 1), dtype=np.int8)
+        store = make_sample_vcz(
+            gt,
+            positions=[10, 10, 30],
+            alleles=[["A", "T"]] * 3,
+            ancestral_state=["A", "A", "A"],
+            sequence_length=100,
+        )
+        with pytest.raises(ValueError, match="bcftools norm"):
+            compute_inference_sites(store, None)
+
+    def test_duplicate_positions_no_false_positive(self):
+        gt = np.zeros((3, 2, 1), dtype=np.int8)
+        store = make_sample_vcz(
+            gt,
+            positions=[10, 20, 30],
+            alleles=[["A", "T"]] * 3,
+            ancestral_state=["A", "A", "A"],
+            sequence_length=100,
+        )
+        # Should not raise
+        result = compute_inference_sites(store, None)
+        assert len(result.positions) == 3
+
 
 # ---------------------------------------------------------------------------
 # compute_sequence_intervals

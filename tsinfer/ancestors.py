@@ -116,6 +116,41 @@ def _compute_site_stats(
     return keep_mask, times
 
 
+def _check_duplicate_positions(positions, include, exclude):
+    """Raise a clear error if any genomic positions appear more than once."""
+    unique, counts = np.unique(positions, return_counts=True)
+    dup_mask = counts > 1
+    if not np.any(dup_mask):
+        return
+
+    dup_positions = unique[dup_mask]
+    n_dups = int(np.sum(counts[dup_mask] - 1))
+    example_positions = dup_positions[:5]
+    examples_str = ", ".join(str(p) for p in example_positions)
+    if len(dup_positions) > 5:
+        examples_str += f", ... ({len(dup_positions)} positions total)"
+
+    # Build a helpful exclude expression for the user
+    filter_parts = []
+    if include is not None:
+        filter_parts.append(f'include = "{include}"')
+    if exclude is not None:
+        filter_parts.append(f'exclude = "{exclude}"')
+    current_filters = (
+        " (current filters: " + ", ".join(filter_parts) + ")" if filter_parts else ""
+    )
+
+    raise ValueError(
+        f"Duplicate site positions detected: {n_dups} duplicate(s) at "
+        f"positions {examples_str}.{current_filters}\n"
+        f"tskit requires unique site positions. To fix this, either:\n"
+        f"  1. Pre-filter the VCF before conversion to VCZ:\n"
+        f"       bcftools norm -d none input.vcf.gz | bcftools view -o deduped.vcf.gz\n"
+        f"  2. Keep only SNPs (which are rarely duplicated):\n"
+        f"       include = \"TYPE='snp'\""
+    )
+
+
 # ---------------------------------------------------------------------------
 # Public functions
 # ---------------------------------------------------------------------------
@@ -203,8 +238,13 @@ def compute_inference_sites(
             ancestral_allele_index=np.zeros(0, dtype=np.int8),
         )
 
+    positions = np.array(pos_list, dtype=np.int32)
+
+    # Check for duplicate positions — these cause downstream errors in tskit
+    _check_duplicate_positions(positions, include, exclude)
+
     return InferenceSites(
-        positions=np.array(pos_list, dtype=np.int32),
+        positions=positions,
         alleles=np.stack(allele_list),
         ancestral_allele_index=np.array(anc_idx_list, dtype=np.int8),
     )
