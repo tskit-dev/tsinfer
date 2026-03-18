@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+import tqdm
 import tskit
 
 from . import vcz as vcz_mod
@@ -239,8 +240,15 @@ def match(
             path_compression=path_compression,
         )
         job_list = [job for _, job in group_jobs]
-        paired_results = matcher.match(job_list, reader, progress=progress)
-        paired_results.sort(key=lambda pair: pair[0].haplotype_index)
+        match_iter = matcher.match(job_list, reader)
+        if progress:
+            match_iter = tqdm.tqdm(
+                match_iter,
+                total=len(job_list),
+                desc="Matching",
+                unit="haplotypes",
+            )
+        paired_results = sorted(match_iter, key=lambda pair: pair[0].haplotype_index)
 
         # Build per-node arrays for extend_ts from (job, result) pairs
         node_times = []
