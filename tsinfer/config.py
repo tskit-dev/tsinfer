@@ -317,12 +317,72 @@ class Config:
 # ---------------------------------------------------------------------------
 
 
+_KNOWN_TOP_LEVEL_KEYS = {
+    "source",
+    "ancestral_state",
+    "ancestors",
+    "match",
+    "individual_metadata",
+    "post_process",
+}
+
+_KNOWN_SOURCE_KEYS = {
+    "name",
+    "path",
+    "include",
+    "exclude",
+    "samples",
+    "regions",
+    "targets",
+    "sample_time",
+}
+
+_KNOWN_ANCESTRAL_STATE_KEYS = {"path", "field"}
+
+_KNOWN_ANCESTORS_KEYS = {
+    "path",
+    "sources",
+    "max_gap_length",
+    "samples_chunk_size",
+    "variants_chunk_size",
+    "genotype_encoding",
+    "compressor",
+    "compression_level",
+    "write_threads",
+}
+
+_KNOWN_MATCH_KEYS = {
+    "sources",
+    "output",
+    "recombination_rate",
+    "mismatch_ratio",
+    "path_compression",
+    "num_threads",
+    "reference_ts",
+    "groups",
+    "intermediate_ts",
+}
+
+_KNOWN_INDIVIDUAL_METADATA_KEYS = {"fields", "population"}
+
+_KNOWN_POST_PROCESS_KEYS = {"split_ultimate", "erase_flanks"}
+
+
+def _check_unknown_keys(section_name, entry, known):
+    """Raise ValueError if *entry* contains keys not in *known*."""
+    unknown = set(entry.keys()) - known
+    if unknown:
+        unknown_str = ", ".join(sorted(unknown))
+        raise ValueError(f"Unrecognised key(s) in [{section_name}]: {unknown_str}")
+
+
 def _parse_sources(raw: dict) -> dict[str, Source]:
     """Parse [[source]] entries into a name-keyed dict."""
     source_list = raw.get("source", [])
     sources = {}
     for entry in source_list:
         entry = dict(entry)
+        _check_unknown_keys("source", entry, _KNOWN_SOURCE_KEYS)
         name = entry.pop("name", None)
         if not name:
             raise ValueError("Every [[source]] entry must have a 'name' field")
@@ -349,6 +409,7 @@ def _parse_ancestral_state(raw: dict) -> AncestralState | None:
     entry = raw.get("ancestral_state")
     if entry is None:
         return None
+    _check_unknown_keys("ancestral_state", entry, _KNOWN_ANCESTRAL_STATE_KEYS)
     try:
         return AncestralState(
             path=_resolve_path(entry["path"]),
@@ -362,6 +423,7 @@ def _parse_ancestors(raw: dict) -> AncestorsConfig | None:
     entry = raw.get("ancestors")
     if entry is None:
         return None
+    _check_unknown_keys("ancestors", entry, _KNOWN_ANCESTORS_KEYS)
     try:
         genotype_encoding = entry.get("genotype_encoding", 0)
         if isinstance(genotype_encoding, str):
@@ -391,6 +453,7 @@ def _parse_match(raw: dict) -> MatchConfig:
     entry = raw.get("match")
     if entry is None:
         raise ValueError("Config must contain a [match] section")
+    _check_unknown_keys("match", entry, _KNOWN_MATCH_KEYS)
     try:
         return MatchConfig(
             sources=list(entry["sources"]),
@@ -411,6 +474,7 @@ def _parse_individual_metadata(raw: dict) -> IndividualMetadataConfig | None:
     entry = raw.get("individual_metadata")
     if entry is None:
         return None
+    _check_unknown_keys("individual_metadata", entry, _KNOWN_INDIVIDUAL_METADATA_KEYS)
     return IndividualMetadataConfig(
         fields=dict(entry.get("fields", {})),
         population=entry.get("population"),
@@ -421,6 +485,7 @@ def _parse_post_process(raw: dict) -> PostProcessConfig | None:
     entry = raw.get("post_process")
     if entry is None:
         return None
+    _check_unknown_keys("post_process", entry, _KNOWN_POST_PROCESS_KEYS)
     return PostProcessConfig(
         split_ultimate=bool(entry.get("split_ultimate", True)),
         erase_flanks=bool(entry.get("erase_flanks", True)),
@@ -428,6 +493,7 @@ def _parse_post_process(raw: dict) -> PostProcessConfig | None:
 
 
 def _parse_config(raw: dict) -> Config:
+    _check_unknown_keys("top-level", raw, _KNOWN_TOP_LEVEL_KEYS)
     sources = _parse_sources(raw)
     ancestors = _parse_ancestors(raw)
     match = _parse_match(raw)
