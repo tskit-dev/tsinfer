@@ -42,6 +42,7 @@ Low-level utilities for reading and writing VCZ (VCF Zarr) stores.
 from __future__ import annotations
 
 import logging
+import math
 import queue
 import threading
 import time as _time
@@ -1378,18 +1379,62 @@ class VCZHaplotypeReader:
             else call_gt.shape[0]
         )
 
+        # Precompute which variant chunks contain selected sites
+        vc_size = self._variant_chunk_size
+        n_vc = math.ceil(num_src_sites / vc_size) if num_src_sites > 0 else 0
+        self._needed_vc = []  # [(vc_idx, local_indices, out_rows), ...]
+        for vc_idx in range(n_vc):
+            vc_start = vc_idx * vc_size
+            vc_end = min(vc_start + vc_size, num_src_sites)
+            local_select = self._variant_select[vc_start:vc_end]
+            if not np.any(local_select):
+                continue
+            local_indices = np.where(local_select)[0]
+            out_rows = self._src_var_to_selected_row[vc_start + local_indices]
+            self._needed_vc.append((vc_idx, local_indices, out_rows))
+
+        # Allele remap table — populated by _precompute_allele_remap()
+        self._allele_remap = None
+
+        # Timing accumulators
+        self._stats_chunks_loaded = 0
+        self._stats_zarr_time = 0.0
+        self._stats_encode_time = 0.0
+        self._stats_zarr_chunks_read = 0
+
     @property
     def chunk_bytes(self) -> int:
         """Byte size of one cached sample chunk (selected variants only)."""
         return self._num_selected * self._sample_chunk_size * self._ploidy * 1
 
+    def _precompute_allele_remap(self):
+        """Build a (num_selected, max_src_alleles) int8 remap table.
+
+        Each entry maps a source allele index to the unified allele
+        code via ``_allele_map.lookup()``.  Called once after
+        ``_allele_map`` is assigned; removes all string operations
+        from the hot cache-miss path.
+        """
+        if self._allele_map is None or self._num_selected == 0:
+            return
+        selected_src = np.where(self._variant_select)[0]
+        max_a = self._src_alleles.shape[1]
+        remap = np.full((self._num_selected, max_a), -1, dtype=np.int8)
+        for row, src_idx in enumerate(selected_src):
+            ref_idx = int(self._selected_to_ref_idx[row])
+            for j in range(max_a):
+                a = str(self._src_alleles[src_idx, j])
+                if a:
+                    remap[row, j] = self._allele_map.lookup(ref_idx, a)
+        self._allele_remap = remap
+
     def _load_sample_chunk(self, chunk_idx: int) -> np.ndarray:
         """Load a sample chunk, selecting only matched variants.
 
         On cache miss, iterates over zarr variant chunks, skipping chunks
-        with no selected variants. When ``_allele_map`` is set, allele
-        encoding is performed at load time. Returns array of shape
-        ``(num_selected, chunk_samples, ploidy)``.
+        with no selected variants. When ``_allele_remap`` is set, allele
+        encoding is performed at load time via vectorized numpy remap.
+        Returns array of shape ``(num_selected, chunk_samples, ploidy)``.
 
         Thread-safe via the shared ``ChunkCache``.
         The returned numpy array remains valid even if later evicted from
@@ -1400,61 +1445,63 @@ class VCZHaplotypeReader:
         if cached is not None:
             return cached
 
-        col_start = chunk_idx * self._sample_chunk_size
-        col_end = min(col_start + self._sample_chunk_size, self._num_store_samples)
-        chunk_samples = col_end - col_start
-
-        # Allocate output for selected variants only
-        result = np.full(
-            (self._num_selected, chunk_samples, self._ploidy), -1, dtype=np.int8
+        t_start = _time.monotonic()
+        call_gt = self._store["call_genotype"]
+        sc_start = chunk_idx * self._sample_chunk_size
+        chunk_samples = min(
+            self._sample_chunk_size,
+            self._num_store_samples - sc_start,
         )
 
-        call_gt = self._store["call_genotype"]
-        num_src_sites = call_gt.shape[0]
-        vc_size = self._variant_chunk_size
+        result = np.full(
+            (self._num_selected, chunk_samples, self._ploidy),
+            -1,
+            dtype=np.int8,
+        )
 
-        for vc_start in range(0, num_src_sites, vc_size):
-            vc_end = min(vc_start + vc_size, num_src_sites)
-            local_select = self._variant_select[vc_start:vc_end]
-            if not np.any(local_select):
-                continue
+        t_zarr = 0.0
+        t_encode = 0.0
+        n_zarr = 0
+        n_sites = 0
 
-            # Load one zarr variant chunk
-            vc_data = np.asarray(
-                call_gt[vc_start:vc_end, col_start:col_end, :], dtype=np.int8
-            )
+        for vc_idx, local_indices, out_rows in self._needed_vc:
+            t0 = _time.monotonic()
+            block = np.asarray(call_gt.blocks[vc_idx, chunk_idx], dtype=np.int8)
+            t_zarr += _time.monotonic() - t0
+            n_zarr += 1
 
-            local_indices = np.where(local_select)[0]
-            for li in local_indices:
-                src_var_idx = vc_start + li
-                out_row = self._src_var_to_selected_row[src_var_idx]
-                raw = vc_data[li, :, :]  # (chunk_samples, ploidy)
+            t0 = _time.monotonic()
+            raw = block[local_indices]  # (n, chunk_samples, ploidy)
+            n = len(out_rows)
+            n_sites += n
 
-                if self._allele_map is not None:
-                    ref_site_idx = int(self._selected_to_ref_idx[out_row])
-                    site_alleles = self._src_alleles[src_var_idx]
-                    allele_list = [
-                        str(a)
-                        for a in (
-                            site_alleles.tolist()
-                            if hasattr(site_alleles, "tolist")
-                            else site_alleles
-                        )
-                    ]
-                    max_code = len(allele_list)
-                    lookup = np.full(max_code, np.int8(-1), dtype=np.int8)
-                    for j, a_str in enumerate(allele_list):
-                        if a_str:
-                            lookup[j] = self._allele_map.lookup(ref_site_idx, a_str)
-                    result[out_row, :chunk_samples, :] = np.where(
-                        raw < 0,
-                        np.int8(-1),
-                        lookup[np.clip(raw, 0, max_code - 1)],
-                    )
-                else:
-                    # Fallback: store raw genotypes (standalone use)
-                    result[out_row, :chunk_samples, :] = raw
+            if self._allele_remap is not None:
+                remap = self._allele_remap[out_rows]
+                safe = np.clip(raw, 0, remap.shape[1] - 1)
+                encoded = remap[np.arange(n)[:, None, None], safe]
+                result[out_rows] = np.where(raw < 0, np.int8(-1), encoded)
+            else:
+                result[out_rows] = raw
+            t_encode += _time.monotonic() - t0
 
+        t_total = _time.monotonic() - t_start
+
+        self._stats_chunks_loaded += 1
+        self._stats_zarr_time += t_zarr
+        self._stats_encode_time += t_encode
+        self._stats_zarr_chunks_read += n_zarr
+
+        logger.info(
+            "Cache populate source=%s chunk=%d: %d sites from "
+            "%d zarr chunks zarr=%.3fs encode=%.3fs total=%.3fs",
+            self._source_name,
+            chunk_idx,
+            n_sites,
+            n_zarr,
+            t_zarr,
+            t_encode,
+            t_total,
+        )
         self._cache.put(key, result)
         return result
 
@@ -1572,9 +1619,10 @@ class HaplotypeReader:
 
         self._allele_map = _AlleleMap(len(ancestral_alleles), allele_table)
 
-        # Assign the allele map to all readers
+        # Assign the allele map to all readers and precompute remap tables
         for reader in self._readers.values():
             reader._allele_map = self._allele_map
+            reader._precompute_allele_remap()
 
         # Validate that the cache can fit at least one chunk from every source
         max_chunk = 0
