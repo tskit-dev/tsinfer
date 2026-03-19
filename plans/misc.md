@@ -27,3 +27,5 @@ to the match job rather than derive it after the fact.
 
 - Consider how pedigree data may be associated with individuals, and how this could be 
 passed through to the tree sequence.
+
+- Rename groups.json to match_jobs.json
