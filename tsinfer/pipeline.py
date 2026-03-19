@@ -320,45 +320,22 @@ def match(
             100.0 * completed_haps / total_haps if total_haps > 0 else 0,
         )
 
-        # Build per-node arrays for extend_ts from (job, result) pairs
-        node_times = []
-        node_metadata = []
-        results = []
-        create_individuals_list = []
-        node_flags_list = []
+        # Track individual_jobs for post-processing metadata
         current_ind_count = 0
-
-        for job, result in paired_results:
-            node_times.append(job.time)
-            results.append(result)
-            node_meta = {
-                "source": job.source,
-                "sample_id": job.sample_id,
-                "ploidy_index": job.ploidy_index,
-            }
-            node_flags_list.append(job.node_flags)
+        for job, _result in paired_results:
             if job.create_individuals:
-                create_individuals_list.append(True)
                 current_ind_count += 1
                 if current_ind_count == 1:
                     individual_jobs.append(job)
                 if current_ind_count == ploidy:
                     current_ind_count = 0
-            else:
-                create_individuals_list.append(False)
-            node_metadata.append(node_meta)
 
         # Extend the tree sequence
         ts = extend_ts(
             ts,
+            paired_results=paired_results,
             site_alleles=site_alleles,
-            node_times=np.array(node_times, dtype=np.float64),
-            results=results,
-            node_metadata=node_metadata,
-            create_individuals=np.array(create_individuals_list, dtype=bool),
-            node_flags=np.array(node_flags_list, dtype=np.uint32),
             ploidy=ploidy,
-            path_compression=path_compression,
         )
 
         # Write checkpoint to workdir if configured

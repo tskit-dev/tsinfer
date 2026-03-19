@@ -32,6 +32,8 @@ import tskit
 
 import _tsinfer
 
+from .grouping import MatchJob
+
 logger = logging.getLogger(__name__)
 
 
@@ -102,146 +104,6 @@ def _tsb_from_ts(ts: tskit.TreeSequence, num_sites: int, positions: np.ndarray):
     return tsb
 
 
-def _ts_from_tsb(
-    tsb,
-    num_sites: int,
-    positions: np.ndarray,
-    site_alleles: np.ndarray | None,
-    sequence_length: float,
-    metadata: dict,
-    individuals: list[list[int]] | None = None,
-    node_metadata: list[dict] | None = None,
-    individual_metadata: list[dict] | None = None,
-    populations: list[int] | None = None,
-    population_names: list[str] | None = None,
-) -> tskit.TreeSequence:
-    """Convert a _tsinfer.TreeSequenceBuilder to a tskit.TreeSequence.
-
-    Parameters
-    ----------
-    site_alleles:
-        (num_sites, 2) array of allele strings per site, ordered
-        [ancestral, derived].  When *None*, falls back to ``"0"``/``"1"``.
-    node_metadata:
-        Per-node metadata dicts, one per node in TSB order.
-    individual_metadata:
-        Per-individual metadata dicts, one per individual group.
-    populations:
-        Per-individual population index, one per individual group.
-    population_names:
-        Unique population names; used to create population table rows.
-    """
-    tables = tskit.TableCollection(sequence_length=float(sequence_length))
-    if metadata is not None:
-        tables.metadata_schema = tskit.MetadataSchema({"codec": "json"})
-        tables.metadata = metadata
-
-    if site_alleles is None:
-        site_alleles = np.array([["0", "1"]] * num_sites, dtype=object)
-
-    for idx, pos in enumerate(positions):
-        tables.sites.add_row(
-            position=float(pos), ancestral_state=str(site_alleles[idx, 0])
-        )
-
-    # Create populations if specified
-    if population_names is not None:
-        tables.populations.metadata_schema = tskit.MetadataSchema({"codec": "json"})
-        for pop_name in population_names:
-            tables.populations.add_row(metadata={"name": pop_name})
-
-    # Set up node metadata schema if we have node metadata
-    if node_metadata is not None:
-        tables.nodes.metadata_schema = tskit.MetadataSchema({"codec": "json"})
-
-    flags, times = tsb.dump_nodes()
-    for i, (t, fl) in enumerate(zip(times, flags)):
-        md = (
-            node_metadata[i]
-            if node_metadata is not None and i < len(node_metadata)
-            else None
-        )
-        if md is not None:
-            tables.nodes.add_row(time=float(t), flags=int(fl), metadata=md)
-        else:
-            tables.nodes.add_row(time=float(t), flags=int(fl))
-
-    if individuals is not None:
-        if individual_metadata is not None:
-            tables.individuals.metadata_schema = tskit.MetadataSchema({"codec": "json"})
-        for ind_idx, ind_nodes in enumerate(individuals):
-            ind_md = (
-                individual_metadata[ind_idx]
-                if individual_metadata is not None and ind_idx < len(individual_metadata)
-                else None
-            )
-            pop_id = (
-                populations[ind_idx]
-                if populations is not None and ind_idx < len(populations)
-                else -1
-            )
-            if ind_md is not None:
-                ind_id = tables.individuals.add_row(metadata=ind_md)
-            else:
-                ind_id = tables.individuals.add_row()
-            for node_id in ind_nodes:
-                row = tables.nodes[node_id]
-                tables.nodes[node_id] = row.replace(
-                    individual=ind_id,
-                    population=pop_id if pop_id >= 0 else -1,
-                )
-
-    t0 = time_.monotonic()
-    pos_arr = positions.astype(np.float64)
-    el, er, ep, ec = tsb.dump_edges()
-    for le, re, pe, ce in zip(el, er, ep, ec):
-        left_coord = float(pos_arr[le])
-        right_coord = float(pos_arr[re]) if re < num_sites else float(sequence_length)
-        tables.edges.add_row(
-            left=left_coord, right=right_coord, parent=int(pe), child=int(ce)
-        )
-    t_edges = time_.monotonic() - t0
-
-    t0 = time_.monotonic()
-    ms, mn, md, _mp = tsb.dump_mutations()
-    for s, n, d in zip(ms, mn, md):
-        tables.mutations.add_row(
-            site=int(s),
-            node=int(n),
-            derived_state=str(site_alleles[int(s), int(d)]),
-            parent=-1,
-        )
-    t_mutations = time_.monotonic() - t0
-
-    t0 = time_.monotonic()
-    tables.sort()
-    t_sort = time_.monotonic() - t0
-
-    t0 = time_.monotonic()
-    tables.build_index()
-    t_index = time_.monotonic() - t0
-
-    t0 = time_.monotonic()
-    tables.compute_mutation_parents()
-    t_mut_parents = time_.monotonic() - t0
-
-    logger.info(
-        "ts_from_tsb: %d nodes, %d edges, %d mutations, %d sites | "
-        "edges=%.3fs mutations=%.3fs sort=%.3fs index=%.3fs mut_parents=%.3fs",
-        tables.nodes.num_rows,
-        tables.edges.num_rows,
-        tables.mutations.num_rows,
-        tables.sites.num_rows,
-        t_edges,
-        t_mutations,
-        t_sort,
-        t_index,
-        t_mut_parents,
-    )
-
-    return tables.tree_sequence()
-
-
 def make_root_ts(
     sequence_length: float,
     positions: np.ndarray,  # (num_sites,) int32
@@ -277,10 +139,11 @@ def make_root_ts(
             position=float(pos), ancestral_state=str(site_alleles[idx, 0])
         )
 
+    tables.nodes.metadata_schema = tskit.MetadataSchema({"codec": "json"})
     # Node 0: ultimate root
-    tables.nodes.add_row(time=ultimate_root_time, flags=0)
+    tables.nodes.add_row(time=ultimate_root_time, flags=0, metadata={})
     # Node 1: virtual root
-    tables.nodes.add_row(time=virtual_root_time, flags=0)
+    tables.nodes.add_row(time=virtual_root_time, flags=0, metadata={})
 
     if len(positions) > 0:
         tables.edges.add_row(
@@ -416,120 +279,89 @@ class Matcher:
 def extend_ts(
     ts: tskit.TreeSequence,
     *,
+    paired_results: list[tuple[MatchJob, MatchResult]],
     site_alleles: np.ndarray | None = None,  # (num_sites, 2) str or None
-    node_times: np.ndarray,  # (n_haplotypes,) float64
-    results: list[MatchResult],
-    node_metadata: list[dict],  # provenance metadata per haplotype
-    create_individuals: np.ndarray,  # (n_haplotypes,) bool
-    node_flags: np.ndarray | None = None,  # (n_haplotypes,) uint32
     ploidy: int = 1,
-    path_compression: bool = True,
 ) -> tskit.TreeSequence:
     """
     Extend ts with the match results for one group.
 
-    Adds nodes, edges (clipped at gap boundaries from ts metadata), mutations,
-    and individuals. When create_individuals[i] is True, nodes are grouped into
-    tskit individuals at one individual per ploidy nodes.
+    Adds nodes, edges, mutations, and individuals directly via the tskit
+    Tables API — no TSB roundtrip.  When ``job.create_individuals`` is True,
+    nodes are grouped into tskit individuals at one individual per *ploidy*
+    nodes.
 
     Returns the updated tree sequence, which becomes the reference panel for
     the next group.
     """
     t_start = time_.monotonic()
 
-    positions = ts.tables.sites.position
-    num_sites = ts.num_sites
-    seq_len = ts.sequence_length
-    meta = dict(ts.metadata) if ts.metadata is not None else {}
+    tables = ts.dump_tables()
+    pos_arr = tables.sites.position.astype(np.float64)
+    num_sites = len(pos_arr)
+    if site_alleles is None:
+        site_alleles = np.array([["0", "1"]] * num_sites, dtype=object)
 
-    t0 = time_.monotonic()
-    tsb = _tsb_from_ts(ts, num_sites, positions)
-    t_restore = time_.monotonic() - t0
-
-    pos_arr = positions.astype(np.float64)
-
-    t0 = time_.monotonic()
+    # Add nodes, edges, mutations for each (job, result) pair
     new_node_ids = []
-    for i, (time, result) in enumerate(zip(node_times, results)):
-        flags = int(node_flags[i]) if node_flags is not None else 1
-        node_id = tsb.add_node(float(time), flags=flags)
+    for job, result in paired_results:
+        node_meta = {
+            "source": job.source,
+            "sample_id": job.sample_id,
+            "ploidy_index": job.ploidy_index,
+        }
+        node_id = tables.nodes.add_row(
+            time=job.time, flags=job.node_flags, metadata=node_meta
+        )
         new_node_ids.append(node_id)
 
-        if len(result.path) > 0:
-            # Convert absolute positions back to site indices for the TSB
-            left_idxs = [int(np.searchsorted(pos_arr, seg.left)) for seg in result.path]
-            right_idxs = [
-                int(np.searchsorted(pos_arr, seg.right))
-                if seg.right < seq_len
-                else num_sites
-                for seg in result.path
-            ]
-            parents = [seg.parent for seg in result.path]
-            tsb.add_path(
-                child=node_id,
-                left=left_idxs,
-                right=right_idxs,
-                parent=parents,
-                compress=path_compression,
+        for seg in result.path:
+            tables.edges.add_row(
+                left=seg.left, right=seg.right, parent=seg.parent, child=node_id
             )
 
-        if len(result.mutations) > 0:
-            site_idxs = [
-                int(np.searchsorted(pos_arr, m.position)) for m in result.mutations
-            ]
-            derived = [m.derived_state for m in result.mutations]
-            tsb.add_mutations(
+        for mut in result.mutations:
+            site_id = int(np.searchsorted(pos_arr, mut.position))
+            tables.mutations.add_row(
+                site=site_id,
                 node=node_id,
-                site=site_idxs,
-                derived_state=derived,
+                derived_state=str(site_alleles[site_id, mut.derived_state]),
+                parent=-1,
             )
-    t_add = time_.monotonic() - t0
 
-    # Build individuals (group consecutive create_individuals=True haplotypes by ploidy)
-    individuals = []
+    # Build individuals (group consecutive create_individuals=True by ploidy)
     i = 0
-    while i < len(new_node_ids):
-        if bool(create_individuals[i]):
-            ind_nodes = new_node_ids[i : i + ploidy]
-            individuals.append(ind_nodes)
+    while i < len(paired_results):
+        job = paired_results[i][0]
+        if job.create_individuals:
+            ind_id = tables.individuals.add_row()
+            for k in range(ploidy):
+                if i + k < len(new_node_ids):
+                    nid = new_node_ids[i + k]
+                    row = tables.nodes[nid]
+                    tables.nodes[nid] = row.replace(individual=ind_id)
             i += ploidy
         else:
             i += 1
 
-    # Build full metadata list: preserve existing node metadata, append new
-    existing_meta = []
-    has_existing_meta = ts.tables.nodes.metadata_schema.schema is not None
-    for node in ts.nodes():
-        if has_existing_meta and node.metadata:
-            existing_meta.append(node.metadata)
-        else:
-            existing_meta.append(None)
-    full_node_metadata = existing_meta + list(node_metadata)
-
     t0 = time_.monotonic()
-    result_ts = _ts_from_tsb(
-        tsb,
-        num_sites,
-        positions,
-        site_alleles,
-        seq_len,
-        meta,
-        individuals if len(individuals) > 0 else None,
-        node_metadata=full_node_metadata,
-    )
-    t_convert = time_.monotonic() - t0
+    tables.sort()
+    t_sort = time_.monotonic() - t0
+
+    tables.build_index()
+    tables.compute_mutation_parents()
+
+    result_ts = tables.tree_sequence()
 
     logger.info(
         "extend_ts: added %d nodes (%d total), %d edges, %d mutations, "
-        "%d individuals | restore=%.3fs add=%.3fs convert=%.3fs total=%.3fs",
+        "%d individuals | sort=%.3fs total=%.3fs",
         len(new_node_ids),
         result_ts.num_nodes,
         result_ts.num_edges,
         result_ts.num_mutations,
         result_ts.num_individuals,
-        t_restore,
-        t_add,
-        t_convert,
+        t_sort,
         time_.monotonic() - t_start,
     )
 
