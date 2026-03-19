@@ -99,7 +99,6 @@ genotype_encoding = "eight_bit"
 # copies sample haplotypes against the ancestor tree.
 
 [match]
-sources = ["1kgp_chr20"]             # which source(s) to match
 output = "data/output.trees"         # output tree sequence path
 
 # Enable Viterbi path compression. Reduces memory and speeds up matching
@@ -109,6 +108,16 @@ output = "data/output.trees"         # output tree sequence path
 
 # Number of worker threads for the match step.
 # num_threads = 1                     # default: 1
+
+# Per-source match parameters. Each [match.sources.<name>] block configures
+# how nodes from that source are represented in the output tree sequence.
+#
+#   node_flags:          tskit node flags (default: 1 = NODE_IS_SAMPLE)
+#   create_individuals:  group nodes into tskit individuals (default: true)
+
+[match.sources.1kgp_chr20]
+# node_flags = 1                     # default: 1 (NODE_IS_SAMPLE)
+# create_individuals = true          # default: true
 
 
 # ============================================================================
