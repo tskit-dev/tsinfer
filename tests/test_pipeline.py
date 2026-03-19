@@ -39,8 +39,7 @@ from tsinfer.config import (
     PostProcessConfig,
     Source,
 )
-from tsinfer.grouping import compute_groups_json
-from tsinfer.pipeline import match, post_process, run
+from tsinfer.pipeline import compute_groups_json, match, post_process, run
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -595,7 +594,8 @@ class TestComputeGroupsJson:
             "end_position",
             "group",
             "node_flags",
-            "create_individuals",
+            "individual_id",
+            "population_id",
         }
         for rec in records:
             assert set(rec.keys()) == expected_keys

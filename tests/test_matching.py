@@ -104,7 +104,8 @@ def _make_job(
     end_position=100,
     group=0,
     node_flags=1,
-    create_individuals=False,
+    individual_id=None,
+    population_id=None,
 ):
     """Create a MatchJob with sensible defaults for testing."""
     return MatchJob(
@@ -117,7 +118,8 @@ def _make_job(
         end_position=end_position,
         group=group,
         node_flags=node_flags,
-        create_individuals=create_individuals,
+        individual_id=individual_id,
+        population_id=population_id,
     )
 
 
@@ -331,8 +333,14 @@ class TestExtendTs:
         self.seq_len = 100.0
         self.intervals = np.array([[10, 31]], dtype=np.int32)
 
-    def _root_ts(self):
-        return make_root_ts(self.seq_len, self.positions, self.intervals)
+    def _root_ts(self, individuals=None, populations=None):
+        return make_root_ts(
+            self.seq_len,
+            self.positions,
+            self.intervals,
+            individuals=individuals,
+            populations=populations,
+        )
 
     def _simple_match_result(self, parent_id, num_sites):
         """A MatchResult that copies from parent_id across all sites."""
@@ -377,7 +385,8 @@ class TestExtendTs:
         assert ts2.num_mutations > 0
 
     def test_individual_creation_diploid(self):
-        ts = self._root_ts()
+        individuals = [{"source": "test", "sample_id": "s0"}]
+        ts = self._root_ts(individuals=individuals)
         r1 = self._simple_match_result(1, len(self.positions))
         r2 = self._simple_match_result(1, len(self.positions))
         j1 = _make_job(
@@ -385,14 +394,14 @@ class TestExtendTs:
             time=0.0,
             ploidy_index=0,
             sample_id="s0",
-            create_individuals=True,
+            individual_id=0,
         )
         j2 = _make_job(
             haplotype_index=1,
             time=0.0,
             ploidy_index=1,
             sample_id="s0",
-            create_individuals=True,
+            individual_id=0,
         )
         ts2 = extend_ts(
             ts,
@@ -413,12 +422,12 @@ class TestExtendTs:
         meta = ts2.metadata
         assert "sequence_intervals" in meta
 
-    def test_no_individual_when_create_individuals_false(self):
+    def test_no_individual_when_individual_id_none(self):
         ts = self._root_ts()
         r1 = self._simple_match_result(1, len(self.positions))
         r2 = self._simple_match_result(1, len(self.positions))
-        j1 = _make_job(haplotype_index=0, time=0.0, create_individuals=False)
-        j2 = _make_job(haplotype_index=1, time=0.0, create_individuals=False)
+        j1 = _make_job(haplotype_index=0, time=0.0, individual_id=None)
+        j2 = _make_job(haplotype_index=1, time=0.0, individual_id=None)
         ts2 = extend_ts(
             ts,
             paired_results=[(j1, r1), (j2, r2)],
@@ -436,7 +445,11 @@ class TestExtendTs:
         np.testing.assert_array_equal(ts2.tables.sites.position, self.positions)
 
     def test_multiple_individuals(self):
-        ts = self._root_ts()
+        individuals = [
+            {"source": "test", "sample_id": "s0"},
+            {"source": "test", "sample_id": "s1"},
+        ]
+        ts = self._root_ts(individuals=individuals)
         results = [self._simple_match_result(1, len(self.positions)) for _ in range(4)]
         jobs = [
             _make_job(
@@ -444,7 +457,7 @@ class TestExtendTs:
                 time=0.0,
                 ploidy_index=i % 2,
                 sample_id="s0" if i < 2 else "s1",
-                create_individuals=True,
+                individual_id=0 if i < 2 else 1,
             )
             for i in range(4)
         ]
@@ -472,7 +485,11 @@ class TestExtendTs:
 
     def test_mixed_ploidy_individuals(self):
         """2 diploid nodes + 1 haploid node → 2 individuals."""
-        ts = self._root_ts()
+        individuals = [
+            {"source": "test", "sample_id": "diploid"},
+            {"source": "test", "sample_id": "haploid"},
+        ]
+        ts = self._root_ts(individuals=individuals)
         results = [self._simple_match_result(1, len(self.positions)) for _ in range(3)]
         jobs = [
             _make_job(
@@ -480,21 +497,21 @@ class TestExtendTs:
                 time=0.0,
                 ploidy_index=0,
                 sample_id="diploid",
-                create_individuals=True,
+                individual_id=0,
             ),
             _make_job(
                 haplotype_index=1,
                 time=0.0,
                 ploidy_index=1,
                 sample_id="diploid",
-                create_individuals=True,
+                individual_id=0,
             ),
             _make_job(
                 haplotype_index=2,
                 time=0.0,
                 ploidy_index=0,
                 sample_id="haploid",
-                create_individuals=True,
+                individual_id=1,
             ),
         ]
         ts2 = extend_ts(ts, paired_results=list(zip(jobs, results)))
@@ -504,7 +521,11 @@ class TestExtendTs:
 
     def test_individuals_across_sources(self):
         """Same sample_id in different sources → 2 separate individuals."""
-        ts = self._root_ts()
+        individuals = [
+            {"source": "src_a", "sample_id": "s0"},
+            {"source": "src_b", "sample_id": "s0"},
+        ]
+        ts = self._root_ts(individuals=individuals)
         results = [self._simple_match_result(1, len(self.positions)) for _ in range(2)]
         jobs = [
             _make_job(
@@ -512,14 +533,14 @@ class TestExtendTs:
                 time=0.0,
                 source="src_a",
                 sample_id="s0",
-                create_individuals=True,
+                individual_id=0,
             ),
             _make_job(
                 haplotype_index=1,
                 time=0.0,
                 source="src_b",
                 sample_id="s0",
-                create_individuals=True,
+                individual_id=1,
             ),
         ]
         ts2 = extend_ts(ts, paired_results=list(zip(jobs, results)))
@@ -527,14 +548,15 @@ class TestExtendTs:
 
     def test_individual_metadata(self):
         """Each individual carries source and sample_id in its metadata."""
-        ts = self._root_ts()
+        individuals = [{"source": "my_src", "sample_id": "sam1"}]
+        ts = self._root_ts(individuals=individuals)
         r = self._simple_match_result(1, len(self.positions))
         job = _make_job(
             haplotype_index=0,
             time=0.0,
             source="my_src",
             sample_id="sam1",
-            create_individuals=True,
+            individual_id=0,
         )
         ts2 = extend_ts(ts, paired_results=[(job, r)])
         assert ts2.num_individuals == 1
@@ -544,7 +566,8 @@ class TestExtendTs:
 
     def test_node_order_by_haplotype_index(self):
         """Nodes within an individual are ordered by haplotype_index."""
-        ts = self._root_ts()
+        individuals = [{"source": "test", "sample_id": "s0"}]
+        ts = self._root_ts(individuals=individuals)
         results = [self._simple_match_result(1, len(self.positions)) for _ in range(2)]
         # Pass jobs in reverse haplotype_index order
         jobs = [
@@ -553,14 +576,14 @@ class TestExtendTs:
                 time=0.0,
                 ploidy_index=1,
                 sample_id="s0",
-                create_individuals=True,
+                individual_id=0,
             ),
             _make_job(
                 haplotype_index=3,
                 time=0.0,
                 ploidy_index=0,
                 sample_id="s0",
-                create_individuals=True,
+                individual_id=0,
             ),
         ]
         ts2 = extend_ts(ts, paired_results=list(zip(jobs, results)))
@@ -604,7 +627,7 @@ class TestMatcherExtendCycle:
         ts = self._build_root_ts()
         ancestor_hap = np.array([0, 1, 0, 1, 0], dtype=np.int8)
         paired = self._match_and_pair(ts, [ancestor_hap])
-        job = _make_job(time=0.5, create_individuals=False)
+        job = _make_job(time=0.5, individual_id=None)
         paired_results = [(job, paired[0][1])]
         ts2 = extend_ts(ts, paired_results=paired_results)
         node_times = [n.time for n in ts2.nodes()]
@@ -616,7 +639,7 @@ class TestMatcherExtendCycle:
         ts = self._build_root_ts()
         ancestor_hap = np.array([0, 0, 1, 1, 0], dtype=np.int8)
         paired = self._match_and_pair(ts, [ancestor_hap])
-        job = _make_job(time=0.5, create_individuals=False)
+        job = _make_job(time=0.5, individual_id=None)
         ts2 = extend_ts(ts, paired_results=[(job, paired[0][1])])
 
         # Now match a sample against ts2
@@ -633,19 +656,19 @@ class TestMatcherExtendCycle:
 
         hap1 = np.array([[0, 1, 0, 0, 1]], dtype=np.int8)
         paired1 = self._match_and_pair(ts, hap1)
-        job1 = _make_job(time=0.7, haplotype_index=0, create_individuals=False)
+        job1 = _make_job(time=0.7, haplotype_index=0, individual_id=None)
         ts2 = extend_ts(ts, paired_results=[(job1, paired1[0][1])])
         assert ts2.num_nodes == 3
 
         hap2 = np.array([[1, 0, 0, 1, 0]], dtype=np.int8)
         paired2 = self._match_and_pair(ts2, hap2)
-        job2 = _make_job(time=0.5, haplotype_index=1, create_individuals=False)
+        job2 = _make_job(time=0.5, haplotype_index=1, individual_id=None)
         ts3 = extend_ts(ts2, paired_results=[(job2, paired2[0][1])])
         assert ts3.num_nodes == 4
 
         sample_hap = np.array([[0, 1, 0, 0, 1]], dtype=np.int8)
         paired3 = self._match_and_pair(ts3, sample_hap)
-        job3 = _make_job(time=0.0, haplotype_index=2, create_individuals=False)
+        job3 = _make_job(time=0.0, haplotype_index=2, individual_id=None)
         ts4 = extend_ts(ts3, paired_results=[(job3, paired3[0][1])])
         assert ts4.num_nodes == 5
 
@@ -654,7 +677,7 @@ class TestMatcherExtendCycle:
         ts = self._build_root_ts()
         hap = np.array([[0, 1, 0, 0, 1]], dtype=np.int8)
         paired = self._match_and_pair(ts, hap)
-        job = _make_job(time=0.5, create_individuals=False)
+        job = _make_job(time=0.5, individual_id=None)
         ts2 = extend_ts(ts, paired_results=[(job, paired[0][1])])
         assert "sequence_intervals" in ts2.metadata
         assert ts2.metadata["sequence_intervals"] == [[10, 51]]

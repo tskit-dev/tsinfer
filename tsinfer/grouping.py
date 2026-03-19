@@ -19,15 +19,11 @@
 """
 Ancestor grouping by linesweep: groups ancestors for parallel matching
 using a linesweep + topological sort approach.
-
-Also provides lightweight metadata loading and the ``compute_groups`` /
-``compute_groups_json`` entry points so the module is self-contained.
 """
 
 from __future__ import annotations
 
 import dataclasses
-import json
 import logging
 import time as time_
 from dataclasses import dataclass
@@ -35,30 +31,8 @@ from dataclasses import dataclass
 import numba
 import numpy as np
 
-from . import vcz as vcz_mod
-from .config import Config
-
 logging.getLogger("numba").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Lightweight metadata loader
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class HaplotypeMetadata:
-    """Arrays needed by ``compute_groups`` — no genotype data."""
-
-    times: np.ndarray  # (n,) float64
-    start_positions: np.ndarray  # (n,) int32
-    end_positions: np.ndarray  # (n,) int32
-    source: list[str]  # (n,) source name per haplotype
-    sample_id: list[str]  # (n,) sample ID per haplotype
-    ploidy_index: list[int]  # (n,) ploidy index per haplotype
-    node_flags: list[int]  # (n,) tskit node flags per haplotype
-    create_individuals: list[bool]  # (n,) whether to group into individuals
 
 
 @dataclass
@@ -74,127 +48,29 @@ class MatchJob:
     end_position: int
     group: int
     node_flags: int = 1
-    create_individuals: bool = True
+    individual_id: int | None = None
+    population_id: int | None = None
 
 
-def collect_haplotype_metadata(cfg: Config) -> HaplotypeMetadata:
-    """
-    Load only the 1-D metadata arrays from all sources in
-    ``cfg.match.sources`` — no ``call_genotype`` data is read.
+def assign_groups(jobs: list[MatchJob]) -> list[MatchJob]:
+    """Assign group indices to MatchJobs, return sorted by (group, haplotype_index)."""
+    if len(jobs) == 0:
+        return jobs
 
-    Sources include both ancestor sources (auto-created from
-    ``cfg.ancestors``) and sample sources, treated uniformly.
-    """
-    logger.info("Loading haplotype metadata (lightweight, no genotypes)")
+    times = np.array([j.time for j in jobs], dtype=np.float64)
+    starts = np.array([j.start_position for j in jobs], dtype=np.int32)
+    ends = np.array([j.end_position for j in jobs], dtype=np.int32)
+    groups = compute_groups(times, starts, ends)
 
-    # Reference positions from first ancestor store (for default start/end)
-    if len(cfg.ancestors) > 0:
-        anc_store = vcz_mod.open_store(cfg.ancestors[0].path)
-        positions = np.asarray(anc_store["variant_position"][:], dtype=np.int32)
-    else:
-        positions = np.array([], dtype=np.int32)
+    index_to_group: dict[int, int] = {}
+    for group_idx, group_indices in enumerate(groups):
+        for idx in group_indices:
+            index_to_group[int(idx)] = group_idx
 
-    times_list: list[np.ndarray] = []
-    start_list: list[np.ndarray] = []
-    end_list: list[np.ndarray] = []
-    source_list: list[str] = []
-    sample_id_list: list[str] = []
-    ploidy_index_list: list[int] = []
-    node_flags_list: list[int] = []
-    create_individuals_list: list[bool] = []
+    for i, job in enumerate(jobs):
+        jobs[i] = dataclasses.replace(job, group=index_to_group[i])
 
-    for source_name in cfg.match.sources:
-        source = cfg.sources[source_name]
-        src_cfg = cfg.match.sources[source_name]
-        store = vcz_mod.open_store(source.path)
-
-        # Shape metadata only — no data loaded
-        gt_shape = store["call_genotype"].shape
-        num_samples = gt_shape[1]
-        ploidy = gt_shape[2]
-
-        samples_selection = vcz_mod.resolve_samples_selection(store, source.samples)
-        if samples_selection is not None:
-            num_samples = len(samples_selection)
-
-        num_hap = num_samples * ploidy
-        logger.info(
-            "Source '%s': %d samples, ploidy %d, %d haplotypes",
-            source_name,
-            num_samples,
-            ploidy,
-            num_hap,
-        )
-
-        # sample_time
-        all_num_samples = gt_shape[1]
-        sample_time_arr = vcz_mod.resolve_field(
-            store, source.sample_time, "sample_id", all_num_samples, fill_value=0
-        )
-        if sample_time_arr is None:
-            sample_time_arr = np.zeros(num_samples, dtype=np.float64)
-        else:
-            sample_time_arr = np.asarray(sample_time_arr, dtype=np.float64)
-            if samples_selection is not None:
-                sample_time_arr = sample_time_arr[samples_selection]
-
-        hap_times = np.repeat(sample_time_arr, ploidy)
-
-        # sample_id
-        raw_ids = store["sample_id"][:]
-        if samples_selection is not None:
-            raw_ids = raw_ids[samples_selection]
-        sample_ids = [str(x) for x in raw_ids.tolist()]
-
-        # start/end positions: use store arrays if available, else defaults
-        if "sample_start_position" in store and "sample_end_position" in store:
-            src_start = np.asarray(store["sample_start_position"][:], dtype=np.int32)
-            src_end = np.asarray(store["sample_end_position"][:], dtype=np.int32)
-            hap_start = np.repeat(src_start, ploidy)
-            hap_end = np.repeat(src_end, ploidy)
-        elif len(positions) > 0:
-            hap_start = np.full(num_hap, int(positions[0]), dtype=np.int32)
-            hap_end = np.full(num_hap, int(positions[-1]), dtype=np.int32)
-        else:
-            hap_start = np.zeros(num_hap, dtype=np.int32)
-            hap_end = np.zeros(num_hap, dtype=np.int32)
-
-        # Per-haplotype identity
-        for i in range(num_samples):
-            for p in range(ploidy):
-                source_list.append(source.name)
-                sample_id_list.append(sample_ids[i])
-                ploidy_index_list.append(p)
-                node_flags_list.append(src_cfg.node_flags)
-                create_individuals_list.append(src_cfg.create_individuals)
-
-        times_list.append(hap_times)
-        start_list.append(hap_start)
-        end_list.append(hap_end)
-
-    # --- Concatenate ---
-    if times_list:
-        all_times = np.concatenate(times_list)
-        all_start = np.concatenate(start_list)
-        all_end = np.concatenate(end_list)
-    else:
-        all_times = np.array([], dtype=np.float64)
-        all_start = np.array([], dtype=np.int32)
-        all_end = np.array([], dtype=np.int32)
-
-    num_total = len(all_times)
-    logger.info("Collected metadata for %d haplotypes", num_total)
-
-    return HaplotypeMetadata(
-        times=all_times,
-        start_positions=all_start,
-        end_positions=all_end,
-        source=source_list,
-        sample_id=sample_id_list,
-        ploidy_index=ploidy_index_list,
-        node_flags=node_flags_list,
-        create_individuals=create_individuals_list,
-    )
+    return sorted(jobs, key=lambda j: (j.group, j.haplotype_index))
 
 
 def merge_overlapping_haplotypes(start, end, time):
@@ -377,7 +253,7 @@ def group_haplotypes_by_linesweep(start, end, time):
 
 
 # ---------------------------------------------------------------------------
-# compute_groups / compute_groups_json
+# compute_groups
 # ---------------------------------------------------------------------------
 
 
@@ -407,77 +283,3 @@ def compute_groups(
         ids = grouping[group_id]
         groups.append(np.array(ids, dtype=np.int32))
     return groups
-
-
-def compute_match_jobs(cfg: Config) -> list[MatchJob]:
-    """
-    Compute haplotype groups and return a flat list of :class:`MatchJob`.
-
-    Each haplotype gets exactly one ``MatchJob`` with its identity
-    (source, sample_id, ploidy_index), position range, time, and assigned
-    group index.  The list is ordered by group (oldest first), then by
-    haplotype index within each group — the same order the match loop
-    processes them.
-    """
-    logger.info("Loading haplotype metadata")
-    t0 = time_.monotonic()
-    hap_meta = collect_haplotype_metadata(cfg)
-    elapsed = time_.monotonic() - t0
-    logger.info(
-        "Loaded %d haplotypes in %.2fs",
-        len(hap_meta.times),
-        elapsed,
-    )
-
-    logger.info("Computing groups")
-    t0 = time_.monotonic()
-    groups = compute_groups(
-        hap_meta.times,
-        hap_meta.start_positions,
-        hap_meta.end_positions,
-    )
-    elapsed = time_.monotonic() - t0
-    logger.info("Computed %d groups in %.2fs", len(groups), elapsed)
-
-    # Build flat list ordered by (group, haplotype_index)
-    jobs: list[MatchJob] = []
-    for group_idx, group_indices in enumerate(groups):
-        for idx in group_indices:
-            idx = int(idx)
-            jobs.append(
-                MatchJob(
-                    haplotype_index=idx,
-                    source=hap_meta.source[idx],
-                    sample_id=hap_meta.sample_id[idx],
-                    ploidy_index=hap_meta.ploidy_index[idx],
-                    time=float(hap_meta.times[idx]),
-                    start_position=int(hap_meta.start_positions[idx]),
-                    end_position=int(hap_meta.end_positions[idx]),
-                    group=group_idx,
-                    node_flags=hap_meta.node_flags[idx],
-                    create_individuals=hap_meta.create_individuals[idx],
-                )
-            )
-
-    return jobs
-
-
-def compute_groups_json(cfg: Config) -> str:
-    """
-    Compute haplotype groups and return as a JSON string.
-
-    The output is a flat JSON array of objects, one per haplotype, ordered
-    by group then haplotype index.  Each object has the fields of
-    :class:`MatchJob` — suitable for loading into pandas with
-    ``pd.read_json`` or ``pd.DataFrame``.
-    """
-    t0 = time_.monotonic()
-    jobs = compute_match_jobs(cfg)
-    elapsed = time_.monotonic() - t0
-
-    logger.info("Serialising %d match jobs to JSON", len(jobs))
-    t0 = time_.monotonic()
-    json_str = json.dumps([dataclasses.asdict(j) for j in jobs], indent=2)
-    elapsed = time_.monotonic() - t0
-    logger.info("Serialised in %.2fs", elapsed)
-    return json_str
