@@ -140,6 +140,7 @@ def make_root_ts(
         )
 
     tables.nodes.metadata_schema = tskit.MetadataSchema({"codec": "json"})
+    tables.individuals.metadata_schema = tskit.MetadataSchema({"codec": "json"})
     # Node 0: ultimate root
     tables.nodes.add_row(time=ultimate_root_time, flags=0, metadata={})
     # Node 1: virtual root
@@ -281,20 +282,22 @@ def extend_ts(
     *,
     paired_results: list[tuple[MatchJob, MatchResult]],
     site_alleles: np.ndarray | None = None,  # (num_sites, 2) str or None
-    ploidy: int = 1,
 ) -> tskit.TreeSequence:
     """
     Extend ts with the match results for one group.
 
     Adds nodes, edges, mutations, and individuals directly via the tskit
     Tables API — no TSB roundtrip.  When ``job.create_individuals`` is True,
-    nodes are grouped into tskit individuals at one individual per *ploidy*
-    nodes.
+    nodes are grouped by ``(source, sample_id)`` into tskit individuals.
+    Within each individual, nodes are ordered by ``haplotype_index``.
 
     Returns the updated tree sequence, which becomes the reference panel for
     the next group.
     """
     t_start = time_.monotonic()
+
+    # Sort by haplotype_index so nodes within each individual are ordered
+    paired_results = sorted(paired_results, key=lambda p: p[0].haplotype_index)
 
     tables = ts.dump_tables()
     pos_arr = tables.sites.position.astype(np.float64)
@@ -329,20 +332,17 @@ def extend_ts(
                 parent=-1,
             )
 
-    # Build individuals (group consecutive create_individuals=True by ploidy)
-    i = 0
-    while i < len(paired_results):
-        job = paired_results[i][0]
+    # Build individuals: group by (source, sample_id), with individual metadata
+    ind_key_to_id: dict[tuple[str, str], int] = {}
+    for i, (job, _result) in enumerate(paired_results):
         if job.create_individuals:
-            ind_id = tables.individuals.add_row()
-            for k in range(ploidy):
-                if i + k < len(new_node_ids):
-                    nid = new_node_ids[i + k]
-                    row = tables.nodes[nid]
-                    tables.nodes[nid] = row.replace(individual=ind_id)
-            i += ploidy
-        else:
-            i += 1
+            key = (job.source, job.sample_id)
+            if key not in ind_key_to_id:
+                ind_meta = {"source": job.source, "sample_id": job.sample_id}
+                ind_key_to_id[key] = tables.individuals.add_row(metadata=ind_meta)
+            nid = new_node_ids[i]
+            row = tables.nodes[nid]
+            tables.nodes[nid] = row.replace(individual=ind_key_to_id[key])
 
     t0 = time_.monotonic()
     tables.sort()

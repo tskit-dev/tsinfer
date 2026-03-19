@@ -351,7 +351,6 @@ class TestExtendTs:
         ts2 = extend_ts(
             ts,
             paired_results=[(job, self._simple_match_result(1, len(self.positions)))],
-            ploidy=1,
         )
         assert ts2.num_nodes == 3
 
@@ -377,16 +376,27 @@ class TestExtendTs:
         )
         assert ts2.num_mutations > 0
 
-    def test_individual_creation_ploidy2(self):
+    def test_individual_creation_diploid(self):
         ts = self._root_ts()
         r1 = self._simple_match_result(1, len(self.positions))
         r2 = self._simple_match_result(1, len(self.positions))
-        j1 = _make_job(time=0.0, ploidy_index=0, create_individuals=True)
-        j2 = _make_job(time=0.0, ploidy_index=1, create_individuals=True)
+        j1 = _make_job(
+            haplotype_index=0,
+            time=0.0,
+            ploidy_index=0,
+            sample_id="s0",
+            create_individuals=True,
+        )
+        j2 = _make_job(
+            haplotype_index=1,
+            time=0.0,
+            ploidy_index=1,
+            sample_id="s0",
+            create_individuals=True,
+        )
         ts2 = extend_ts(
             ts,
             paired_results=[(j1, r1), (j2, r2)],
-            ploidy=2,
         )
         assert ts2.num_individuals == 1
         ind = list(ts2.individuals())[0]
@@ -407,12 +417,11 @@ class TestExtendTs:
         ts = self._root_ts()
         r1 = self._simple_match_result(1, len(self.positions))
         r2 = self._simple_match_result(1, len(self.positions))
-        j1 = _make_job(time=0.0, create_individuals=False)
-        j2 = _make_job(time=0.0, create_individuals=False)
+        j1 = _make_job(haplotype_index=0, time=0.0, create_individuals=False)
+        j2 = _make_job(haplotype_index=1, time=0.0, create_individuals=False)
         ts2 = extend_ts(
             ts,
             paired_results=[(j1, r1), (j2, r2)],
-            ploidy=2,
         )
         assert ts2.num_individuals == 0
 
@@ -426,17 +435,22 @@ class TestExtendTs:
         assert ts2.num_sites == len(self.positions)
         np.testing.assert_array_equal(ts2.tables.sites.position, self.positions)
 
-    def test_multiple_individuals_ploidy2(self):
+    def test_multiple_individuals(self):
         ts = self._root_ts()
         results = [self._simple_match_result(1, len(self.positions)) for _ in range(4)]
         jobs = [
-            _make_job(time=0.0, ploidy_index=i % 2, create_individuals=True)
+            _make_job(
+                haplotype_index=i,
+                time=0.0,
+                ploidy_index=i % 2,
+                sample_id="s0" if i < 2 else "s1",
+                create_individuals=True,
+            )
             for i in range(4)
         ]
         ts2 = extend_ts(
             ts,
             paired_results=list(zip(jobs, results)),
-            ploidy=2,
         )
         assert ts2.num_individuals == 2
 
@@ -455,6 +469,110 @@ class TestExtendTs:
         assert node_meta["source"] == "my_source"
         assert node_meta["sample_id"] == "sample_42"
         assert node_meta["ploidy_index"] == 1
+
+    def test_mixed_ploidy_individuals(self):
+        """2 diploid nodes + 1 haploid node → 2 individuals."""
+        ts = self._root_ts()
+        results = [self._simple_match_result(1, len(self.positions)) for _ in range(3)]
+        jobs = [
+            _make_job(
+                haplotype_index=0,
+                time=0.0,
+                ploidy_index=0,
+                sample_id="diploid",
+                create_individuals=True,
+            ),
+            _make_job(
+                haplotype_index=1,
+                time=0.0,
+                ploidy_index=1,
+                sample_id="diploid",
+                create_individuals=True,
+            ),
+            _make_job(
+                haplotype_index=2,
+                time=0.0,
+                ploidy_index=0,
+                sample_id="haploid",
+                create_individuals=True,
+            ),
+        ]
+        ts2 = extend_ts(ts, paired_results=list(zip(jobs, results)))
+        assert ts2.num_individuals == 2
+        node_counts = sorted(len(ind.nodes) for ind in ts2.individuals())
+        assert node_counts == [1, 2]
+
+    def test_individuals_across_sources(self):
+        """Same sample_id in different sources → 2 separate individuals."""
+        ts = self._root_ts()
+        results = [self._simple_match_result(1, len(self.positions)) for _ in range(2)]
+        jobs = [
+            _make_job(
+                haplotype_index=0,
+                time=0.0,
+                source="src_a",
+                sample_id="s0",
+                create_individuals=True,
+            ),
+            _make_job(
+                haplotype_index=1,
+                time=0.0,
+                source="src_b",
+                sample_id="s0",
+                create_individuals=True,
+            ),
+        ]
+        ts2 = extend_ts(ts, paired_results=list(zip(jobs, results)))
+        assert ts2.num_individuals == 2
+
+    def test_individual_metadata(self):
+        """Each individual carries source and sample_id in its metadata."""
+        ts = self._root_ts()
+        r = self._simple_match_result(1, len(self.positions))
+        job = _make_job(
+            haplotype_index=0,
+            time=0.0,
+            source="my_src",
+            sample_id="sam1",
+            create_individuals=True,
+        )
+        ts2 = extend_ts(ts, paired_results=[(job, r)])
+        assert ts2.num_individuals == 1
+        ind_meta = ts2.individual(0).metadata
+        assert ind_meta["source"] == "my_src"
+        assert ind_meta["sample_id"] == "sam1"
+
+    def test_node_order_by_haplotype_index(self):
+        """Nodes within an individual are ordered by haplotype_index."""
+        ts = self._root_ts()
+        results = [self._simple_match_result(1, len(self.positions)) for _ in range(2)]
+        # Pass jobs in reverse haplotype_index order
+        jobs = [
+            _make_job(
+                haplotype_index=5,
+                time=0.0,
+                ploidy_index=1,
+                sample_id="s0",
+                create_individuals=True,
+            ),
+            _make_job(
+                haplotype_index=3,
+                time=0.0,
+                ploidy_index=0,
+                sample_id="s0",
+                create_individuals=True,
+            ),
+        ]
+        ts2 = extend_ts(ts, paired_results=list(zip(jobs, results)))
+        assert ts2.num_individuals == 1
+        ind = ts2.individual(0)
+        # Node added from haplotype_index=3 should come before haplotype_index=5
+        assert len(ind.nodes) == 2
+        # The node with ploidy_index=0 (haplotype_index=3) should be first
+        n0_meta = ts2.node(ind.nodes[0]).metadata
+        n1_meta = ts2.node(ind.nodes[1]).metadata
+        assert n0_meta["ploidy_index"] == 0
+        assert n1_meta["ploidy_index"] == 1
 
 
 # ---------------------------------------------------------------------------

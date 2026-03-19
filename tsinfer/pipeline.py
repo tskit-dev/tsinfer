@@ -91,7 +91,7 @@ def _setup_workdir(workdir, cfg):
     return jobs, max_group_index, starting_ts
 
 
-def _build_individual_metadata(cfg, individual_jobs, ploidy):
+def _build_individual_metadata(cfg, individual_jobs):
     """
     Build individual metadata and population assignments from config.
 
@@ -100,7 +100,6 @@ def _build_individual_metadata(cfg, individual_jobs, ploidy):
     cfg : Config
     individual_jobs : list[MatchJob]
         One MatchJob per individual (the first haplotype of each).
-    ploidy : int
 
     Returns an _IndividualMetadataResult with:
     - metadata: list of dicts, one per individual
@@ -261,20 +260,15 @@ def match(
         seq_len,
     )
 
-    # 5. Derive ploidy from jobs
-    sample_jobs = [j for j in jobs if j.create_individuals]
-    ploidy = (
-        max((j.ploidy_index for j in sample_jobs), default=0) + 1 if sample_jobs else 1
-    )
-
-    # 6. Group jobs by group index
+    # 5. Group jobs by group index
     groups_dict = collections.defaultdict(list)
     for idx, job in enumerate(jobs):
         groups_dict[job.group].append((idx, job))
     sorted_groups = sorted(groups_dict.keys())
 
-    # 7. Match loop — process groups in order
+    # 6. Match loop — process groups in order
     individual_jobs: list[MatchJob] = []  # first job of each individual
+    seen_individuals: set[tuple[str, str]] = set()
     sorted_groups = sorted(groups_dict.keys())
     num_groups = len(sorted_groups)
     total_haps = len(jobs)
@@ -321,21 +315,18 @@ def match(
         )
 
         # Track individual_jobs for post-processing metadata
-        current_ind_count = 0
         for job, _result in paired_results:
             if job.create_individuals:
-                current_ind_count += 1
-                if current_ind_count == 1:
+                key = (job.source, job.sample_id)
+                if key not in seen_individuals:
+                    seen_individuals.add(key)
                     individual_jobs.append(job)
-                if current_ind_count == ploidy:
-                    current_ind_count = 0
 
         # Extend the tree sequence
         ts = extend_ts(
             ts,
             paired_results=paired_results,
             site_alleles=site_alleles,
-            ploidy=ploidy,
         )
 
         # Write checkpoint to workdir if configured
@@ -352,7 +343,7 @@ def match(
             prev_written_group = group_idx
 
     # 8. Apply individual/population metadata as post-processing
-    ind_result = _build_individual_metadata(cfg, individual_jobs, ploidy)
+    ind_result = _build_individual_metadata(cfg, individual_jobs)
 
     if ind_result.metadata is not None or ind_result.population_names is not None:
         ts = _apply_individual_metadata(ts, ind_result)
@@ -379,17 +370,15 @@ def _apply_individual_metadata(
         for pop_name in ind_result.population_names:
             tables.populations.add_row(metadata={"name": pop_name})
 
-    # Apply individual metadata
+    # Apply individual metadata (merge with existing metadata from extend_ts)
     if ind_result.metadata is not None and tables.individuals.num_rows > 0:
-        tables.individuals.metadata_schema = tskit.MetadataSchema({"codec": "json"})
         old_inds = tables.individuals.copy()
         tables.individuals.clear()
         for i in range(old_inds.num_rows):
-            md = ind_result.metadata[i] if i < len(ind_result.metadata) else None
-            if md is not None:
-                tables.individuals.add_row(metadata=md)
-            else:
-                tables.individuals.add_row()
+            existing_md = old_inds[i].metadata
+            new_md = ind_result.metadata[i] if i < len(ind_result.metadata) else {}
+            merged = {**existing_md, **new_md}
+            tables.individuals.add_row(metadata=merged)
 
     # Apply population assignments
     if ind_result.population_indices is not None:
