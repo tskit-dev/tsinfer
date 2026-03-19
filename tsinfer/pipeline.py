@@ -299,6 +299,8 @@ def match(
             ts,
             positions,
             path_compression=path_compression,
+            num_alleles=reader.get_num_alleles(),
+            site_alleles=reader.get_site_alleles(),
         )
         job_list = [job for _, job in group_jobs]
         match_iter = matcher.match(job_list, reader, num_threads=num_threads)

@@ -63,9 +63,16 @@ class MatchResult:
     mutations: list[Mutation]
 
 
-def _tsb_from_ts(ts: tskit.TreeSequence, num_sites: int, positions: np.ndarray):
+def _tsb_from_ts(
+    ts: tskit.TreeSequence,
+    num_sites: int,
+    positions: np.ndarray,
+    num_alleles: np.ndarray | None = None,
+    site_alleles: np.ndarray | None = None,
+):
     """Restore a _tsinfer.TreeSequenceBuilder from a tskit.TreeSequence."""
-    num_alleles = [2] * num_sites
+    if num_alleles is None:
+        num_alleles = np.full(num_sites, 2, dtype=np.uint64)
     tsb = _tsinfer.TreeSequenceBuilder(num_alleles)
 
     t0 = time_.monotonic()
@@ -98,15 +105,31 @@ def _tsb_from_ts(ts: tskit.TreeSequence, num_sites: int, positions: np.ndarray):
     t_restore_mutations = 0
     if ts.num_mutations > 0:
         t0 = time_.monotonic()
-        # NOTE: strict biallelic assumption here!
-        mutation_site_as = ts.sites_ancestral_state[ts.mutations_site]
-        mutations_state = ts.mutations_derived_state != mutation_site_as
+        if site_alleles is not None:
+            # Map mutation derived_state strings back to integer allele codes
+            # using the site_alleles lookup table.
+            mut_sites = ts.mutations_site
+            derived_strings = ts.mutations_derived_state
+            mutations_state = np.empty(len(mut_sites), dtype=np.int8)
+            for i, (s, ds) in enumerate(zip(mut_sites, derived_strings)):
+                code = 1  # default fallback
+                for j in range(site_alleles.shape[1]):
+                    if str(site_alleles[s, j]) == ds:
+                        code = j
+                        break
+                mutations_state[i] = code
+        else:
+            # Fallback: biallelic assumption
+            mutation_site_as = ts.sites_ancestral_state[ts.mutations_site]
+            mutations_state = (ts.mutations_derived_state != mutation_site_as).astype(
+                np.int8
+            )
         t_build_mutations = time_.monotonic() - t0
         t0 = time_.monotonic()
         tsb.restore_mutations(
             ts.mutations_site,
             ts.mutations_node,
-            mutations_state.astype(np.int8),
+            mutations_state,
             ts.mutations_parent,
         )
         t_restore_mutations = time_.monotonic() - t0
@@ -194,6 +217,8 @@ class Matcher:
         ts: tskit.TreeSequence,
         positions: np.ndarray,  # (num_sites,) int32 — inference site positions
         path_compression: bool = True,
+        num_alleles: np.ndarray | None = None,
+        site_alleles: np.ndarray | None = None,
     ):
         self._positions = np.asarray(positions, dtype=np.int32)
         self._num_sites = len(positions)
@@ -201,7 +226,13 @@ class Matcher:
         self._path_compression = path_compression
 
         t0 = time_.monotonic()
-        self._tsb = _tsb_from_ts(ts, self._num_sites, self._positions)
+        self._tsb = _tsb_from_ts(
+            ts,
+            self._num_sites,
+            self._positions,
+            num_alleles=num_alleles,
+            site_alleles=site_alleles,
+        )
         logger.info("Create matcher tsb in %.3fs", time_.monotonic() - t0)
         self._rho = np.full(self._num_sites, 1e-2)
         self._mu = np.full(self._num_sites, 1e-20)
@@ -229,13 +260,8 @@ class Matcher:
             start = int(non_missing[0])
             end = int(non_missing[-1]) + 1
 
-        # The C matcher is biallelic (num_alleles=2), so clamp multi-allelic
-        # codes to 1 for HMM path-finding. The original h is kept for
-        # mutation recording where the full allele code is needed.
-        h_biallelic = np.where(h > 1, np.int8(1), h)
-
         t1 = time_.monotonic()
-        left, right, parent = matcher.find_path(h_biallelic, start, end, match_out)
+        left, right, parent = matcher.find_path(h, start, end, match_out)
         t_match = time_.monotonic() - t1
 
         # Convert site-index edges to absolute-position PathSegments
@@ -245,11 +271,10 @@ class Matcher:
             r_pos = float(pos[ri]) if ri < num_sites else float(seq_len)
             path.append(PathSegment(left=l_pos, right=r_pos, parent=int(pi)))
 
-        # Detect mutations using biallelic comparison for path mismatch,
-        # but record the full multi-allelic code from h for extend_ts
+        # Detect mutations and convert to absolute positions
         in_range = np.zeros(num_sites, dtype=bool)
         in_range[start:end] = True
-        mutation_mask = in_range & (h_biallelic != match_out) & (h >= 0)
+        mutation_mask = in_range & (h != match_out) & (h >= 0)
         mut_site_idxs = np.where(mutation_mask)[0]
         mutations = [
             Mutation(position=float(pos[si]), derived_state=int(h[si]))
