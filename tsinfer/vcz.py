@@ -1166,7 +1166,7 @@ class ChunkCache:
                 self._order.remove(key)
                 self._order.append(key)
                 self._hits += 1
-                logger.info(
+                logger.debug(
                     "Chunk cache hit: source=%s chunk=%d",
                     key[0],
                     key[1],
