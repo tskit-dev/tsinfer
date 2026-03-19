@@ -68,9 +68,12 @@ def _tsb_from_ts(
     num_sites: int,
     positions: np.ndarray,
     num_alleles: np.ndarray | None = None,
-    site_alleles: np.ndarray | None = None,
 ):
-    """Restore a _tsinfer.TreeSequenceBuilder from a tskit.TreeSequence."""
+    """Restore a _tsinfer.TreeSequenceBuilder from a tskit.TreeSequence.
+
+    The intermediate tree sequences use integer-string alleles ("0", "1", …)
+    so mutation derived_state values can be converted directly to int codes.
+    """
     if num_alleles is None:
         num_alleles = np.full(num_sites, 2, dtype=np.uint64)
     tsb = _tsinfer.TreeSequenceBuilder(num_alleles)
@@ -105,25 +108,11 @@ def _tsb_from_ts(
     t_restore_mutations = 0
     if ts.num_mutations > 0:
         t0 = time_.monotonic()
-        if site_alleles is not None:
-            # Map mutation derived_state strings back to integer allele codes
-            # using the site_alleles lookup table.
-            mut_sites = ts.mutations_site
-            derived_strings = ts.mutations_derived_state
-            mutations_state = np.empty(len(mut_sites), dtype=np.int8)
-            for i, (s, ds) in enumerate(zip(mut_sites, derived_strings)):
-                code = 1  # default fallback
-                for j in range(site_alleles.shape[1]):
-                    if str(site_alleles[s, j]) == ds:
-                        code = j
-                        break
-                mutations_state[i] = code
-        else:
-            # Fallback: biallelic assumption
-            mutation_site_as = ts.sites_ancestral_state[ts.mutations_site]
-            mutations_state = (ts.mutations_derived_state != mutation_site_as).astype(
-                np.int8
-            )
+        # Intermediate TS uses integer-string alleles, so derived_state
+        # values like "0", "1", "2" map directly to allele codes.
+        mutations_state = np.array(
+            [int(ds) for ds in ts.mutations_derived_state], dtype=np.int8
+        )
         t_build_mutations = time_.monotonic() - t0
         t0 = time_.monotonic()
         tsb.restore_mutations(
@@ -152,7 +141,6 @@ def make_root_ts(
     sequence_length: float,
     positions: np.ndarray,  # (num_sites,) int32
     sequence_intervals: np.ndarray,  # (n_intervals, 2) int32
-    site_alleles: np.ndarray | None = None,  # (num_sites, 2) str or None
     max_time: float = 0.0,
 ) -> tskit.TreeSequence:
     """
@@ -166,6 +154,10 @@ def make_root_ts(
     The virtual root is placed at ``max_time + 1`` and the ultimate root at
     ``max_time + 2``, ensuring both are strictly older than any ancestor.
 
+    Sites use integer-string alleles ("0" = ancestral) so that intermediate
+    tree sequences can round-trip allele codes through _tsb_from_ts without
+    a string lookup table.
+
     Stores *sequence_intervals* in the tree sequence top-level metadata.
     """
     virtual_root_time = max_time + 1
@@ -176,12 +168,8 @@ def make_root_ts(
     tables.metadata = {"sequence_intervals": np.asarray(sequence_intervals).tolist()}
 
     positions = np.asarray(positions)
-    if site_alleles is None:
-        site_alleles = np.array([["0", "1"]] * len(positions), dtype=object)
-    for idx, pos in enumerate(positions):
-        tables.sites.add_row(
-            position=float(pos), ancestral_state=str(site_alleles[idx, 0])
-        )
+    for pos in positions:
+        tables.sites.add_row(position=float(pos), ancestral_state="0")
 
     tables.nodes.metadata_schema = tskit.MetadataSchema({"codec": "json"})
     tables.individuals.metadata_schema = tskit.MetadataSchema({"codec": "json"})
@@ -218,7 +206,6 @@ class Matcher:
         positions: np.ndarray,  # (num_sites,) int32 — inference site positions
         path_compression: bool = True,
         num_alleles: np.ndarray | None = None,
-        site_alleles: np.ndarray | None = None,
     ):
         self._positions = np.asarray(positions, dtype=np.int32)
         self._num_sites = len(positions)
@@ -231,7 +218,6 @@ class Matcher:
             self._num_sites,
             self._positions,
             num_alleles=num_alleles,
-            site_alleles=site_alleles,
         )
         logger.info("Create matcher tsb in %.3fs", time_.monotonic() - t0)
         self._rho = np.full(self._num_sites, 1e-2)
@@ -334,7 +320,6 @@ def extend_ts(
     ts: tskit.TreeSequence,
     *,
     paired_results: list[tuple[MatchJob, MatchResult]],
-    site_alleles: np.ndarray | None = None,  # (num_sites, 2) str or None
 ) -> tskit.TreeSequence:
     """
     Extend ts with the match results for one group.
@@ -343,6 +328,11 @@ def extend_ts(
     Tables API — no TSB roundtrip.  When ``job.create_individuals`` is True,
     nodes are grouped by ``(source, sample_id)`` into tskit individuals.
     Within each individual, nodes are ordered by ``haplotype_index``.
+
+    Mutation derived states are stored as integer-string allele codes
+    ("0", "1", "2", …) matching the codes produced by ``_AlleleEncoder``.
+    The caller is responsible for relabeling to real allele strings before
+    the tree sequence is returned to the user.
 
     Returns the updated tree sequence, which becomes the reference panel for
     the next group.
@@ -354,9 +344,6 @@ def extend_ts(
 
     tables = ts.dump_tables()
     pos_arr = tables.sites.position.astype(np.float64)
-    num_sites = len(pos_arr)
-    if site_alleles is None:
-        site_alleles = np.array([["0", "1"]] * num_sites, dtype=object)
 
     # Add nodes, edges, mutations for each (job, result) pair
     new_node_ids = []
@@ -381,7 +368,7 @@ def extend_ts(
             tables.mutations.add_row(
                 site=site_id,
                 node=node_id,
-                derived_state=str(site_alleles[site_id, mut.derived_state]),
+                derived_state=str(mut.derived_state),
                 parent=-1,
             )
 
@@ -430,3 +417,53 @@ def extend_ts(
     )
 
     return result_ts
+
+
+def relabel_alleles(
+    ts: tskit.TreeSequence,
+    site_alleles: np.ndarray,
+) -> tskit.TreeSequence:
+    """
+    Replace integer-string alleles with real allele strings.
+
+    During the match loop, sites use "0" as ancestral_state and mutations
+    use "1", "2", … as derived_state.  This function maps them back to the
+    actual allele strings from *site_alleles*.
+
+    Parameters
+    ----------
+    ts : tskit.TreeSequence
+        Tree sequence with integer-string alleles.
+    site_alleles : np.ndarray
+        ``(num_sites, max_alleles)`` object array where
+        ``site_alleles[i, code]`` is the real allele string.
+    """
+    tables = ts.dump_tables()
+
+    # Relabel ancestral states
+    old_sites = tables.sites.copy()
+    tables.sites.clear()
+    for i in range(old_sites.num_rows):
+        code = int(old_sites[i].ancestral_state)
+        tables.sites.add_row(
+            position=old_sites[i].position,
+            ancestral_state=str(site_alleles[i, code]),
+            metadata=old_sites[i].metadata,
+        )
+
+    # Relabel mutation derived states
+    old_muts = tables.mutations.copy()
+    tables.mutations.clear()
+    for i in range(old_muts.num_rows):
+        mut = old_muts[i]
+        code = int(mut.derived_state)
+        tables.mutations.add_row(
+            site=mut.site,
+            node=mut.node,
+            derived_state=str(site_alleles[mut.site, code]),
+            parent=mut.parent,
+            time=mut.time,
+            metadata=mut.metadata,
+        )
+
+    return tables.tree_sequence()
