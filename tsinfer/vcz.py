@@ -1149,10 +1149,15 @@ def finalize_ancestor_zarr(root, focal_positions_acc, compressor=None):
 
 
 class ChunkCache:
-    """Unified LRU cache for sample chunks, keyed by (source_name, chunk_index)."""
+    """Unified LRU cache for sample chunks, keyed by (source_name, chunk_index).
 
-    def __init__(self, max_entries: int = 2):
-        self._max_entries = max_entries
+    Uses a memory limit in bytes rather than entry count, so that cache
+    utilisation adapts to actual chunk sizes.
+    """
+
+    def __init__(self, max_bytes: int):
+        self._max_bytes = max_bytes
+        self._current_bytes = 0
         self._cache: dict[tuple[str, int], np.ndarray] = {}
         self._order: list[tuple[str, int]] = []
         self._lock = threading.Lock()
@@ -1176,13 +1181,15 @@ class ChunkCache:
             return None
 
     def put(self, key: tuple[str, int], data: np.ndarray) -> None:
-        """Insert chunk, evicting LRU entry if at capacity. Thread-safe."""
+        """Insert chunk, evicting LRU entries until it fits. Thread-safe."""
         with self._lock:
             if key in self._cache:
                 return
-            if len(self._order) >= self._max_entries:
+            new_bytes = data.nbytes
+            while self._order and self._current_bytes + new_bytes > self._max_bytes:
                 evict_key = self._order.pop(0)
                 evicted = self._cache.pop(evict_key)
+                self._current_bytes -= evicted.nbytes
                 logger.info(
                     "Chunk cache evict: source=%s chunk=%d freed=%.1f MiB",
                     evict_key[0],
@@ -1191,20 +1198,21 @@ class ChunkCache:
                 )
             self._cache[key] = data
             self._order.append(key)
+            self._current_bytes += new_bytes
             logger.info(
                 "Chunk cache insert: source=%s chunk=%d"
                 " size=%.1f MiB (total: %.1f MiB, %d entries)",
                 key[0],
                 key[1],
                 data.nbytes / (1024 * 1024),
-                self.total_bytes / (1024 * 1024),
+                self._current_bytes / (1024 * 1024),
                 len(self._cache),
             )
 
     @property
     def total_bytes(self) -> int:
-        """Sum of nbytes of all cached arrays."""
-        return sum(v.nbytes for v in self._cache.values())
+        """Current memory usage of cached arrays in bytes."""
+        return self._current_bytes
 
 
 class VCZHaplotypeReader:
@@ -1307,6 +1315,14 @@ class VCZHaplotypeReader:
                     self._ancestral_allele_index[i] = j
                     break
 
+    @property
+    def chunk_bytes(self) -> int:
+        """Byte size of one sample chunk from this source's zarr store."""
+        gt = self._store["call_genotype"]
+        num_sites = gt.shape[0]
+        ploidy = gt.shape[2]
+        return num_sites * self._sample_chunk_size * ploidy * gt.dtype.itemsize
+
     def _load_sample_chunk(self, chunk_idx: int) -> np.ndarray:
         """Load a sample chunk from the zarr store, return raw int8 array.
 
@@ -1392,7 +1408,7 @@ class HaplotypeReader:
         sources: dict,
         positions: np.ndarray,
         ancestral_alleles: np.ndarray,
-        cache_size: int = 2,
+        cache_size_mb: int = 256,
     ):
         """
         Parameters
@@ -1406,35 +1422,85 @@ class HaplotypeReader:
         ancestral_alleles : np.ndarray
             (num_sites,) array of ancestral allele strings, one per
             reference position.  Authoritative source for polarisation.
-        cache_size : int
-            Total number of cached chunks across all sources.
+        cache_size_mb : int
+            Cache memory limit in MiB.
         """
         self._positions = np.asarray(positions, dtype=np.int32)
         self._ancestral_alleles = ancestral_alleles
         self._sources = sources
-        self._cache = ChunkCache(max_entries=cache_size)
+        max_bytes = cache_size_mb * 1024 * 1024
 
         # Create reader for ancestors
-        self._readers: dict[str, VCZHaplotypeReader] = {
-            "ancestors": VCZHaplotypeReader(
-                ancestor_store_path,
-                positions,
-                ancestral_alleles,
-                source_name="ancestors",
-                cache=self._cache,
-            ),
-        }
+        anc_reader = VCZHaplotypeReader(
+            ancestor_store_path,
+            positions,
+            ancestral_alleles,
+            source_name="ancestors",
+            cache=None,  # placeholder, set below
+        )
+        self._readers: dict[str, VCZHaplotypeReader] = {"ancestors": anc_reader}
+
+        # Eagerly create all sample-source readers so we can validate sizes
+        for name, source in sources.items():
+            store = open_store(source.path)
+            samples_selection = resolve_samples_selection(store, source.samples)
+            reader = VCZHaplotypeReader(
+                store,
+                self._positions,
+                self._ancestral_alleles,
+                source_name=name,
+                cache=None,  # placeholder, set below
+                samples_selection=samples_selection,
+            )
+            self._readers[name] = reader
+
+        # Validate that the cache can fit at least one chunk from every source
+        max_chunk = 0
+        max_chunk_source = None
+        for name, reader in self._readers.items():
+            cb = reader.chunk_bytes
+            if cb > max_chunk:
+                max_chunk = cb
+                max_chunk_source = name
+            chunks_fit = max_bytes // cb if cb > 0 else float("inf")
+            logger.info(
+                "Cache: source=%s chunk_size=%.1f MiB, fits %d chunks",
+                name,
+                cb / (1024 * 1024),
+                chunks_fit,
+            )
+            if cb > 0 and chunks_fit < 2:
+                import warnings
+
+                warnings.warn(
+                    f"Cache can hold fewer than 2 chunks from source "
+                    f"'{name}' (chunk={cb / (1024 * 1024):.1f} MiB, "
+                    f"cache={cache_size_mb} MiB). "
+                    f"Consider increasing --cache-size.",
+                    stacklevel=2,
+                )
+
+        if max_chunk > 0 and max_bytes < max_chunk:
+            raise ValueError(
+                f"Cache size {cache_size_mb} MiB cannot fit a single chunk "
+                f"from source '{max_chunk_source}' "
+                f"({max_chunk / (1024 * 1024):.1f} MiB). "
+                f"Increase --cache-size to at least "
+                f"{max_chunk / (1024 * 1024):.0f} MiB."
+            )
+
+        # Now create the shared cache and assign to all readers
+        self._cache = ChunkCache(max_bytes=max_bytes)
+        for reader in self._readers.values():
+            reader._cache = self._cache
+
         self._readers_lock = threading.Lock()
 
     def _get_reader(self, source_name: str) -> VCZHaplotypeReader:
-        # Fast path: reader already exists (read-only check, safe without lock
-        # because dict reads are atomic in CPython and once a reader is
-        # inserted it is never removed).
         if source_name in self._readers:
             return self._readers[source_name]
 
         with self._readers_lock:
-            # Re-check under lock — another thread may have created it
             if source_name in self._readers:
                 return self._readers[source_name]
 
