@@ -333,7 +333,7 @@ def match(
         ts = extend_ts(
             ts,
             paired_results=paired_results,
-            site_alleles=site_alleles,
+            site_alleles=reader.get_site_alleles(),
         )
 
         # Write checkpoint to workdir if configured

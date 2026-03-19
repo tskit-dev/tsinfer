@@ -32,6 +32,7 @@ from tsinfer.vcz import (
     ChunkCache,
     HaplotypeReader,
     VCZHaplotypeReader,
+    _AlleleEncoder,
     num_contigs,
     open_store,
     resolve_field,
@@ -865,3 +866,194 @@ class TestVCZHaplotypeReader:
         cache.put(("x", 2), c)
         assert cache.total_bytes == 90
         assert ("x", 0) not in cache._cache
+
+
+# ---------------------------------------------------------------------------
+# _AlleleEncoder
+# ---------------------------------------------------------------------------
+
+
+class TestAlleleEncoder:
+    def test_basic(self):
+        """Ancestral allele is always code 0, first derived is 1."""
+        enc = _AlleleEncoder(np.array(["A", "C"]))
+        assert enc.encode(0, "A") == 0
+        assert enc.encode(0, "T") == 1
+        # Idempotent
+        assert enc.encode(0, "T") == 1
+        assert enc.encode(0, "A") == 0
+        assert enc.num_alleles(0) == 2
+
+    def test_cross_source_distinct_codes(self):
+        """Different derived alleles at the same site get distinct codes."""
+        enc = _AlleleEncoder(np.array(["A"]))
+        assert enc.encode(0, "T") == 1
+        assert enc.encode(0, "G") == 2
+        assert enc.encode(0, "C") == 3
+        assert enc.num_alleles(0) == 4
+
+    def test_site_alleles_array(self):
+        enc = _AlleleEncoder(np.array(["A", "C"]))
+        enc.encode(0, "T")
+        enc.encode(1, "G")
+        enc.encode(1, "T")
+        arr = enc.site_alleles_array()
+        assert arr.shape[0] == 2
+        assert arr.shape[1] >= 3  # site 1 has 3 alleles
+        assert arr[0, 0] == "A"
+        assert arr[0, 1] == "T"
+        assert arr[1, 0] == "C"
+        assert arr[1, 1] == "G"
+        assert arr[1, 2] == "T"
+
+
+# ---------------------------------------------------------------------------
+# Cached chunk shape and variant selection
+# ---------------------------------------------------------------------------
+
+
+class TestVariantSelection:
+    def test_cached_chunk_shape(self):
+        """Cached array is (num_selected, chunk_samples, ploidy), not full."""
+        # 5 source variants, only 2 match reference positions
+        positions_ref = np.array([200, 400], dtype=np.int32)
+        positions_src = np.array([100, 200, 300, 400, 500], dtype=np.int32)
+        gt = np.zeros((5, 2, 1), dtype=np.int8)
+        alleles = np.array([["A", "T"]] * 5)
+        store = make_sample_vcz(
+            genotypes=gt,
+            positions=positions_src,
+            alleles=alleles,
+            ancestral_state=np.array(["A"] * 5),
+            sequence_length=1000,
+        )
+        anc_alleles = np.array(["A", "A"])
+        cache = ChunkCache(max_bytes=1024 * 1024)
+        reader = VCZHaplotypeReader(
+            store,
+            positions_ref,
+            anc_alleles,
+            source_name="test",
+            cache=cache,
+        )
+        reader.read_haplotype("sample_0")
+        # Cache should have one entry with shape (2, 2, 1) not (5, 2, 1)
+        cached = list(cache._cache.values())[0]
+        assert cached.shape == (2, 2, 1)
+
+    def test_chunk_bytes_reflects_selected(self):
+        """chunk_bytes uses num_selected, not total source variants."""
+        positions_ref = np.array([200], dtype=np.int32)
+        positions_src = np.array([100, 200, 300], dtype=np.int32)
+        gt = np.zeros((3, 2, 1), dtype=np.int8)
+        store = make_sample_vcz(
+            genotypes=gt,
+            positions=positions_src,
+            alleles=np.array([["A", "T"]] * 3),
+            ancestral_state=np.array(["A"] * 3),
+            sequence_length=1000,
+        )
+        cache = ChunkCache(max_bytes=1024 * 1024)
+        reader = VCZHaplotypeReader(
+            store,
+            positions_ref,
+            np.array(["A"]),
+            source_name="test",
+            cache=cache,
+        )
+        # 1 selected * 2 samples * 1 ploidy * 1 byte = 2
+        assert reader.chunk_bytes == 2
+
+    def test_variant_chunks_skipped(self):
+        """Store with many variants but few selected returns correct output."""
+        # 10 source variants, only positions 300, 700 match reference
+        positions_src = np.array(
+            [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000], dtype=np.int32
+        )
+        positions_ref = np.array([300, 700], dtype=np.int32)
+        # sample_0: allele 1 at pos 300, allele 0 at pos 700
+        gt = np.zeros((10, 1, 1), dtype=np.int8)
+        gt[2, 0, 0] = 1  # pos 300
+        gt[6, 0, 0] = 0  # pos 700
+        alleles = np.array([["A", "T"]] * 10)
+        store = make_sample_vcz(
+            genotypes=gt,
+            positions=positions_src,
+            alleles=alleles,
+            ancestral_state=np.array(["A"] * 10),
+            sequence_length=2000,
+        )
+        anc_alleles = np.array(["A", "A"])
+        cache = ChunkCache(max_bytes=1024 * 1024)
+        reader = VCZHaplotypeReader(
+            store,
+            positions_ref,
+            anc_alleles,
+            source_name="test",
+            cache=cache,
+        )
+        hap = reader.read_haplotype("sample_0")
+        np.testing.assert_array_equal(hap, [1, 0])
+
+
+class TestGetSiteAlleles:
+    def test_facade_returns_alleles_after_reads(self):
+        """get_site_alleles returns correct allele array after reads."""
+        from tsinfer.config import Source
+
+        positions = np.array([100, 200], dtype=np.int32)
+        # Source A: site 0 has alleles A/T, site 1 has A/G
+        store_a = make_sample_vcz(
+            genotypes=np.array([[[1]], [[1]]], dtype=np.int8),
+            positions=positions,
+            alleles=np.array([["A", "T"], ["A", "G"]]),
+            ancestral_state=np.array(["A", "A"]),
+            sequence_length=1000,
+        )
+        # Source B: site 0 has alleles A/C, site 1 has A/G
+        store_b = make_sample_vcz(
+            genotypes=np.array([[[1]], [[1]]], dtype=np.int8),
+            positions=positions,
+            alleles=np.array([["A", "C"], ["A", "G"]]),
+            ancestral_state=np.array(["A", "A"]),
+            sequence_length=1000,
+        )
+        sources = {
+            "src_a": Source(path=store_a, name="src_a"),
+            "src_b": Source(path=store_b, name="src_b"),
+        }
+        anc_alleles = np.array(["A", "A"])
+        reader = HaplotypeReader(sources, positions, anc_alleles)
+
+        # Read from both sources to trigger allele discovery
+        job_a = MatchJob(
+            haplotype_index=0,
+            source="src_a",
+            sample_id="sample_0",
+            ploidy_index=0,
+            time=0.0,
+            start_position=100,
+            end_position=200,
+            group=0,
+        )
+        job_b = MatchJob(
+            haplotype_index=1,
+            source="src_b",
+            sample_id="sample_0",
+            ploidy_index=0,
+            time=0.0,
+            start_position=100,
+            end_position=200,
+            group=0,
+        )
+        reader.read_haplotype(job_a)
+        reader.read_haplotype(job_b)
+
+        alleles = reader.get_site_alleles()
+        # Site 0: A (ancestral), T (from src_a), C (from src_b)
+        assert alleles[0, 0] == "A"
+        assert alleles[0, 1] == "T"
+        assert alleles[0, 2] == "C"
+        # Site 1: A (ancestral), G (from both sources — same code)
+        assert alleles[1, 0] == "A"
+        assert alleles[1, 1] == "G"

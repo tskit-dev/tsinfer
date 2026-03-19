@@ -229,8 +229,13 @@ class Matcher:
             start = int(non_missing[0])
             end = int(non_missing[-1]) + 1
 
+        # The C matcher is biallelic (num_alleles=2), so clamp multi-allelic
+        # codes to 1 for HMM path-finding. The original h is kept for
+        # mutation recording where the full allele code is needed.
+        h_biallelic = np.where(h > 1, np.int8(1), h)
+
         t1 = time_.monotonic()
-        left, right, parent = matcher.find_path(h, start, end, match_out)
+        left, right, parent = matcher.find_path(h_biallelic, start, end, match_out)
         t_match = time_.monotonic() - t1
 
         # Convert site-index edges to absolute-position PathSegments
@@ -240,10 +245,11 @@ class Matcher:
             r_pos = float(pos[ri]) if ri < num_sites else float(seq_len)
             path.append(PathSegment(left=l_pos, right=r_pos, parent=int(pi)))
 
-        # Detect mutations and convert to absolute positions
+        # Detect mutations using biallelic comparison for path mismatch,
+        # but record the full multi-allelic code from h for extend_ts
         in_range = np.zeros(num_sites, dtype=bool)
         in_range[start:end] = True
-        mutation_mask = in_range & (h != match_out) & (h >= 0)
+        mutation_mask = in_range & (h_biallelic != match_out) & (h >= 0)
         mut_site_idxs = np.where(mutation_mask)[0]
         mutations = [
             Mutation(position=float(pos[si]), derived_state=int(h[si]))
