@@ -41,6 +41,7 @@ Low-level utilities for reading and writing VCZ (VCF Zarr) stores.
 
 from __future__ import annotations
 
+import collections
 import logging
 import math
 import queue
@@ -1154,9 +1155,11 @@ class ChunkCache:
     def __init__(self, max_bytes: int):
         self._max_bytes = max_bytes
         self._current_bytes = 0
-        self._cache: dict[tuple[str, int], np.ndarray] = {}
-        self._order: list[tuple[str, int]] = []
+        self._cache: collections.OrderedDict[tuple[str, int], np.ndarray] = (
+            collections.OrderedDict()
+        )
         self._lock = threading.Lock()
+        self._pending: dict[tuple[str, int], threading.Event] = {}
         self._hits = 0
         self._misses = 0
 
@@ -1164,46 +1167,76 @@ class ChunkCache:
         """Return cached chunk or None. Thread-safe."""
         with self._lock:
             if key in self._cache:
-                self._order.remove(key)
-                self._order.append(key)
+                self._cache.move_to_end(key)
                 self._hits += 1
-                logger.debug(
-                    "Chunk cache hit: source=%s chunk=%d",
-                    key[0],
-                    key[1],
-                )
                 return self._cache[key]
             self._misses += 1
             return None
 
     def put(self, key: tuple[str, int], data: np.ndarray) -> None:
         """Insert chunk, evicting LRU entries until it fits. Thread-safe."""
+        evicted_info = []
         with self._lock:
             if key in self._cache:
                 return
             new_bytes = data.nbytes
-            while self._order and self._current_bytes + new_bytes > self._max_bytes:
-                evict_key = self._order.pop(0)
-                evicted = self._cache.pop(evict_key)
+            while self._cache and self._current_bytes + new_bytes > self._max_bytes:
+                evict_key, evicted = self._cache.popitem(last=False)
                 self._current_bytes -= evicted.nbytes
-                logger.info(
-                    "Chunk cache evict: source=%s chunk=%d freed=%.1f MiB",
-                    evict_key[0],
-                    evict_key[1],
-                    evicted.nbytes / (1024 * 1024),
-                )
+                evicted_info.append((evict_key, evicted.nbytes))
             self._cache[key] = data
-            self._order.append(key)
             self._current_bytes += new_bytes
+            total = self._current_bytes
+            count = len(self._cache)
+        # Log outside lock
+        for ek, eb in evicted_info:
             logger.info(
-                "Chunk cache insert: source=%s chunk=%d"
-                " size=%.1f MiB (total: %.1f MiB, %d entries)",
-                key[0],
-                key[1],
-                data.nbytes / (1024 * 1024),
-                self._current_bytes / (1024 * 1024),
-                len(self._cache),
+                "Chunk cache evict: source=%s chunk=%d freed=%.1f MiB",
+                ek[0],
+                ek[1],
+                eb / (1024 * 1024),
             )
+        logger.info(
+            "Chunk cache insert: source=%s chunk=%d"
+            " size=%.1f MiB (total: %.1f MiB, %d entries)",
+            key[0],
+            key[1],
+            data.nbytes / (1024 * 1024),
+            total / (1024 * 1024),
+            count,
+        )
+
+    def get_or_wait(self, key: tuple[str, int]) -> np.ndarray | None:
+        """Check cache, coordinate concurrent loads.
+
+        Returns cached data if present. If another thread is already loading
+        this key, waits for it and returns the result. Returns None when the
+        caller should perform the load and call ``finish_load``.
+        """
+        with self._lock:
+            if key in self._cache:
+                self._cache.move_to_end(key)
+                self._hits += 1
+                return self._cache[key]
+            if key in self._pending:
+                event = self._pending[key]
+                self._misses += 1
+            else:
+                self._pending[key] = threading.Event()
+                self._misses += 1
+                return None
+        # Wait outside lock
+        event.wait()
+        return self.get(key)
+
+    def finish_load(self, key: tuple[str, int], data: np.ndarray | None):
+        """Insert loaded data and wake waiters. Call in finally block."""
+        if data is not None:
+            self.put(key, data)
+        with self._lock:
+            event = self._pending.pop(key, None)
+        if event is not None:
+            event.set()
 
     @property
     def total_bytes(self) -> int:
@@ -1428,23 +1461,11 @@ class VCZHaplotypeReader:
                     remap[row, j] = self._allele_map.lookup(ref_idx, a)
         self._allele_remap = remap
 
-    def _load_sample_chunk(self, chunk_idx: int) -> np.ndarray:
-        """Load a sample chunk, selecting only matched variants.
+    def _do_load_chunk(self, chunk_idx: int) -> np.ndarray:
+        """Perform zarr I/O and encoding for a single sample chunk.
 
-        On cache miss, iterates over zarr variant chunks, skipping chunks
-        with no selected variants. When ``_allele_remap`` is set, allele
-        encoding is performed at load time via vectorized numpy remap.
         Returns array of shape ``(num_selected, chunk_samples, ploidy)``.
-
-        Thread-safe via the shared ``ChunkCache``.
-        The returned numpy array remains valid even if later evicted from
-        the cache, because Python's reference counting keeps it alive.
         """
-        key = (self._source_name, chunk_idx)
-        cached = self._cache.get(key)
-        if cached is not None:
-            return cached
-
         t_start = _time.monotonic()
         call_gt = self._store["call_genotype"]
         sc_start = chunk_idx * self._sample_chunk_size
@@ -1502,7 +1523,31 @@ class VCZHaplotypeReader:
             t_encode,
             t_total,
         )
-        self._cache.put(key, result)
+        return result
+
+    def _load_sample_chunk(self, chunk_idx: int) -> np.ndarray:
+        """Load a sample chunk, selecting only matched variants.
+
+        On cache miss, iterates over zarr variant chunks, skipping chunks
+        with no selected variants. When ``_allele_remap`` is set, allele
+        encoding is performed at load time via vectorized numpy remap.
+        Returns array of shape ``(num_selected, chunk_samples, ploidy)``.
+
+        Thread-safe via the shared ``ChunkCache``.  Concurrent misses for
+        the same chunk are deduplicated — only one thread loads from zarr.
+        The returned numpy array remains valid even if later evicted from
+        the cache, because Python's reference counting keeps it alive.
+        """
+        key = (self._source_name, chunk_idx)
+        data = self._cache.get_or_wait(key)
+        if data is not None:
+            return data
+        # We are the loader
+        result = None
+        try:
+            result = self._do_load_chunk(chunk_idx)
+        finally:
+            self._cache.finish_load(key, result)
         return result
 
     def read_haplotype(self, sample_id: str, ploidy_index: int = 0) -> np.ndarray:
