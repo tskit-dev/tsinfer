@@ -19,7 +19,8 @@ include = 'TYPE="snp"'
 path = "data/homo_sapiens-chr20.vcz"
 field = "variant_AA"
 
-[ancestors]
+[[ancestors]]
+name = "ancestors"
 path = "data/ancestors.vcz"          # output path for the ancestor store
 sources = ["1kgp_chr20"]             # which source(s) to build from
 max_gap_length = 500_000
@@ -27,9 +28,12 @@ genotype_encoding = "one_bit"
 # samples_chunk_size  = 1000         # default: 1000 (ancestor dimension)
 # variants_chunk_size = 1000         # default: 1000 (site dimension)
 
-
 [match]
 output = "data/output.trees"         # output tree sequence path
+
+[match.sources.ancestors]
+node_flags = 0
+create_individuals = false
 
 [match.sources.1kgp_chr20]
 node_flags = 1                     # default: 1 (NODE_IS_SAMPLE)
