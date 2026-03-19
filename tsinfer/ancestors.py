@@ -57,6 +57,102 @@ class InferenceSites:
 # ---------------------------------------------------------------------------
 
 
+def _merge_inference_sites(source_infos):
+    """
+    Merge InferenceSites from multiple sources into a unified set.
+
+    Returns (unified_inf_sites, source_has_site) where source_has_site is a
+    (num_unified_sites, num_sources) boolean array.
+    """
+    if len(source_infos) == 1:
+        inf_sites = source_infos[0][3]
+        source_has_site = np.ones((len(inf_sites.positions), 1), dtype=bool)
+        return inf_sites, source_has_site
+
+    # Collect all positions and their source index
+    all_positions = []
+    pos_to_source = {}  # position -> list of source indices
+    for src_idx, (_, _, _, inf_sites) in enumerate(source_infos):
+        for i, pos in enumerate(inf_sites.positions):
+            pos = int(pos)
+            if pos not in pos_to_source:
+                pos_to_source[pos] = []
+                all_positions.append(pos)
+            pos_to_source[pos].append((src_idx, i))
+
+    all_positions.sort()
+    n_sites = len(all_positions)
+    n_sources = len(source_infos)
+
+    source_has_site = np.zeros((n_sites, n_sources), dtype=bool)
+
+    # Build unified arrays using first source's metadata for each position
+    pos_arr = np.array(all_positions, dtype=np.int32)
+    # Determine max allele width across all sources
+    max_alleles = max(
+        inf.alleles.shape[1] for _, _, _, inf in source_infos if len(inf.positions) > 0
+    )
+    allele_arr = np.full((n_sites, max_alleles), "", dtype=object)
+    anc_idx_arr = np.zeros(n_sites, dtype=np.int8)
+
+    for ui, pos in enumerate(all_positions):
+        entries = pos_to_source[pos]
+        # Use first source's metadata
+        first_src_idx, first_site_idx = entries[0]
+        first_inf = source_infos[first_src_idx][3]
+        allele_row = first_inf.alleles[first_site_idx]
+        for j in range(len(allele_row)):
+            allele_arr[ui, j] = allele_row[j]
+        anc_idx_arr[ui] = first_inf.ancestral_allele_index[first_site_idx]
+        for src_idx, _ in entries:
+            source_has_site[ui, src_idx] = True
+
+    unified = InferenceSites(
+        positions=pos_arr,
+        alleles=allele_arr,
+        ancestral_allele_index=anc_idx_arr,
+    )
+    return unified, source_has_site
+
+
+def _iter_multi_source_genotypes(source_infos, positions, anc_indices, source_has_site):
+    """
+    Yield concatenated genotype rows across multiple sources.
+
+    For each unified position, sources that have the site contribute real
+    genotypes; sources that lack it contribute -1 arrays.
+    """
+    n_sources = len(source_infos)
+
+    # Build per-source iterators only for positions each source has
+    source_iters = []
+    for src_idx in range(n_sources):
+        store, sample_include, num_haps, inf_sites = source_infos[src_idx]
+        mask = source_has_site[:, src_idx]
+        src_positions = positions[mask]
+        src_anc_indices = anc_indices[mask]
+        if len(src_positions) > 0:
+            it = iter(
+                vcz_mod.iter_genotypes(
+                    store, src_positions, src_anc_indices, sample_include
+                )
+            )
+        else:
+            it = iter([])
+        source_iters.append(it)
+
+    for site_idx in range(len(positions)):
+        parts = []
+        for src_idx in range(n_sources):
+            num_haps = source_infos[src_idx][2]
+            if source_has_site[site_idx, src_idx]:
+                row = next(source_iters[src_idx])
+                parts.append(row)
+            else:
+                parts.append(np.full(num_haps, -1, dtype=np.int8))
+        yield np.concatenate(parts)
+
+
 def _assign_site_intervals(positions, intervals):
     """
     For each position return the index of the interval that contains it.
@@ -72,27 +168,21 @@ def _assign_site_intervals(positions, intervals):
     return result
 
 
-def _compute_site_stats(
-    store, inf_sites, sample_include, num_haplotypes, progress=False
-):
+def _compute_site_stats(genotype_iter, num_sites, num_haplotypes, progress=False):
     """
     Pass 1: iterate over inference-site genotypes, compute derived genotype
     stats for each site, filter out fixed/all-missing.
 
     Returns (keep_mask, times) where:
-    - keep_mask: boolean array of length len(inf_sites.positions)
+    - keep_mask: boolean array of length num_sites
     - times: float64 array of length sum(keep_mask)
     """
-    num_inf_sites = len(inf_sites.positions)
-
-    keep_mask = np.zeros(num_inf_sites, dtype=bool)
+    keep_mask = np.zeros(num_sites, dtype=bool)
     times_list = []
 
     site_iter = tqdm_mod.tqdm(
-        vcz_mod.iter_genotypes(
-            store, inf_sites.positions, inf_sites.ancestral_allele_index, sample_include
-        ),
-        total=num_inf_sites,
+        genotype_iter,
+        total=num_sites,
         desc="Pass 1: site stats",
         unit="sites",
         disable=not progress,
@@ -341,7 +431,7 @@ def _resolve_haplotype_count(store, samples_str):
     return num_haplotypes, sample_include
 
 
-def _apply_site_stats(store, inf_sites, sample_include, num_haplotypes, progress):
+def _apply_site_stats(genotype_iter, inf_sites, num_haplotypes, progress):
     """
     Run Pass 1: compute site stats and filter sites.
 
@@ -350,7 +440,7 @@ def _apply_site_stats(store, inf_sites, sample_include, num_haplotypes, progress
     t0 = time.monotonic()
     logger.info("Pass 1: computing site stats")
     keep_mask, times = _compute_site_stats(
-        store, inf_sites, sample_include, num_haplotypes, progress=progress
+        genotype_iter, len(inf_sites.positions), num_haplotypes, progress=progress
     )
 
     final_positions = inf_sites.positions[keep_mask]
@@ -379,7 +469,8 @@ def _apply_site_stats(store, inf_sites, sample_include, num_haplotypes, progress
 
 
 def _process_interval(
-    store,
+    source_infos,
+    source_has_site,
     i_idx,
     local_mask,
     final_positions,
@@ -387,7 +478,6 @@ def _process_interval(
     times,
     num_haplotypes,
     cfg,
-    sample_include,
     zarr_root,
     num_threads,
     write_threads,
@@ -407,6 +497,7 @@ def _process_interval(
     local_positions = final_positions[local_mask]
     local_anc_indices = final_anc_indices[local_mask]
     local_times = times[local_mask]
+    local_source_has_site = source_has_site[local_mask]
     n_ab_sites = n_local
     ab = _tsinfer.AncestorBuilder(
         num_samples=num_haplotypes,
@@ -414,10 +505,11 @@ def _process_interval(
         genotype_encoding=cfg.genotype_encoding,
     )
 
+    genotype_iter = _iter_multi_source_genotypes(
+        source_infos, local_positions, local_anc_indices, local_source_has_site
+    )
     gt_iter = tqdm_mod.tqdm(
-        vcz_mod.iter_genotypes(
-            store, local_positions, local_anc_indices, sample_include
-        ),
+        genotype_iter,
         total=n_local,
         desc=f"Interval {i_idx}: loading sites",
         unit="sites",
@@ -517,14 +609,14 @@ def _process_interval(
 
 
 def infer_ancestors(
-    source: Source,
+    sources: list[Source] | Source,
     cfg: AncestorsConfig,
     ancestral_state: AncestralState | None = None,
     progress: bool = False,
     num_threads: int = 0,
 ) -> zarr.Group:
     """
-    Build the ancestor VCZ store from a samples VCZ store.
+    Build the ancestor VCZ store from one or more samples VCZ stores.
 
     Two-pass approach:
       Pass 1 — Identify inference sites and compute times (chunk-aware).
@@ -533,11 +625,11 @@ def infer_ancestors(
     No virtual root is inserted; that is the responsibility of the match step.
     Ancestors are not sorted by time.
     """
+    if isinstance(sources, Source):
+        sources = [sources]
+
     t_start = time.monotonic()
     logger.info("Starting ancestor inference (RSS=%.1fMiB)", _memory_usage_mb())
-
-    # --- 1. Open store and resolve filtering ---
-    store = _open_source(source)
 
     # Build compressor from config
     compressor = numcodecs.Blosc(
@@ -546,41 +638,74 @@ def infer_ancestors(
         shuffle=numcodecs.Blosc.BITSHUFFLE,
     )
 
-    if source.include is not None:
-        logger.info("Variant filter (include): %s", source.include)
-    if source.exclude is not None:
-        logger.info("Variant filter (exclude): %s", source.exclude)
-    if source.regions is not None:
-        logger.info("Region filter: %s", source.regions)
-    if source.targets is not None:
-        logger.info("Targets filter: %s", source.targets)
+    # --- 1. Open all stores and resolve per-source info ---
+    source_infos = []
+    for source in sources:
+        store = _open_source(source)
+        if source.include is not None:
+            logger.info("Variant filter (include): %s", source.include)
+        if source.exclude is not None:
+            logger.info("Variant filter (exclude): %s", source.exclude)
+        if source.regions is not None:
+            logger.info("Region filter: %s", source.regions)
+        if source.targets is not None:
+            logger.info("Targets filter: %s", source.targets)
 
-    num_haplotypes, sample_include = _resolve_haplotype_count(store, source.samples)
+        num_haps, sample_include = _resolve_haplotype_count(store, source.samples)
+        inf_sites = compute_inference_sites(
+            store,
+            ancestral_state,
+            include=source.include,
+            exclude=source.exclude,
+            regions=source.regions,
+            targets=source.targets,
+        )
+        logger.info(
+            "Source '%s': %d inference sites, %d haplotypes",
+            source.name,
+            len(inf_sites.positions),
+            num_haps,
+        )
+        source_infos.append((store, sample_include, num_haps, inf_sites))
 
-    # --- 2. Compute inference sites ---
-    inf_sites = compute_inference_sites(
-        store,
-        ancestral_state,
-        include=source.include,
-        exclude=source.exclude,
-        regions=source.regions,
-        targets=source.targets,
+    # --- 2. Merge inference sites across sources ---
+    unified_inf_sites, source_has_site = _merge_inference_sites(source_infos)
+    total_haplotypes = sum(info[2] for info in source_infos)
+    logger.info(
+        "Inference sites identified: %d (%d total haplotypes)",
+        len(unified_inf_sites.positions),
+        total_haplotypes,
     )
-    logger.info("Inference sites identified: %d", len(inf_sites.positions))
 
     # --- 3. Pass 1: compute site stats ---
+    pass1_iter = _iter_multi_source_genotypes(
+        source_infos,
+        unified_inf_sites.positions,
+        unified_inf_sites.ancestral_allele_index,
+        source_has_site,
+    )
     final_positions, final_alleles, final_anc_indices, times = _apply_site_stats(
-        store, inf_sites, sample_include, num_haplotypes, progress
+        pass1_iter, unified_inf_sites, total_haplotypes, progress
     )
     num_inf = len(final_positions)
 
+    # Apply keep_mask to source_has_site
+    keep_mask = np.isin(
+        unified_inf_sites.positions,
+        final_positions,
+    )
+    source_has_site = source_has_site[keep_mask]
+
+    # Use first source's store for contig metadata
+    first_store = source_infos[0][0]
+
     if num_inf == 0:
-        seq_len = vcz_mod.sequence_length(store)
+        seq_len = vcz_mod.sequence_length(first_store)
         seq_intervals = compute_sequence_intervals(
             final_positions, seq_len, cfg.max_gap_length
         )
-        contig_id = str(store["contig_id"][0])
-        contig_length = int(store["contig_length"][0])
+        contig_id = str(first_store["contig_id"][0])
+        contig_length = int(first_store["contig_length"][0])
         return vcz_mod.write_empty_ancestor_vcz(
             seq_intervals,
             store=cfg.path,
@@ -590,7 +715,7 @@ def infer_ancestors(
         )
 
     # --- 4. Compute sequence intervals ---
-    seq_len = vcz_mod.sequence_length(store)
+    seq_len = vcz_mod.sequence_length(first_store)
     seq_intervals = compute_sequence_intervals(
         final_positions, seq_len, cfg.max_gap_length
     )
@@ -623,8 +748,8 @@ def infer_ancestors(
         )
     site_interval_idx = _assign_site_intervals(final_positions, seq_intervals)
 
-    contig_id = str(store["contig_id"][0])
-    contig_length = int(store["contig_length"][0])
+    contig_id = str(first_store["contig_id"][0])
+    contig_length = int(first_store["contig_length"][0])
 
     # Create zarr group with fixed arrays
     zarr_root = vcz_mod.setup_ancestor_zarr(
@@ -650,15 +775,15 @@ def infer_ancestors(
             continue
         local_mask = np.where(in_interval)[0]
         ancestor_index, interval_focals = _process_interval(
-            store,
+            source_infos,
+            source_has_site,
             i_idx,
             local_mask,
             final_positions,
             final_anc_indices,
             times,
-            num_haplotypes,
+            total_haplotypes,
             cfg,
-            sample_include,
             zarr_root,
             num_threads,
             write_threads,
