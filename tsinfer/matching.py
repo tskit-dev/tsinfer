@@ -330,7 +330,7 @@ def extend_ts(
     Within each individual, nodes are ordered by ``haplotype_index``.
 
     Mutation derived states are stored as integer-string allele codes
-    ("0", "1", "2", …) matching the codes produced by ``_AlleleEncoder``.
+    ("0", "1", "2", …) matching the codes produced by ``_AlleleMap``.
     The caller is responsible for relabeling to real allele strings before
     the tree sequence is returned to the user.
 

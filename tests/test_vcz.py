@@ -32,7 +32,7 @@ from tsinfer.vcz import (
     ChunkCache,
     HaplotypeReader,
     VCZHaplotypeReader,
-    _AlleleEncoder,
+    _AlleleMap,
     num_contigs,
     open_store,
     resolve_field,
@@ -869,35 +869,34 @@ class TestVCZHaplotypeReader:
 
 
 # ---------------------------------------------------------------------------
-# _AlleleEncoder
+# _AlleleMap
 # ---------------------------------------------------------------------------
 
 
-class TestAlleleEncoder:
+class TestAlleleMap:
     def test_basic(self):
         """Ancestral allele is always code 0, first derived is 1."""
-        enc = _AlleleEncoder(np.array(["A", "C"]))
-        assert enc.encode(0, "A") == 0
-        assert enc.encode(0, "T") == 1
+        m = _AlleleMap(2, [["A", "T"], ["C"]])
+        assert m.lookup(0, "A") == 0
+        assert m.lookup(0, "T") == 1
         # Idempotent
-        assert enc.encode(0, "T") == 1
-        assert enc.encode(0, "A") == 0
-        assert enc.num_alleles(0) == 2
+        assert m.lookup(0, "T") == 1
+        assert m.lookup(0, "A") == 0
+        assert m.num_alleles(0) == 2
+        # Unknown allele returns -1
+        assert m.lookup(0, "G") == -1
 
     def test_cross_source_distinct_codes(self):
         """Different derived alleles at the same site get distinct codes."""
-        enc = _AlleleEncoder(np.array(["A"]))
-        assert enc.encode(0, "T") == 1
-        assert enc.encode(0, "G") == 2
-        assert enc.encode(0, "C") == 3
-        assert enc.num_alleles(0) == 4
+        m = _AlleleMap(1, [["A", "T", "G", "C"]])
+        assert m.lookup(0, "T") == 1
+        assert m.lookup(0, "G") == 2
+        assert m.lookup(0, "C") == 3
+        assert m.num_alleles(0) == 4
 
     def test_site_alleles_array(self):
-        enc = _AlleleEncoder(np.array(["A", "C"]))
-        enc.encode(0, "T")
-        enc.encode(1, "G")
-        enc.encode(1, "T")
-        arr = enc.site_alleles_array()
+        m = _AlleleMap(2, [["A", "T"], ["C", "G", "T"]])
+        arr = m.site_alleles_array()
         assert arr.shape[0] == 2
         assert arr.shape[1] >= 3  # site 1 has 3 alleles
         assert arr[0, 0] == "A"
