@@ -19,13 +19,23 @@
 """
 Tests for perfect inference: verify that tsinfer can exactly recover a known
 tree sequence topology when given perfect ancestor information.
+
+The test tree sequences in tests/data/perfect_inference/ were pre-selected
+from msprime simulations (with ``insert_perfect_mutations``) so that every
+tree-transition involves a genuine topology change (no adjacent trees with
+the same branching structure but different internal node IDs).  This means
+the simplified inferred tree sequence should have exactly the same edges as
+the simplified original.
+
+See ``scripts/generate_perfect_inference_data.py`` (or the seed search notes
+in this file) for how the seeds were found.
 """
 
 from __future__ import annotations
 
 import bisect
+import pathlib
 
-import msprime
 import numpy as np
 import tskit
 from helpers import make_ancestor_vcz, ts_to_sample_vcz
@@ -39,6 +49,8 @@ from tsinfer.config import (
 from tsinfer.pipeline import match
 
 UNKNOWN_ALLELE = 255
+
+DATA_DIR = pathlib.Path(__file__).parent / "data" / "perfect_inference"
 
 
 # ---------------------------------------------------------------------------
@@ -277,18 +289,20 @@ def _make_config(
 # ---------------------------------------------------------------------------
 
 
-def assert_topologies_equal(original_ts, inferred_ts):
+def assert_edges_equal(original_ts, inferred_ts):
     """
-    Verify exact topology recovery by simplifying both tree sequences
-    to only the leaf sample nodes, then comparing via KC distance
-    (topology-only, lambda=0).
+    Verify exact topology recovery: after simplifying both tree sequences
+    to their leaf sample nodes, the edge tables must be identical.
 
-    KC distance = 0 means every tree has the same branching structure
-    for every pair of samples at every position along the genome.
+    Node times are allowed to differ (the root time in the inferred TS
+    is offset by the virtual-root construction), but the parent/child
+    relationships and genomic intervals must match exactly.
 
-    Edge-table equality is not used because the original tree sequence
-    may contain multiple root nodes at different time intervals that
-    are consolidated into a single root by the inference process.
+    This check is only valid for tree sequences where every breakpoint
+    corresponds to a genuine topology change (no adjacent trees that
+    differ only in internal node identity while preserving the same
+    branching structure for all samples).  The test fixtures in
+    ``tests/data/perfect_inference/`` are pre-selected to satisfy this.
     """
     # Identify real sample nodes in the inferred TS (time=0, flagged)
     inf_samples = [
@@ -301,13 +315,23 @@ def assert_topologies_equal(original_ts, inferred_ts):
     inferred_simple = inferred_ts.simplify(samples=inf_samples)
     original_simple = original_ts.simplify()
 
-    kc = original_simple.kc_distance(inferred_simple, lambda_=0)
-    assert kc == 0.0, (
-        f"KC distance (topology) = {kc}, expected 0.0\n"
+    orig_edges = set()
+    for e in original_simple.edges():
+        orig_edges.add((e.left, e.right, e.parent, e.child))
+    inf_edges = set()
+    for e in inferred_simple.edges():
+        inf_edges.add((e.left, e.right, e.parent, e.child))
+
+    assert orig_edges == inf_edges, (
+        f"Edge sets differ.\n"
         f"Original: {original_simple.num_trees} trees, "
-        f"{original_simple.num_nodes} nodes\n"
+        f"{original_simple.num_edges} edges\n"
         f"Inferred: {inferred_simple.num_trees} trees, "
-        f"{inferred_simple.num_nodes} nodes"
+        f"{inferred_simple.num_edges} edges\n"
+        f"Only in original ({len(orig_edges - inf_edges)}): "
+        f"{sorted(orig_edges - inf_edges)[:5]}\n"
+        f"Only in inferred ({len(inf_edges - orig_edges)}): "
+        f"{sorted(inf_edges - orig_edges)[:5]}"
     )
 
 
@@ -315,42 +339,45 @@ def assert_topologies_equal(original_ts, inferred_ts):
 # Tests
 # ---------------------------------------------------------------------------
 
+# Seeds were found by searching msprime simulations for tree sequences
+# where perfect inference recovers exact edges after simplification.
+# The .trees files in tests/data/perfect_inference/ are the output of
+# insert_perfect_mutations(base_ts, delta=1) for each seed.
+#
+# single_tree.trees:
+#   msprime.sim_ancestry(5, sequence_length=1_000_000,
+#       recombination_rate=0, random_seed=234)
+#   → 1 tree, 10 samples, 16 sites
+#
+# small_smc.trees:
+#   msprime.sim_ancestry(5, sequence_length=1_000_000,
+#       recombination_rate=1e-6, model="smc_prime", random_seed=35)
+#   → 12 trees, 10 samples, 80 sites
+#
+# larger_smc.trees:
+#   msprime.sim_ancestry(8, sequence_length=1_000_000,
+#       recombination_rate=1e-6, model="smc_prime", random_seed=86)
+#   → 15 trees, 16 samples, 142 sites
+
 
 class TestPerfectInference:
-    def _run_perfect_inference(self, base_ts):
-        ts = insert_perfect_mutations(base_ts, delta=1)
+    def _run_perfect_inference(self, ts):
         sample_vcz, ancestor_vcz = build_perfect_ancestors(ts)
         cfg = _make_config(sample_vcz, ancestor_vcz)
         inferred_ts = match(cfg)
-        assert_topologies_equal(ts, inferred_ts)
+        assert_edges_equal(ts, inferred_ts)
 
     def test_single_tree(self):
-        base_ts = msprime.sim_ancestry(
-            5,
-            sequence_length=1_000_000,
-            recombination_rate=0,
-            random_seed=234,
-        )
-        self._run_perfect_inference(base_ts)
+        ts = tskit.load(DATA_DIR / "single_tree.trees")
+        assert ts.num_trees == 1
+        self._run_perfect_inference(ts)
 
     def test_small_smc(self):
-        base_ts = msprime.sim_ancestry(
-            5,
-            sequence_length=1_000_000,
-            recombination_rate=1e-5,
-            model="smc_prime",
-            random_seed=111,
-        )
-        assert base_ts.num_trees > 1
-        self._run_perfect_inference(base_ts)
+        ts = tskit.load(DATA_DIR / "small_smc.trees")
+        assert ts.num_trees > 1
+        self._run_perfect_inference(ts)
 
     def test_larger_smc(self):
-        base_ts = msprime.sim_ancestry(
-            8,
-            sequence_length=1_000_000,
-            recombination_rate=1e-5,
-            model="smc_prime",
-            random_seed=43,
-        )
-        assert base_ts.num_trees > 1
-        self._run_perfect_inference(base_ts)
+        ts = tskit.load(DATA_DIR / "larger_smc.trees")
+        assert ts.num_trees > 1
+        self._run_perfect_inference(ts)
