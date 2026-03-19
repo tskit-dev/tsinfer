@@ -39,7 +39,7 @@ from .grouping import (
     MatchJob,
     compute_match_jobs,
 )
-from .matching import Matcher, extend_ts, make_root_ts
+from .matching import Matcher, extend_ts, make_root_ts, relabel_alleles
 
 logger = logging.getLogger(__name__)
 
@@ -256,9 +256,7 @@ def match(
     if workdir_starting_ts is not None:
         ts = workdir_starting_ts
     else:
-        ts = make_root_ts(
-            seq_len, positions, seq_intervals, site_alleles, max_time=max_anc_time
-        )
+        ts = make_root_ts(seq_len, positions, seq_intervals, max_time=max_anc_time)
 
     logger.info(
         "Match: %d haplotypes, %d sites, seq_len=%.0f",
@@ -300,7 +298,6 @@ def match(
             positions,
             path_compression=path_compression,
             num_alleles=reader.get_num_alleles(),
-            site_alleles=reader.get_site_alleles(),
         )
         job_list = [job for _, job in group_jobs]
         match_iter = matcher.match(job_list, reader, num_threads=num_threads)
@@ -335,7 +332,6 @@ def match(
         ts = extend_ts(
             ts,
             paired_results=paired_results,
-            site_alleles=reader.get_site_alleles(),
         )
 
         # Write checkpoint to workdir if configured
@@ -351,7 +347,10 @@ def match(
                     prev_path.unlink()
             prev_written_group = group_idx
 
-    # 8. Apply individual/population metadata as post-processing
+    # 8. Relabel integer-string alleles to real allele strings
+    ts = relabel_alleles(ts, reader.get_site_alleles())
+
+    # 9. Apply individual/population metadata as post-processing
     ind_result = _build_individual_metadata(cfg, individual_jobs)
 
     if ind_result.metadata is not None or ind_result.population_names is not None:
