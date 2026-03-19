@@ -25,3 +25,5 @@ It would be better to pass the actual alleles through in the mutations.
 - It would be better to deal with all the individual metadata at once, and add it
 to the match job rather than derive it after the fact.
 
+- Consider how pedigree data may be associated with individuals, and how this could be 
+passed through to the tree sequence.
