@@ -22,6 +22,9 @@ Tests for tsinfer.vcz: open_store, resolve_field, and convenience accessors.
 
 from __future__ import annotations
 
+import threading
+import time
+
 import numpy as np
 import pytest
 import zarr
@@ -866,6 +869,263 @@ class TestVCZHaplotypeReader:
         cache.put(("x", 2), c)
         assert cache.total_bytes == 90
         assert ("x", 0) not in cache._cache
+
+
+# ---------------------------------------------------------------------------
+# ChunkCache
+# ---------------------------------------------------------------------------
+
+
+def _arr(n):
+    """Return a zero-filled int8 array of exactly *n* bytes."""
+    return np.arange(n, dtype=np.int8)
+
+
+class TestChunkCache:
+    # --- Group 1: get() ---
+
+    def test_get_miss_returns_none(self):
+        cache = ChunkCache(max_bytes=100)
+        assert cache.get(("s", 0)) is None
+        assert cache._misses == 1
+
+    def test_get_hit_returns_data(self):
+        cache = ChunkCache(max_bytes=100)
+        a = _arr(10)
+        cache.put(("s", 0), a)
+        result = cache.get(("s", 0))
+        assert result is a
+        assert cache._hits == 1
+
+    def test_get_updates_lru_order(self):
+        cache = ChunkCache(max_bytes=30)
+        cache.put(("s", 0), _arr(10))  # A
+        cache.put(("s", 1), _arr(10))  # B
+        # Touch A so B becomes the LRU entry
+        cache.get(("s", 0))
+        # Insert C — should evict B (LRU), not A
+        cache.put(("s", 2), _arr(15))
+        assert ("s", 1) not in cache._cache
+        assert ("s", 0) in cache._cache
+
+    # --- Group 2: put() ---
+
+    def test_put_inserts_and_tracks_bytes(self):
+        cache = ChunkCache(max_bytes=100)
+        cache.put(("s", 0), _arr(30))
+        assert cache.total_bytes == 30
+        assert ("s", 0) in cache._cache
+
+    def test_put_noop_if_key_exists(self):
+        cache = ChunkCache(max_bytes=100)
+        a = _arr(30)
+        cache.put(("s", 0), a)
+        cache.put(("s", 0), _arr(50))  # should be ignored
+        assert cache.total_bytes == 30
+        assert cache._cache[("s", 0)] is a
+
+    def test_put_evicts_lru_single(self):
+        cache = ChunkCache(max_bytes=50)
+        cache.put(("s", 0), _arr(30))
+        cache.put(("s", 1), _arr(30))
+        # 30+30=60 > 50 → evict ("s",0)
+        assert ("s", 0) not in cache._cache
+        assert ("s", 1) in cache._cache
+        assert cache.total_bytes == 30
+
+    def test_put_evicts_multiple(self):
+        cache = ChunkCache(max_bytes=100)
+        cache.put(("s", 0), _arr(30))
+        cache.put(("s", 1), _arr(30))
+        cache.put(("s", 2), _arr(30))
+        # 90 used; inserting 50 → need to evict at least 40
+        cache.put(("s", 3), _arr(50))
+        assert ("s", 0) not in cache._cache
+        assert ("s", 1) not in cache._cache
+        assert ("s", 2) in cache._cache
+        assert ("s", 3) in cache._cache
+        assert cache.total_bytes == 80
+
+    def test_put_item_larger_than_max(self):
+        cache = ChunkCache(max_bytes=10)
+        cache.put(("s", 0), _arr(5))
+        cache.put(("s", 1), _arr(20))
+        # All prior entries evicted; oversized item still inserted
+        assert ("s", 0) not in cache._cache
+        assert ("s", 1) in cache._cache
+        assert cache.total_bytes == 20
+
+    # --- Group 3: get_or_wait + finish_load (single-thread) ---
+
+    def test_get_or_wait_hit(self):
+        cache = ChunkCache(max_bytes=100)
+        a = _arr(10)
+        cache.put(("s", 0), a)
+        result = cache.get_or_wait(("s", 0))
+        assert result is a
+        assert cache._hits == 1
+
+    def test_get_or_wait_loader_path(self):
+        cache = ChunkCache(max_bytes=100)
+        result = cache.get_or_wait(("s", 0))
+        assert result is None
+        assert ("s", 0) in cache._pending
+        assert cache._misses == 1
+
+    def test_finish_load_inserts_and_wakes(self):
+        cache = ChunkCache(max_bytes=100)
+        cache.get_or_wait(("s", 0))  # creates pending
+        a = _arr(20)
+        cache.finish_load(("s", 0), a)
+        assert ("s", 0) in cache._cache
+        assert ("s", 0) not in cache._pending
+        assert cache.total_bytes == 20
+
+    def test_finish_load_none_clears_pending(self):
+        cache = ChunkCache(max_bytes=100)
+        cache.get_or_wait(("s", 0))
+        cache.finish_load(("s", 0), None)
+        assert ("s", 0) not in cache._cache
+        assert ("s", 0) not in cache._pending
+        assert cache.total_bytes == 0
+
+    # --- Group 4: Threading coordination ---
+
+    def test_waiter_receives_data(self):
+        cache = ChunkCache(max_bytes=100)
+        a = _arr(20)
+        # Main thread becomes the loader
+        assert cache.get_or_wait(("s", 0)) is None
+
+        results = [None]
+        loader_called = threading.Event()
+
+        def waiter():
+            loader_called.wait()
+            results[0] = cache.get_or_wait(("s", 0))
+
+        t = threading.Thread(target=waiter)
+        t.start()
+        loader_called.set()
+        time.sleep(0.05)
+        cache.finish_load(("s", 0), a)
+        t.join(timeout=5)
+        assert not t.is_alive()
+        np.testing.assert_array_equal(results[0], a)
+
+    def test_waiter_gets_none_on_load_failure(self):
+        cache = ChunkCache(max_bytes=100)
+        assert cache.get_or_wait(("s", 0)) is None
+
+        results = [object()]  # sentinel
+        loader_called = threading.Event()
+
+        def waiter():
+            loader_called.wait()
+            results[0] = cache.get_or_wait(("s", 0))
+
+        t = threading.Thread(target=waiter)
+        t.start()
+        loader_called.set()
+        time.sleep(0.05)
+        cache.finish_load(("s", 0), None)
+        t.join(timeout=5)
+        assert not t.is_alive()
+        assert results[0] is None
+
+    def test_multiple_waiters(self):
+        cache = ChunkCache(max_bytes=100)
+        a = _arr(20)
+        assert cache.get_or_wait(("s", 0)) is None
+
+        barrier = threading.Barrier(3, timeout=5)
+        results = [None, None]
+
+        def waiter(idx):
+            barrier.wait()
+            results[idx] = cache.get_or_wait(("s", 0))
+
+        threads = [threading.Thread(target=waiter, args=(i,)) for i in range(2)]
+        for t in threads:
+            t.start()
+        barrier.wait()  # ensure both waiters are ready
+        time.sleep(0.05)
+        cache.finish_load(("s", 0), a)
+        for t in threads:
+            t.join(timeout=5)
+            assert not t.is_alive()
+        for r in results:
+            np.testing.assert_array_equal(r, a)
+
+    # --- Group 5: evict_for() ---
+
+    def test_evict_for_empty_cache(self):
+        cache = ChunkCache(max_bytes=100)
+        cache.evict_for(50)  # no-op
+        assert cache.total_bytes == 0
+
+    def test_evict_for_no_eviction_needed(self):
+        cache = ChunkCache(max_bytes=100)
+        cache.put(("s", 0), _arr(30))
+        cache.evict_for(50)  # 30+50=80 ≤ 100 → nothing evicted
+        assert ("s", 0) in cache._cache
+        assert cache.total_bytes == 30
+
+    def test_evict_for_evicts_lru(self):
+        cache = ChunkCache(max_bytes=100)
+        cache.put(("s", 0), _arr(40))
+        cache.put(("s", 1), _arr(40))
+        cache.evict_for(50)  # 80+50=130 > 100 → evict ("s",0) → 40+50=90
+        assert ("s", 0) not in cache._cache
+        assert ("s", 1) in cache._cache
+        assert cache.total_bytes == 40
+
+    def test_evict_for_evicts_multiple(self):
+        cache = ChunkCache(max_bytes=100)
+        cache.put(("s", 0), _arr(30))
+        cache.put(("s", 1), _arr(30))
+        cache.put(("s", 2), _arr(30))
+        # 90 used; need room for 50 → must evict 40 worth
+        cache.evict_for(50)
+        assert ("s", 0) not in cache._cache
+        assert ("s", 1) not in cache._cache
+        assert ("s", 2) in cache._cache
+        assert cache.total_bytes == 30
+
+    def test_evict_for_then_put_no_double_eviction(self):
+        cache = ChunkCache(max_bytes=100)
+        cache.put(("s", 0), _arr(40))
+        cache.put(("s", 1), _arr(40))
+        # Pre-evict for upcoming 50-byte insert
+        cache.evict_for(50)
+        assert cache.total_bytes == 40  # ("s",0) evicted
+        # Now put should NOT need to evict ("s",1)
+        cache.put(("s", 2), _arr(50))
+        assert ("s", 1) in cache._cache
+        assert ("s", 2) in cache._cache
+        assert len(cache._cache) == 2
+        assert cache.total_bytes == 90
+
+    # --- Group 6: Edge cases ---
+
+    def test_finish_load_without_prior_get_or_wait(self):
+        cache = ChunkCache(max_bytes=100)
+        a = _arr(20)
+        cache.finish_load(("s", 0), a)  # no pending entry
+        assert ("s", 0) in cache._cache
+        assert cache.total_bytes == 20
+
+    def test_hits_and_misses_counting(self):
+        cache = ChunkCache(max_bytes=100)
+        cache.get(("s", 0))  # miss
+        cache.get(("s", 1))  # miss
+        cache.put(("s", 0), _arr(10))
+        cache.get(("s", 0))  # hit
+        cache.get_or_wait(("s", 0))  # hit
+        cache.get_or_wait(("s", 2))  # miss (loader path)
+        cache.finish_load(("s", 2), _arr(10))
+        assert cache._hits == 2
+        assert cache._misses == 3
 
 
 # ---------------------------------------------------------------------------
