@@ -293,10 +293,7 @@ def iter_genotypes(store, positions, ancestral_allele_index, sample_include=None
         sample_include = np.asarray(sample_include, dtype=bool)
 
     call_gt = store["call_genotype"]
-    try:
-        chunk_size = call_gt.chunks[0]
-    except (AttributeError, TypeError, IndexError):
-        chunk_size = call_gt.shape[0]
+    chunk_size = call_gt.chunks[0]
 
     # Walk through site_indices in order, loading each chunk at most once
     # for a run of consecutive indices that fall inside it.
@@ -309,9 +306,7 @@ def iter_genotypes(store, positions, ancestral_allele_index, sample_include=None
         cid = int(site_indices[i]) // chunk_size
 
         if cid != cached_chunk_id:
-            chunk_start = cid * chunk_size
-            chunk_end = min(chunk_start + chunk_size, call_gt.shape[0])
-            chunk_data = np.asarray(call_gt[chunk_start:chunk_end], dtype=np.int8)
+            chunk_data = call_gt.blocks[cid]
             if sample_include is not None:
                 chunk_data = chunk_data[:, sample_include, :]
             cached_flat = chunk_data.reshape(chunk_data.shape[0], -1)
