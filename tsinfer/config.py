@@ -120,10 +120,18 @@ class AncestorsConfig:
 
 
 @dataclass
+class MatchSourceConfig:
+    """Per-source parameters for the match step."""
+
+    node_flags: int = 1  # tskit.NODE_IS_SAMPLE
+    create_individuals: bool = True
+
+
+@dataclass
 class MatchConfig:
     """Configuration for the match step."""
 
-    sources: list[str]
+    sources: dict[str, MatchSourceConfig]
     output: str | Path
     path_compression: bool = True
     reference_ts: str | Path | None = None
@@ -212,8 +220,11 @@ class Config:
             lines.append("")
 
         lines.append("[match]")
-        lines.append(f"  sources = {self.match.sources}")
         lines.append(f"  output = {self.match.output}")
+        for src_name, src_cfg in self.match.sources.items():
+            lines.append(f"  [match.sources.{src_name}]")
+            lines.append(f"    node_flags = {src_cfg.node_flags}")
+            lines.append(f"    create_individuals = {src_cfg.create_individuals}")
         lines.append(f"  path_compression = {self.match.path_compression}")
         if self.match.reference_ts is not None:
             lines.append(f"  reference_ts = {self.match.reference_ts}")
@@ -349,6 +360,8 @@ _KNOWN_MATCH_KEYS = {
     "keep_intermediates",
 }
 
+_KNOWN_MATCH_SOURCE_KEYS = {"node_flags", "create_individuals"}
+
 _KNOWN_INDIVIDUAL_METADATA_KEYS = {"fields", "population"}
 
 _KNOWN_POST_PROCESS_KEYS = {"split_ultimate", "erase_flanks"}
@@ -440,8 +453,27 @@ def _parse_match(raw: dict) -> MatchConfig:
         raise ValueError("Config must contain a [match] section")
     _check_unknown_keys("match", entry, _KNOWN_MATCH_KEYS)
     try:
+        raw_sources = entry["sources"]
+        if not isinstance(raw_sources, dict):
+            raise ValueError(
+                "[match] sources must be a table of tables, e.g. [match.sources.cohort]"
+            )
+        sources: dict[str, MatchSourceConfig] = {}
+        for src_name, src_val in raw_sources.items():
+            if isinstance(src_val, dict):
+                _check_unknown_keys(
+                    f"match.sources.{src_name}",
+                    src_val,
+                    _KNOWN_MATCH_SOURCE_KEYS,
+                )
+                sources[src_name] = MatchSourceConfig(
+                    node_flags=int(src_val.get("node_flags", 1)),
+                    create_individuals=bool(src_val.get("create_individuals", True)),
+                )
+            else:
+                sources[src_name] = MatchSourceConfig()
         return MatchConfig(
-            sources=list(entry["sources"]),
+            sources=sources,
             output=_resolve_path(entry["output"]),
             path_compression=bool(entry.get("path_compression", True)),
             reference_ts=_resolve_path(entry.get("reference_ts")),

@@ -34,6 +34,7 @@ from tsinfer.config import (
     AncestorsConfig,
     Config,
     MatchConfig,
+    MatchSourceConfig,
     PostProcessConfig,
     Source,
 )
@@ -51,7 +52,7 @@ def _run_pipeline(sample_store):
         sources={"test": src},
         ancestors=AncestorsConfig(path=None, sources=["test"]),
         match=MatchConfig(
-            sources=["test"],
+            sources={"test": MatchSourceConfig()},
             output="output.trees",
         ),
         post_process=PostProcessConfig(),

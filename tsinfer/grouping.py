@@ -58,6 +58,8 @@ class HaplotypeMetadata:
     source: list[str]  # (n,) source name per haplotype
     sample_id: list[str]  # (n,) sample ID per haplotype
     ploidy_index: list[int]  # (n,) ploidy index per haplotype
+    node_flags: list[int]  # (n,) tskit node flags per haplotype
+    create_individuals: list[bool]  # (n,) whether to group into individuals
 
 
 @dataclass
@@ -72,6 +74,8 @@ class MatchJob:
     start_position: int
     end_position: int
     group: int
+    node_flags: int = 1
+    create_individuals: bool = True
 
 
 def collect_haplotype_metadata(cfg: Config) -> HaplotypeMetadata:
@@ -98,6 +102,8 @@ def collect_haplotype_metadata(cfg: Config) -> HaplotypeMetadata:
     anc_source: list[str] = ["ancestors"] * num_anc
     anc_sample_id: list[str] = anc_ids
     anc_ploidy_index: list[int] = [0] * num_anc
+    anc_node_flags: list[int] = [0] * num_anc
+    anc_create_individuals: list[bool] = [False] * num_anc
 
     # --- Sample sources ---
     sample_times_list: list[np.ndarray] = []
@@ -107,6 +113,8 @@ def collect_haplotype_metadata(cfg: Config) -> HaplotypeMetadata:
     sample_source_list: list[str] = []
     sample_sample_id_list: list[str] = []
     sample_ploidy_index_list: list[int] = []
+    sample_node_flags_list: list[int] = []
+    sample_create_individuals_list: list[bool] = []
 
     for source_name in cfg.match.sources:
         source = cfg.sources[source_name]
@@ -151,11 +159,14 @@ def collect_haplotype_metadata(cfg: Config) -> HaplotypeMetadata:
         sample_ids = [str(x) for x in raw_ids.tolist()]
 
         # Per-haplotype identity
+        src_cfg = cfg.match.sources[source_name]
         for i in range(num_samples):
             for p in range(ploidy):
                 sample_source_list.append(source.name)
                 sample_sample_id_list.append(sample_ids[i])
                 sample_ploidy_index_list.append(p)
+                sample_node_flags_list.append(src_cfg.node_flags)
+                sample_create_individuals_list.append(src_cfg.create_individuals)
 
         # Default start/end from positions
         if len(positions) > 0:
@@ -179,6 +190,8 @@ def collect_haplotype_metadata(cfg: Config) -> HaplotypeMetadata:
         all_source = anc_source + sample_source_list
         all_sample_id = anc_sample_id + sample_sample_id_list
         all_ploidy_index = anc_ploidy_index + sample_ploidy_index_list
+        all_node_flags = anc_node_flags + sample_node_flags_list
+        all_create_individuals = anc_create_individuals + sample_create_individuals_list
     else:
         all_times = anc_times
         all_start = anc_start
@@ -187,6 +200,8 @@ def collect_haplotype_metadata(cfg: Config) -> HaplotypeMetadata:
         all_source = anc_source
         all_sample_id = anc_sample_id
         all_ploidy_index = anc_ploidy_index
+        all_node_flags = anc_node_flags
+        all_create_individuals = anc_create_individuals
 
     num_total = len(all_times)
     num_ancestors = int(np.sum(all_is_ancestor))
@@ -206,6 +221,8 @@ def collect_haplotype_metadata(cfg: Config) -> HaplotypeMetadata:
         source=all_source,
         sample_id=all_sample_id,
         ploidy_index=all_ploidy_index,
+        node_flags=all_node_flags,
+        create_individuals=all_create_individuals,
     )
 
 
@@ -496,6 +513,8 @@ def compute_match_jobs(cfg: Config) -> list[MatchJob]:
                     start_position=int(hap_meta.start_positions[idx]),
                     end_position=int(hap_meta.end_positions[idx]),
                     group=group_idx,
+                    node_flags=hap_meta.node_flags[idx],
+                    create_individuals=hap_meta.create_individuals[idx],
                 )
             )
 

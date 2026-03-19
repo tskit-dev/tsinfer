@@ -36,6 +36,7 @@ from tsinfer.config import (
     Config,
     IndividualMetadataConfig,
     MatchConfig,
+    MatchSourceConfig,
     PostProcessConfig,
     Source,
 )
@@ -53,7 +54,10 @@ def _write_toml(tmp_path: Path, content: str) -> Path:
 
 def _minimal_match_cfg(**kwargs):
     defaults = dict(
-        sources=["ancestors", "cohort"],
+        sources={
+            "ancestors": MatchSourceConfig(node_flags=0, create_individuals=False),
+            "cohort": MatchSourceConfig(),
+        },
         output="out.trees",
     )
     defaults.update(kwargs)
@@ -148,15 +152,22 @@ class TestAncestorsConfigConstruction:
 class TestMatchConfigConstruction:
     def test_basic(self):
         m = MatchConfig(
-            sources=["ancestors", "cohort"],
+            sources={
+                "ancestors": MatchSourceConfig(node_flags=0, create_individuals=False),
+                "cohort": MatchSourceConfig(),
+            },
             output="out.trees",
         )
         assert m.path_compression is True
         assert m.reference_ts is None
+        assert m.sources["cohort"].node_flags == 1
+        assert m.sources["cohort"].create_individuals is True
+        assert m.sources["ancestors"].node_flags == 0
+        assert m.sources["ancestors"].create_individuals is False
 
     def test_with_reference_ts(self):
         m = MatchConfig(
-            sources=["cohort"],
+            sources={"cohort": MatchSourceConfig()},
             output="out.trees",
             reference_ts="ref.trees",
         )
@@ -203,7 +214,7 @@ class TestConfigConstruction:
                 sources={},
                 ancestors=None,
                 match=MatchConfig(
-                    sources=["cohort"],
+                    sources={"cohort": MatchSourceConfig()},
                     output="out.trees",
                 ),
             )
@@ -213,7 +224,7 @@ class TestConfigConstruction:
             sources={"cohort": Source(path="s.vcz", name="cohort")},
             ancestors=None,
             match=MatchConfig(
-                sources=["cohort"],
+                sources={"cohort": MatchSourceConfig()},
                 output="out.trees",
                 reference_ts="ref.trees",
             ),
@@ -242,8 +253,13 @@ sources        = ["cohort"]
 max_gap_length = 500000
 
 [match]
-sources            = ["ancestors", "cohort"]
 output             = "final.trees"
+
+[match.sources.ancestors]
+node_flags = 0
+create_individuals = false
+
+[match.sources.cohort]
 
 [individual_metadata]
 fields     = {sample_id = "sample_id", sex = "sample_sex"}
@@ -311,7 +327,11 @@ class TestFromTomlStandard:
 
     def test_match(self, tmp_path):
         cfg = Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
-        assert cfg.match.sources == ["ancestors", "cohort"]
+        assert set(cfg.match.sources.keys()) == {"ancestors", "cohort"}
+        assert cfg.match.sources["ancestors"].node_flags == 0
+        assert cfg.match.sources["ancestors"].create_individuals is False
+        assert cfg.match.sources["cohort"].node_flags == 1
+        assert cfg.match.sources["cohort"].create_individuals is True
 
     def test_individual_metadata(self, tmp_path):
         cfg = Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
@@ -359,8 +379,10 @@ path    = "/data/ancestors.vcz"
 sources = ["cohort"]
 
 [match]
-sources            = ["ancestors", "cohort"]
 output             = "/data/final.trees"
+
+[match.sources.ancestors]
+[match.sources.cohort]
 """
         cfg = Config.from_toml(_write_toml(tmp_path, toml))
         assert cfg.sources["cohort"].path == "/data/samples.vcz"
@@ -378,8 +400,10 @@ path    = "ancestors.vcz"
 sources = ["cohort"]
 
 [match]
-sources            = ["ancestors", "cohort"]
 output             = "out.trees"
+
+[match.sources.ancestors]
+[match.sources.cohort]
 """
         cfg = Config.from_toml(_write_toml(tmp_path, toml))
         assert str(cfg.sources["cohort"].path) == "s3://bucket/samples.vcz"
@@ -391,9 +415,10 @@ name = "cohort"
 path = "samples.vcz"
 
 [match]
-sources            = ["cohort"]
 output             = "out.trees"
 reference_ts       = "ref.trees"
+
+[match.sources.cohort]
 """
         cfg = Config.from_toml(_write_toml(tmp_path, toml))
         assert cfg.match.reference_ts == "ref.trees"
@@ -417,8 +442,10 @@ path    = "ancestors.vcz"
 sources = ["cohort"]
 
 [match]
-sources            = ["ancestors", "cohort"]
 output             = "out.trees"
+
+[match.sources.ancestors]
+[match.sources.cohort]
 """
         cfg = Config.from_toml(_write_toml(tmp_path, toml))
         assert cfg.sources["cohort"].include == "QUAL > 30"
@@ -435,8 +462,10 @@ path    = "ancestors.vcz"
 sources = ["cohort"]
 
 [match]
-sources            = ["ancestors", "cohort"]
 output             = "out.trees"
+
+[match.sources.ancestors]
+[match.sources.cohort]
 """
         cfg = Config.from_toml(_write_toml(tmp_path, toml))
         assert cfg.sources["cohort"].exclude == "AC == 0"
@@ -453,8 +482,10 @@ path    = "ancestors.vcz"
 sources = ["cohort"]
 
 [match]
-sources            = ["ancestors", "cohort"]
 output             = "out.trees"
+
+[match.sources.ancestors]
+[match.sources.cohort]
 """
         cfg = Config.from_toml(_write_toml(tmp_path, toml))
         assert cfg.sources["cohort"].samples == "^sample_2,sample_3"
@@ -471,8 +502,10 @@ path    = "ancestors.vcz"
 sources = ["parents"]
 
 [match]
-sources            = ["ancestors", "parents"]
 output             = "out.trees"
+
+[match.sources.ancestors]
+[match.sources.parents]
 """
         cfg = Config.from_toml(_write_toml(tmp_path, toml))
         assert cfg.sources["parents"].sample_time == 1
@@ -489,8 +522,10 @@ path    = "ancestors.vcz"
 sources = ["ancient"]
 
 [match]
-sources            = ["ancestors", "ancient"]
 output             = "out.trees"
+
+[match.sources.ancestors]
+[match.sources.ancient]
 """
         cfg = Config.from_toml(_write_toml(tmp_path, toml))
         assert cfg.sources["ancient"].sample_time == "sample_age_generations"
@@ -511,12 +546,19 @@ path    = "ancestors.vcz"
 sources = ["cohort"]
 
 [match]
-sources            = ["ancestors", "cohort", "ancient"]
 output             = "out.trees"
+
+[match.sources.ancestors]
+node_flags = 0
+create_individuals = false
+
+[match.sources.cohort]
+
+[match.sources.ancient]
 """
         cfg = Config.from_toml(_write_toml(tmp_path, toml))
         assert set(cfg.sources) == {"cohort", "ancient"}
-        assert cfg.match.sources == ["ancestors", "cohort", "ancient"]
+        assert set(cfg.match.sources.keys()) == {"ancestors", "cohort", "ancient"}
 
 
 # ---------------------------------------------------------------------------
@@ -560,8 +602,10 @@ path    = "ancestors.vcz"
 sources = ["cohort"]
 
 [match]
-sources            = ["ancestors", "cohort"]
 output             = "out.trees"
+
+[match.sources.ancestors]
+[match.sources.cohort]
 """
         with pytest.raises(ValueError, match="name"):
             Config.from_toml(_write_toml(tmp_path, toml))
@@ -576,8 +620,10 @@ path    = "ancestors.vcz"
 sources = ["cohort"]
 
 [match]
-sources            = ["ancestors", "cohort"]
 output             = "out.trees"
+
+[match.sources.ancestors]
+[match.sources.cohort]
 """
         with pytest.raises(ValueError, match="path"):
             Config.from_toml(_write_toml(tmp_path, toml))
@@ -597,8 +643,10 @@ path    = "ancestors.vcz"
 sources = ["cohort"]
 
 [match]
-sources            = ["ancestors", "cohort"]
 output             = "out.trees"
+
+[match.sources.ancestors]
+[match.sources.cohort]
 """
         with pytest.raises(ValueError, match="Duplicate"):
             Config.from_toml(_write_toml(tmp_path, toml))
@@ -610,8 +658,9 @@ name = "cohort"
 path = "samples.vcz"
 
 [match]
-sources            = ["cohort"]
 output             = "out.trees"
+
+[match.sources.cohort]
 """
         with pytest.raises(ValueError, match="ancestors"):
             Config.from_toml(_write_toml(tmp_path, toml))
@@ -626,8 +675,10 @@ path = "samples.vcz"
 sources = ["cohort"]
 
 [match]
-sources            = ["ancestors", "cohort"]
 output             = "out.trees"
+
+[match.sources.ancestors]
+[match.sources.cohort]
 """
         with pytest.raises((ValueError, KeyError)):
             Config.from_toml(_write_toml(tmp_path, toml))
@@ -707,7 +758,7 @@ class TestConfigFormat:
             sources={"s": Source(path="s.vcz", name="s")},
             ancestors=None,
             match=MatchConfig(
-                sources=["s"],
+                sources={"s": MatchSourceConfig()},
                 output="out.trees",
                 reference_ts="ref.trees",
             ),
@@ -843,7 +894,7 @@ class TestConfigValidate:
             sources={"s": Source(path="s.vcz", name="s")},
             ancestors=None,
             match=MatchConfig(
-                sources=["s"],
+                sources={"s": MatchSourceConfig()},
                 output="out.trees",
                 reference_ts="/nonexistent/ref.trees",
             ),
@@ -883,8 +934,9 @@ path    = "ancestors.vcz"
 sources = ["cohort"]
 
 [match]
-sources            = ["cohort"]
 output             = "out.trees"
+
+[match.sources.cohort]
 """
 
 
@@ -912,7 +964,10 @@ class TestUnknownKeys:
             Config.from_toml(_write_toml(tmp_path, toml))
 
     def test_unknown_match_key(self, tmp_path):
-        toml = _MINIMAL_TOML + "magic = true\n"
+        toml = _MINIMAL_TOML.replace(
+            'output             = "out.trees"',
+            'output             = "out.trees"\nmagic = true',
+        )
         with pytest.raises(ValueError, match="Unrecognised.*match.*magic"):
             Config.from_toml(_write_toml(tmp_path, toml))
 
@@ -927,12 +982,19 @@ class TestUnknownKeys:
 
 class TestWorkdirConfig:
     def test_workdir_parsed_from_toml(self, tmp_path):
-        toml = _MINIMAL_TOML + 'workdir = "checkpoints"\n'
+        toml = _MINIMAL_TOML.replace(
+            'output             = "out.trees"',
+            'output             = "out.trees"\nworkdir = "checkpoints"',
+        )
         cfg = Config.from_toml(_write_toml(tmp_path, toml))
         assert cfg.match.workdir == "checkpoints"
 
     def test_keep_intermediates_parsed_from_toml(self, tmp_path):
-        toml = _MINIMAL_TOML + 'workdir = "checkpoints"\nkeep_intermediates = true\n'
+        toml = _MINIMAL_TOML.replace(
+            'output             = "out.trees"',
+            'output             = "out.trees"\n'
+            'workdir = "checkpoints"\nkeep_intermediates = true',
+        )
         cfg = Config.from_toml(_write_toml(tmp_path, toml))
         assert cfg.match.keep_intermediates is True
         assert cfg.match.workdir == "checkpoints"
@@ -943,7 +1005,7 @@ class TestWorkdirConfig:
                 sources={"t": Source(path="x", name="t")},
                 ancestors=AncestorsConfig(path="a", sources=["t"]),
                 match=MatchConfig(
-                    sources=["t"],
+                    sources={"t": MatchSourceConfig()},
                     output="o.trees",
                     keep_intermediates=True,
                 ),
@@ -954,7 +1016,7 @@ class TestWorkdirConfig:
             sources={"t": Source(path="x", name="t")},
             ancestors=AncestorsConfig(path="a", sources=["t"]),
             match=MatchConfig(
-                sources=["t"],
+                sources={"t": MatchSourceConfig()},
                 output="o.trees",
             ),
         )
@@ -963,12 +1025,18 @@ class TestWorkdirConfig:
 
     def test_intermediate_ts_rejected(self, tmp_path):
         """Old intermediate_ts key is rejected as unknown."""
-        toml = _MINIMAL_TOML + 'intermediate_ts = "foo_{group}.trees"\n'
+        toml = _MINIMAL_TOML.replace(
+            'output             = "out.trees"',
+            'output             = "out.trees"\nintermediate_ts = "foo_{group}.trees"',
+        )
         with pytest.raises(ValueError, match="Unrecognised.*match.*intermediate_ts"):
             Config.from_toml(_write_toml(tmp_path, toml))
 
     def test_groups_rejected(self, tmp_path):
         """Old groups key is rejected as unknown."""
-        toml = _MINIMAL_TOML + 'groups = "groups.json"\n'
+        toml = _MINIMAL_TOML.replace(
+            'output             = "out.trees"',
+            'output             = "out.trees"\ngroups = "groups.json"',
+        )
         with pytest.raises(ValueError, match="Unrecognised.*match.*groups"):
             Config.from_toml(_write_toml(tmp_path, toml))

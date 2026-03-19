@@ -35,6 +35,7 @@ from .config import (  # noqa: F401
     Config,
     IndividualMetadataConfig,
     MatchConfig,
+    MatchSourceConfig,
     PostProcessConfig,
     Source,
 )

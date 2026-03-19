@@ -262,7 +262,7 @@ def match(
     )
 
     # 5. Derive ploidy from jobs
-    sample_jobs = [j for j in jobs if j.source != "ancestors"]
+    sample_jobs = [j for j in jobs if j.create_individuals]
     ploidy = (
         max((j.ploidy_index for j in sample_jobs), default=0) + 1 if sample_jobs else 1
     )
@@ -325,6 +325,7 @@ def match(
         node_metadata = []
         results = []
         create_individuals_list = []
+        node_flags_list = []
         current_ind_count = 0
 
         for job, result in paired_results:
@@ -333,9 +334,10 @@ def match(
             node_meta = {
                 "source": job.source,
                 "sample_id": job.sample_id,
+                "ploidy_index": job.ploidy_index,
             }
-            if job.source != "ancestors":
-                node_meta["ploidy_index"] = job.ploidy_index
+            node_flags_list.append(job.node_flags)
+            if job.create_individuals:
                 create_individuals_list.append(True)
                 current_ind_count += 1
                 if current_ind_count == 1:
@@ -354,6 +356,7 @@ def match(
             results=results,
             node_metadata=node_metadata,
             create_individuals=np.array(create_individuals_list, dtype=bool),
+            node_flags=np.array(node_flags_list, dtype=np.uint32),
             ploidy=ploidy,
             path_compression=path_compression,
         )
