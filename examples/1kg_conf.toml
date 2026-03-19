@@ -27,6 +27,11 @@ genotype_encoding = "one_bit"
 # samples_chunk_size  = 1000         # default: 1000 (ancestor dimension)
 # variants_chunk_size = 1000         # default: 1000 (site dimension)
 
+
 [match]
-sources = ["1kgp_chr20"]             # which source(s) to match
-output = "output.trees"         # output tree sequence path
+output = "data/output.trees"         # output tree sequence path
+
+[match.sources.1kgp_chr20]
+node_flags = 1                     # default: 1 (NODE_IS_SAMPLE)
+create_individuals = true          # default: true
+
