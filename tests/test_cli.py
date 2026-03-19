@@ -69,12 +69,17 @@ def _write_config(tmp_dir: str, sample_path: str, output_name: str = "out.trees"
 name = "test"
 path = "{sample_path}"
 
-[ancestors]
+[[ancestors]]
+name = "ancestors"
 path = "{ancestors_path}"
 sources = ["test"]
 
 [match]
 output = "{output_path}"
+
+[match.sources.ancestors]
+node_flags = 0
+create_individuals = false
 
 [match.sources.test]
 """
@@ -94,12 +99,17 @@ def _write_run_config(tmp_dir: str, sample_path: str, output_name: str = "out.tr
 name = "test"
 path = "{sample_path}"
 
-[ancestors]
+[[ancestors]]
+name = "ancestors"
 path = "{ancestors_path}"
 sources = ["test"]
 
 [match]
 output = "{output_path}"
+
+[match.sources.ancestors]
+node_flags = 0
+create_individuals = false
 
 [match.sources.test]
 """
@@ -151,7 +161,7 @@ class TestConfigShow:
             config_path = _write_config(tmp_dir, sample_path)
             result = runner.invoke(main, ["config", "show", config_path])
             assert result.exit_code == 0, result.output
-            assert "[ancestors]" in result.output
+            assert "[[ancestors]]" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -177,12 +187,17 @@ class TestConfigCheck:
 name = "test"
 path = "/nonexistent/path.vcz"
 
-[ancestors]
+[[ancestors]]
+name = "ancestors"
 path = "/nonexistent/ancestors.vcz"
 sources = ["test"]
 
 [match]
 output = "out.trees"
+
+[match.sources.ancestors]
+node_flags = 0
+create_individuals = false
 
 [match.sources.test]
 """
@@ -229,12 +244,17 @@ output = "out.trees"
 name = "test"
 path = "{sample_path}"
 
-[ancestors]
+[[ancestors]]
+name = "ancestors"
 path = "{anc_path}"
 sources = ["test"]
 
 [match]
 output = "{out_path}"
+
+[match.sources.ancestors]
+node_flags = 0
+create_individuals = false
 
 [match.sources.test]
 """
@@ -259,12 +279,17 @@ output = "{out_path}"
 name = "test"
 path = "{sample_path_toml}"
 
-[ancestors]
+[[ancestors]]
+name = "ancestors"
 path = "{anc_path}"
 sources = ["nonexistent"]
 
 [match]
 output = "{out_path}"
+
+[match.sources.ancestors]
+node_flags = 0
+create_individuals = false
 
 [match.sources.test]
 """

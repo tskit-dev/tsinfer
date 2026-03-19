@@ -48,11 +48,15 @@ from tsinfer.pipeline import run
 def _run_pipeline(sample_store):
     """Build config, run full pipeline, return output tree sequence."""
     src = Source(path=sample_store, name="test")
+    anc_src = Source(path=None, name="ancestors", sample_time="sample_time")
     cfg = Config(
-        sources={"test": src},
-        ancestors=AncestorsConfig(path=None, sources=["test"]),
+        sources={"test": src, "ancestors": anc_src},
+        ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
         match=MatchConfig(
-            sources={"test": MatchSourceConfig()},
+            sources={
+                "ancestors": MatchSourceConfig(node_flags=0, create_individuals=False),
+                "test": MatchSourceConfig(),
+            },
             output="output.trees",
         ),
         post_process=PostProcessConfig(),

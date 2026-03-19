@@ -124,12 +124,13 @@ def infer_ancestors_cmd(config, threads, force, progress, verbose):
             "ancestor-level progress requires threads >= 1",
             stacklevel=1,
         )
-    source_name = cfg.ancestors.sources[0]
+    anc_cfg = cfg.ancestors[0]
+    source_name = anc_cfg.sources[0]
     source = cfg.sources[source_name]
     logger.info("Inferring ancestors from source '%s'", source_name)
     infer_ancestors(
         source,
-        cfg.ancestors,
+        anc_cfg,
         cfg.ancestral_state,
         progress=progress,
         num_threads=threads,

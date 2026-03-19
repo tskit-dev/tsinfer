@@ -65,15 +65,20 @@ def _minimal_match_cfg(**kwargs):
 
 
 def _minimal_ancestors_cfg(**kwargs):
-    defaults = dict(path="ancestors.vcz", sources=["cohort"])
+    defaults = dict(name="ancestors", path="ancestors.vcz", sources=["cohort"])
     defaults.update(kwargs)
     return AncestorsConfig(**defaults)
 
 
 def _minimal_config(**kwargs):
     defaults = dict(
-        sources={"cohort": Source(path="samples.vcz", name="cohort")},
-        ancestors=_minimal_ancestors_cfg(),
+        sources={
+            "cohort": Source(path="samples.vcz", name="cohort"),
+            "ancestors": Source(
+                path="ancestors.vcz", name="ancestors", sample_time="sample_time"
+            ),
+        },
+        ancestors=[_minimal_ancestors_cfg()],
         match=_minimal_match_cfg(),
     )
     defaults.update(kwargs)
@@ -135,17 +140,22 @@ class TestAncestralStateConstruction:
 
 class TestAncestorsConfigConstruction:
     def test_basic(self):
-        a = AncestorsConfig(path="anc.vcz", sources=["cohort"])
+        a = AncestorsConfig(name="anc", path="anc.vcz", sources=["cohort"])
+        assert a.name == "anc"
         assert a.sources == ["cohort"]
         assert a.max_gap_length == 500_000
         assert a.genotype_encoding == 0
 
     def test_custom_gap_length(self):
-        a = AncestorsConfig(path="anc.vcz", sources=["cohort"], max_gap_length=1_000)
+        a = AncestorsConfig(
+            name="anc", path="anc.vcz", sources=["cohort"], max_gap_length=1_000
+        )
         assert a.max_gap_length == 1_000
 
     def test_genotype_encoding_one_bit(self):
-        a = AncestorsConfig(path="anc.vcz", sources=["cohort"], genotype_encoding=1)
+        a = AncestorsConfig(
+            name="anc", path="anc.vcz", sources=["cohort"], genotype_encoding=1
+        )
         assert a.genotype_encoding == 1
 
 
@@ -212,7 +222,7 @@ class TestConfigConstruction:
         with pytest.raises(ValueError, match="ancestors"):
             Config(
                 sources={},
-                ancestors=None,
+                ancestors=[],
                 match=MatchConfig(
                     sources={"cohort": MatchSourceConfig()},
                     output="out.trees",
@@ -222,14 +232,14 @@ class TestConfigConstruction:
     def test_reference_ts_without_ancestors_ok(self):
         cfg = Config(
             sources={"cohort": Source(path="s.vcz", name="cohort")},
-            ancestors=None,
+            ancestors=[],
             match=MatchConfig(
                 sources={"cohort": MatchSourceConfig()},
                 output="out.trees",
                 reference_ts="ref.trees",
             ),
         )
-        assert cfg.ancestors is None
+        assert cfg.ancestors == []
         assert cfg.match.reference_ts is not None
 
 
@@ -247,7 +257,8 @@ name    = "cohort"
 path    = "samples.vcz"
 include = "QUAL > 20"
 
-[ancestors]
+[[ancestors]]
+name           = "ancestors"
 path           = "ancestors.vcz"
 sources        = ["cohort"]
 max_gap_length = 500000
@@ -288,10 +299,10 @@ class TestFromTomlStandard:
 
     def test_ancestors(self, tmp_path):
         cfg = Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
-        assert cfg.ancestors is not None
-        assert cfg.ancestors.sources == ["cohort"]
-        assert cfg.ancestors.max_gap_length == 500_000
-        assert cfg.ancestors.genotype_encoding == 0
+        assert len(cfg.ancestors) == 1
+        assert cfg.ancestors[0].sources == ["cohort"]
+        assert cfg.ancestors[0].max_gap_length == 500_000
+        assert cfg.ancestors[0].genotype_encoding == 0
 
     def test_ancestors_genotype_encoding_int(self, tmp_path):
         toml = _STANDARD_TOML.replace(
@@ -299,7 +310,7 @@ class TestFromTomlStandard:
             "max_gap_length = 500000\ngenotype_encoding = 1",
         )
         cfg = Config.from_toml(_write_toml(tmp_path, toml))
-        assert cfg.ancestors.genotype_encoding == 1
+        assert cfg.ancestors[0].genotype_encoding == 1
 
     def test_ancestors_genotype_encoding_string(self, tmp_path):
         toml = _STANDARD_TOML.replace(
@@ -307,7 +318,7 @@ class TestFromTomlStandard:
             'max_gap_length = 500000\ngenotype_encoding = "one_bit"',
         )
         cfg = Config.from_toml(_write_toml(tmp_path, toml))
-        assert cfg.ancestors.genotype_encoding == 1
+        assert cfg.ancestors[0].genotype_encoding == 1
 
     def test_ancestors_genotype_encoding_eight_bit_string(self, tmp_path):
         toml = _STANDARD_TOML.replace(
@@ -315,7 +326,7 @@ class TestFromTomlStandard:
             'max_gap_length = 500000\ngenotype_encoding = "eight_bit"',
         )
         cfg = Config.from_toml(_write_toml(tmp_path, toml))
-        assert cfg.ancestors.genotype_encoding == 0
+        assert cfg.ancestors[0].genotype_encoding == 0
 
     def test_ancestors_genotype_encoding_invalid_string(self, tmp_path):
         toml = _STANDARD_TOML.replace(
@@ -358,7 +369,7 @@ class TestPathResolution:
 
     def test_ancestors_path_as_is(self, tmp_path):
         cfg = Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
-        assert cfg.ancestors.path == "ancestors.vcz"
+        assert cfg.ancestors[0].path == "ancestors.vcz"
 
     def test_match_output_as_is(self, tmp_path):
         cfg = Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
@@ -386,7 +397,7 @@ output             = "/data/final.trees"
 """
         cfg = Config.from_toml(_write_toml(tmp_path, toml))
         assert cfg.sources["cohort"].path == "/data/samples.vcz"
-        assert cfg.ancestors.path == "/data/ancestors.vcz"
+        assert cfg.ancestors[0].path == "/data/ancestors.vcz"
         assert cfg.match.output == "/data/final.trees"
 
     def test_remote_url_unchanged(self, tmp_path):
@@ -557,7 +568,7 @@ create_individuals = false
 [match.sources.ancient]
 """
         cfg = Config.from_toml(_write_toml(tmp_path, toml))
-        assert set(cfg.sources) == {"cohort", "ancient"}
+        assert set(cfg.sources) == {"cohort", "ancient", "ancestors"}
         assert set(cfg.match.sources.keys()) == {"ancestors", "cohort", "ancient"}
 
 
@@ -756,7 +767,7 @@ class TestConfigFormat:
     def test_no_optional_sections(self):
         cfg = Config(
             sources={"s": Source(path="s.vcz", name="s")},
-            ancestors=None,
+            ancestors=[],
             match=MatchConfig(
                 sources={"s": MatchSourceConfig()},
                 output="out.trees",
@@ -764,7 +775,7 @@ class TestConfigFormat:
             ),
         )
         text = cfg.format()
-        assert "[ancestors]" not in text
+        assert "[[ancestors]]" not in text
         assert "[post_process]" not in text
         assert "[individual_metadata]" not in text
         assert "[ancestral_state]" not in text
@@ -791,11 +802,21 @@ def _write_sample_vcz(tmp_path):
 
 
 class TestConfigValidate:
+    def _anc_src(self, path=None):
+        return Source(path=path, name="ancestors", sample_time="sample_time")
+
     def test_valid_config(self, tmp_path):
         vcz_path = _write_sample_vcz(tmp_path)
         cfg = Config(
-            sources={"test": Source(path=vcz_path, name="test")},
-            ancestors=AncestorsConfig(path=tmp_path / "ancestors.vcz", sources=["test"]),
+            sources={
+                "test": Source(path=vcz_path, name="test"),
+                "ancestors": self._anc_src(tmp_path / "ancestors.vcz"),
+            },
+            ancestors=[
+                AncestorsConfig(
+                    name="ancestors", path=tmp_path / "ancestors.vcz", sources=["test"]
+                )
+            ],
             match=_minimal_match_cfg(),
         )
         errors = cfg.validate()
@@ -803,8 +824,11 @@ class TestConfigValidate:
 
     def test_missing_source_path(self, tmp_path):
         cfg = Config(
-            sources={"test": Source(path=tmp_path / "nonexistent.vcz", name="test")},
-            ancestors=AncestorsConfig(path=None, sources=["test"]),
+            sources={
+                "test": Source(path=tmp_path / "nonexistent.vcz", name="test"),
+                "ancestors": self._anc_src(),
+            },
+            ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
             match=_minimal_match_cfg(),
         )
         errors = cfg.validate()
@@ -814,11 +838,17 @@ class TestConfigValidate:
         """ancestors.path is an output — should not be checked."""
         vcz_path = _write_sample_vcz(tmp_path)
         cfg = Config(
-            sources={"test": Source(path=vcz_path, name="test")},
-            ancestors=AncestorsConfig(
-                path=tmp_path / "not_yet_created.vcz",
-                sources=["test"],
-            ),
+            sources={
+                "test": Source(path=vcz_path, name="test"),
+                "ancestors": self._anc_src(tmp_path / "not_yet_created.vcz"),
+            },
+            ancestors=[
+                AncestorsConfig(
+                    name="ancestors",
+                    path=tmp_path / "not_yet_created.vcz",
+                    sources=["test"],
+                )
+            ],
             match=_minimal_match_cfg(),
         )
         errors = cfg.validate()
@@ -827,8 +857,13 @@ class TestConfigValidate:
     def test_unknown_ancestor_source(self, tmp_path):
         vcz_path = _write_sample_vcz(tmp_path)
         cfg = Config(
-            sources={"test": Source(path=vcz_path, name="test")},
-            ancestors=AncestorsConfig(path=None, sources=["nonexistent"]),
+            sources={
+                "test": Source(path=vcz_path, name="test"),
+                "ancestors": self._anc_src(),
+            },
+            ancestors=[
+                AncestorsConfig(name="ancestors", path=None, sources=["nonexistent"])
+            ],
             match=_minimal_match_cfg(),
         )
         errors = cfg.validate()
@@ -841,8 +876,11 @@ class TestConfigValidate:
         del on_disk["variant_ancestral_allele"]
 
         cfg = Config(
-            sources={"test": Source(path=vcz_path, name="test")},
-            ancestors=AncestorsConfig(path=None, sources=["test"]),
+            sources={
+                "test": Source(path=vcz_path, name="test"),
+                "ancestors": self._anc_src(),
+            },
+            ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
             match=_minimal_match_cfg(),
         )
         errors = cfg.validate()
@@ -859,8 +897,11 @@ class TestConfigValidate:
         zarr.open_group(str(anc_state_path), mode="w")
 
         cfg = Config(
-            sources={"test": Source(path=vcz_path, name="test")},
-            ancestors=AncestorsConfig(path=None, sources=["test"]),
+            sources={
+                "test": Source(path=vcz_path, name="test"),
+                "ancestors": self._anc_src(),
+            },
+            ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
             match=_minimal_match_cfg(),
             ancestral_state=AncestralState(
                 path=anc_state_path, field="ancestral_allele"
@@ -881,9 +922,10 @@ class TestConfigValidate:
                         "path": str(tmp_path / "missing.vcz"),
                         "field": "time",
                     },
-                )
+                ),
+                "ancestors": self._anc_src(),
             },
-            ancestors=AncestorsConfig(path=None, sources=["test"]),
+            ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
             match=_minimal_match_cfg(),
         )
         errors = cfg.validate()
@@ -892,7 +934,7 @@ class TestConfigValidate:
     def test_missing_reference_ts(self):
         cfg = Config(
             sources={"s": Source(path="s.vcz", name="s")},
-            ancestors=None,
+            ancestors=[],
             match=MatchConfig(
                 sources={"s": MatchSourceConfig()},
                 output="out.trees",
@@ -912,8 +954,11 @@ class TestConfigValidate:
     def test_source_with_none_path(self):
         """Sources with path=None (in-memory) should not error."""
         cfg = Config(
-            sources={"test": Source(path=None, name="test")},
-            ancestors=AncestorsConfig(path=None, sources=["test"]),
+            sources={
+                "test": Source(path=None, name="test"),
+                "ancestors": self._anc_src(),
+            },
+            ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
             match=_minimal_match_cfg(),
         )
         errors = cfg.validate()
@@ -929,12 +974,17 @@ _MINIMAL_TOML = """\
 name = "cohort"
 path = "samples.vcz"
 
-[ancestors]
+[[ancestors]]
+name    = "ancestors"
 path    = "ancestors.vcz"
 sources = ["cohort"]
 
 [match]
 output             = "out.trees"
+
+[match.sources.ancestors]
+node_flags = 0
+create_individuals = false
 
 [match.sources.cohort]
 """
@@ -1002,10 +1052,20 @@ class TestWorkdirConfig:
     def test_keep_intermediates_without_workdir_errors(self):
         with pytest.raises(ValueError, match="keep_intermediates requires workdir"):
             Config(
-                sources={"t": Source(path="x", name="t")},
-                ancestors=AncestorsConfig(path="a", sources=["t"]),
+                sources={
+                    "t": Source(path="x", name="t"),
+                    "ancestors": Source(
+                        path="a", name="ancestors", sample_time="sample_time"
+                    ),
+                },
+                ancestors=[AncestorsConfig(name="ancestors", path="a", sources=["t"])],
                 match=MatchConfig(
-                    sources={"t": MatchSourceConfig()},
+                    sources={
+                        "ancestors": MatchSourceConfig(
+                            node_flags=0, create_individuals=False
+                        ),
+                        "t": MatchSourceConfig(),
+                    },
                     output="o.trees",
                     keep_intermediates=True,
                 ),
@@ -1013,10 +1073,20 @@ class TestWorkdirConfig:
 
     def test_workdir_defaults_to_none(self):
         cfg = Config(
-            sources={"t": Source(path="x", name="t")},
-            ancestors=AncestorsConfig(path="a", sources=["t"]),
+            sources={
+                "t": Source(path="x", name="t"),
+                "ancestors": Source(
+                    path="a", name="ancestors", sample_time="sample_time"
+                ),
+            },
+            ancestors=[AncestorsConfig(name="ancestors", path="a", sources=["t"])],
             match=MatchConfig(
-                sources={"t": MatchSourceConfig()},
+                sources={
+                    "ancestors": MatchSourceConfig(
+                        node_flags=0, create_individuals=False
+                    ),
+                    "t": MatchSourceConfig(),
+                },
                 output="o.trees",
             ),
         )

@@ -375,6 +375,7 @@ class TestAncestorVczToVcf:
         )
         anc_path = tmp_path / "ancestors.vcz"
         cfg = AncestorsConfig(
+            name="ancestors",
             path=anc_path,
             sources=["test"],
             variants_chunk_size=5,

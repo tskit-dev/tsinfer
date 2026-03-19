@@ -1404,7 +1404,6 @@ class HaplotypeReader:
 
     def __init__(
         self,
-        ancestor_store_path,
         sources: dict,
         positions: np.ndarray,
         ancestral_alleles: np.ndarray,
@@ -1413,10 +1412,8 @@ class HaplotypeReader:
         """
         Parameters
         ----------
-        ancestor_store_path : path or zarr.Group
-            Path to ancestor VCZ (or in-memory Group).
         sources : dict[str, Source]
-            cfg.sources mapping (name → Source).
+            All sources to read from (including ancestor sources).
         positions : np.ndarray
             Reference variant positions (the coordinate system).
         ancestral_alleles : np.ndarray
@@ -1430,17 +1427,8 @@ class HaplotypeReader:
         self._sources = sources
         max_bytes = cache_size_mb * 1024 * 1024
 
-        # Create reader for ancestors
-        anc_reader = VCZHaplotypeReader(
-            ancestor_store_path,
-            positions,
-            ancestral_alleles,
-            source_name="ancestors",
-            cache=None,  # placeholder, set below
-        )
-        self._readers: dict[str, VCZHaplotypeReader] = {"ancestors": anc_reader}
-
-        # Eagerly create all sample-source readers so we can validate sizes
+        # Eagerly create all source readers so we can validate sizes
+        self._readers: dict[str, VCZHaplotypeReader] = {}
         for name, source in sources.items():
             store = open_store(source.path)
             samples_selection = resolve_samples_selection(store, source.samples)
