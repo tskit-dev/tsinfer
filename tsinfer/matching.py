@@ -68,12 +68,15 @@ def _tsb_from_ts(ts: tskit.TreeSequence, num_sites: int, positions: np.ndarray):
     num_alleles = [2] * num_sites
     tsb = _tsinfer.TreeSequenceBuilder(num_alleles)
 
+    t0 = time_.monotonic()
     if ts.num_nodes > 0:
-        node_flags = np.array([n.flags for n in ts.nodes()], dtype=np.uint32)
-        node_times = np.array([n.time for n in ts.nodes()], dtype=np.float64)
-        tsb.restore_nodes(node_times, node_flags)
+        tsb.restore_nodes(ts.nodes_time, ts.nodes_flags)
+    t_nodes = time_.monotonic() - t0
 
+    t_build_edges = 0
+    t_restore_edges = 0
     if ts.num_edges > 0:
+        t0 = time_.monotonic()
         pos_arr = positions.astype(np.float64)
         seq_len = ts.sequence_length
         edges = ts.tables.edges
@@ -86,19 +89,37 @@ def _tsb_from_ts(ts: tskit.TreeSequence, num_sites: int, positions: np.ndarray):
         ep = edges.parent.astype(np.int32)
         ec = edges.child.astype(np.int32)
         order = np.lexsort([el, ec])
+        t_build_edges = time_.monotonic() - t0
+        t0 = time_.monotonic()
         tsb.restore_edges(el[order], er[order], ep[order], ec[order])
+        t_restore_edges = time_.monotonic() - t0
 
+    t_build_mutations = 0
+    t_restore_mutations = 0
     if ts.num_mutations > 0:
-        # Map allele strings back to TSB indices (0=ancestral, 1=derived)
-        site_anc = [s.ancestral_state for s in ts.sites()]
-        ms = np.array([m.site for m in ts.mutations()], dtype=np.int32)
-        mn = np.array([m.node for m in ts.mutations()], dtype=np.int32)
-        md = np.array(
-            [0 if m.derived_state == site_anc[m.site] else 1 for m in ts.mutations()],
-            dtype=np.int8,
+        t0 = time_.monotonic()
+        # NOTE: strict biallelic assumption here!
+        mutation_site_as = ts.sites_ancestral_state[ts.mutations_site]
+        mutations_state = ts.mutations_derived_state != mutation_site_as
+        t_build_mutations = time_.monotonic() - t0
+        t0 = time_.monotonic()
+        tsb.restore_mutations(
+            ts.mutations_site,
+            ts.mutations_node,
+            mutations_state.astype(np.int8),
+            ts.mutations_parent,
         )
-        mp = np.array([m.parent for m in ts.mutations()], dtype=np.int32)
-        tsb.restore_mutations(ms, mn, md, mp)
+        t_restore_mutations = time_.monotonic() - t0
+
+    logger.info(
+        "TSB build: nodes %.3fs; build_edges: %.3fs; restore_edges: %.3fs "
+        "build_mutations: %.3fs; restore_mutations %.3fs",
+        t_nodes,
+        t_build_edges,
+        t_restore_edges,
+        t_build_mutations,
+        t_restore_mutations,
+    )
 
     tsb.freeze_indexes()
     return tsb
@@ -179,8 +200,9 @@ class Matcher:
         self._sequence_length = ts.sequence_length
         self._path_compression = path_compression
 
+        t0 = time_.monotonic()
         self._tsb = _tsb_from_ts(ts, self._num_sites, self._positions)
-
+        logger.info("Create matcher tsb in %.3fs", time_.monotonic() - t0)
         self._rho = np.full(self._num_sites, 1e-2)
         self._mu = np.full(self._num_sites, 1e-20)
 
