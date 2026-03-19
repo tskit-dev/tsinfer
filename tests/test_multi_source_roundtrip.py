@@ -30,7 +30,6 @@ from __future__ import annotations
 import os
 
 import numpy as np
-import pytest
 import zarr
 from helpers import make_sample_vcz
 
@@ -106,13 +105,28 @@ def _check_genotypes(input_vcz_path, output_ts):
     input_gt = input_store["call_genotype"][:]
     input_pos = input_store["variant_position"][:]
     input_alleles = input_store["variant_allele"][:]
+    input_sample_ids = [str(s) for s in input_store["sample_id"][:]]
 
-    num_samples = input_gt.shape[1]
+    # Build mapping from input sample ID to input sample index
+    input_id_to_idx = {sid: i for i, sid in enumerate(input_sample_ids)}
 
-    sample_node_ids = []
+    # Build mapping from output sample index to input sample index via
+    # individual metadata sample_id. Each individual may have multiple nodes
+    # (ploidy), ordered by haplotype_index.
+    samples_array = output_ts.samples()
+    node_to_sample_idx = {int(nid): idx for idx, nid in enumerate(samples_array)}
+
+    # For each output sample index, find the corresponding input haplotype index
+    output_to_input = np.full(len(samples_array), -1, dtype=int)
     for ind in output_ts.individuals():
-        sample_node_ids.extend(ind.nodes)
-    assert len(sample_node_ids) == num_samples
+        meta = ind.metadata
+        sid = meta["sample_id"]
+        input_sample_idx = input_id_to_idx[sid]
+        for _ploidy_offset, nid in enumerate(ind.nodes):
+            out_idx = node_to_sample_idx[int(nid)]
+            input_hap_idx = input_sample_idx  # haploid: 1 node per individual
+            output_to_input[out_idx] = input_hap_idx
+    assert np.all(output_to_input >= 0)
 
     pos_to_idx = {}
     for i, p in enumerate(input_pos):
@@ -129,8 +143,13 @@ def _check_genotypes(input_vcz_path, output_ts):
             continue
         i = pos_to_idx.pop(pos)
 
-        expected = np.asarray(input_alleles[i])[input_gt[i].reshape(-1)]
-        observed = np.array(variant.alleles)[variant.genotypes[sample_node_ids]]
+        # Reorder output genotypes to match input sample order
+        input_hap_gt = input_gt[i].reshape(-1)  # (num_samples,)
+        expected = np.asarray(input_alleles[i])[input_hap_gt]
+        alleles_arr = np.array(variant.alleles)
+        observed_all = alleles_arr[variant.genotypes]
+        # Map output order back to input order
+        observed = observed_all[np.argsort(output_to_input)]
 
         np.testing.assert_array_equal(
             observed,
@@ -146,7 +165,6 @@ def _check_genotypes(input_vcz_path, output_ts):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skip(reason="multi-source ancestor inference not yet implemented")
 class TestMultiSourceRoundtrip:
     def test_split_samples(self, tmp_path):
         """First/second half of samples, ancestors from both."""
@@ -230,6 +248,10 @@ create_individuals = false
 
         toml_content = f"""\
 [[source]]
+name = "all_samples"
+path = "{_toml_path(sample_vcz)}"
+
+[[source]]
 name = "low_sites"
 path = "{_toml_path(sample_vcz)}"
 include = "POS <= 500"
@@ -251,8 +273,7 @@ output = "{output_trees}"
 node_flags = 0
 create_individuals = false
 
-[match.sources.low_sites]
-[match.sources.high_sites]
+[match.sources.all_samples]
 """
         config_path = _write_toml(tmp_path, toml_content)
         cfg = Config.from_toml(config_path)
@@ -267,14 +288,18 @@ create_individuals = false
 
         toml_content = f"""\
 [[source]]
+name = "all_samples"
+path = "{_toml_path(sample_vcz)}"
+
+[[source]]
 name = "even_pos"
 path = "{_toml_path(sample_vcz)}"
-include = "POS % 2 == 0"
+include = "POS=100 | POS=300 | POS=500 | POS=700 | POS=900"
 
 [[source]]
 name = "odd_pos"
 path = "{_toml_path(sample_vcz)}"
-include = "POS % 2 != 0"
+include = "POS=200 | POS=400 | POS=600 | POS=800 | POS=1000"
 
 [[ancestors]]
 name = "ancestors"
@@ -288,8 +313,7 @@ output = "{output_trees}"
 node_flags = 0
 create_individuals = false
 
-[match.sources.even_pos]
-[match.sources.odd_pos]
+[match.sources.all_samples]
 """
         config_path = _write_toml(tmp_path, toml_content)
         cfg = Config.from_toml(config_path)

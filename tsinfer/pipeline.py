@@ -480,10 +480,9 @@ def run(
     """
     logger.info("Starting full pipeline")
     anc_cfg = cfg.ancestors[0]
-    source_name = anc_cfg.sources[0]
-    source = cfg.sources[source_name]
+    sources = [cfg.sources[name] for name in anc_cfg.sources]
     ancestor_store = infer_ancestors(
-        source,
+        sources,
         anc_cfg,
         cfg.ancestral_state,
         progress=progress,

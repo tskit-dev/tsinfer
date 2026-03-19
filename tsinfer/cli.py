@@ -125,11 +125,13 @@ def infer_ancestors_cmd(config, threads, force, progress, verbose):
             stacklevel=1,
         )
     anc_cfg = cfg.ancestors[0]
-    source_name = anc_cfg.sources[0]
-    source = cfg.sources[source_name]
-    logger.info("Inferring ancestors from source '%s'", source_name)
+    sources = [cfg.sources[name] for name in anc_cfg.sources]
+    logger.info(
+        "Inferring ancestors from sources: %s",
+        ", ".join(f"'{name}'" for name in anc_cfg.sources),
+    )
     infer_ancestors(
-        source,
+        sources,
         anc_cfg,
         cfg.ancestral_state,
         progress=progress,
