@@ -307,7 +307,7 @@ class Matcher:
         num_threads : int
             Maximum worker threads (default 1 — sequential).
         """
-        jobs = list(jobs)
+        jobs = sorted(jobs, key=lambda j: j.haplotype_index if j is not None else -1)
         with ThreadPoolExecutor(max_workers=max(1, num_threads)) as executor:
             futures = {
                 executor.submit(self._match_one, job, reader): job for job in jobs
