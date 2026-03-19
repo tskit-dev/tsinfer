@@ -706,6 +706,125 @@ class TestWorkdir:
         assert list(tmp_path.glob("*.trees")) == []
         assert list(tmp_path.glob("groups.json")) == []
 
+    def test_group_stop_produces_partial_result(self, tmp_path):
+        """group_stop=1 processes only group 0; checkpoint matches returned ts."""
+        import json
+
+        import tskit
+
+        cfg = self._setup()
+        workdir = tmp_path / "wd"
+        cfg.match.workdir = str(workdir)
+        cfg.match.keep_intermediates = True
+
+        partial_ts = match(cfg, group_stop=1)
+        full_ts = match(self._setup())
+
+        assert partial_ts.num_nodes > 0
+        assert partial_ts.num_nodes < full_ts.num_nodes
+
+        # Exactly one checkpoint: group_0.trees (the only group processed)
+        groups_json = json.loads((workdir / "groups.json").read_text())
+        sorted_groups = sorted({r["group"] for r in groups_json})
+        first_group = sorted_groups[0]
+        expected_path = workdir / f"group_{first_group}.trees"
+        assert expected_path.exists()
+        trees_files = list(workdir.glob("group_*.trees"))
+        assert len(trees_files) == 1
+
+        # The checkpoint tree sequence should have the same node/edge
+        # counts as the returned partial_ts (before relabelling/metadata,
+        # so compare the underlying structure via node count).
+        checkpoint_ts = tskit.load(str(expected_path))
+        assert checkpoint_ts.num_nodes > 0
+        assert checkpoint_ts.num_edges > 0
+        # The returned ts has relabelled alleles and metadata applied on
+        # top of the checkpoint, but the node/edge topology is identical.
+        assert checkpoint_ts.num_nodes == partial_ts.num_nodes
+        assert checkpoint_ts.num_edges == partial_ts.num_edges
+
+    def test_group_stop_and_resume_matches_full_run(self, tmp_path):
+        """Stop at group 1, resume with no stop → same as full run."""
+        cfg = self._setup()
+        workdir = tmp_path / "wd"
+        cfg.match.workdir = str(workdir)
+        cfg.match.keep_intermediates = True
+
+        match(cfg, group_stop=1)
+
+        resumed_ts = match(cfg)
+        full_ts = match(self._setup())
+
+        assert resumed_ts.num_nodes == full_ts.num_nodes
+        assert resumed_ts.num_edges == full_ts.num_edges
+
+    def test_group_stop_every_group_matches_full_run(self, tmp_path):
+        """For each group g, stop at g then resume → matches full run."""
+        import json
+
+        base_cfg = self._setup()
+        full_ts = match(base_cfg)
+
+        # Determine number of groups
+        workdir_probe = tmp_path / "probe"
+        base_cfg.match.workdir = str(workdir_probe)
+        base_cfg.match.keep_intermediates = True
+        match(base_cfg)
+        groups_json = json.loads((workdir_probe / "groups.json").read_text())
+        num_groups = max(r["group"] for r in groups_json) + 1
+
+        for g in range(1, num_groups + 1):
+            cfg = self._setup()
+            wd = tmp_path / f"wd_g{g}"
+            cfg.match.workdir = str(wd)
+            cfg.match.keep_intermediates = True
+
+            match(cfg, group_stop=g)
+            resumed_ts = match(cfg)
+
+            assert resumed_ts.num_nodes == full_ts.num_nodes
+            assert resumed_ts.num_edges == full_ts.num_edges
+
+    def test_group_stop_multi_step_resume(self, tmp_path):
+        """Step through groups one at a time → final matches full run."""
+        import json
+
+        base_cfg = self._setup()
+        full_ts = match(base_cfg)
+
+        # Determine number of groups
+        workdir_probe = tmp_path / "probe"
+        base_cfg.match.workdir = str(workdir_probe)
+        base_cfg.match.keep_intermediates = True
+        match(base_cfg)
+        groups_json = json.loads((workdir_probe / "groups.json").read_text())
+        num_groups = max(r["group"] for r in groups_json) + 1
+
+        cfg = self._setup()
+        wd = tmp_path / "wd_step"
+        cfg.match.workdir = str(wd)
+        cfg.match.keep_intermediates = True
+
+        for g in range(1, num_groups + 1):
+            match(cfg, group_stop=g)
+
+        final_ts = match(cfg)
+
+        assert final_ts.num_nodes == full_ts.num_nodes
+        assert final_ts.num_edges == full_ts.num_edges
+
+    def test_group_stop_beyond_last_group(self, tmp_path):
+        """group_stop=9999 behaves like a normal full run."""
+        cfg = self._setup()
+        workdir = tmp_path / "wd"
+        cfg.match.workdir = str(workdir)
+
+        big_stop_ts = match(cfg, group_stop=9999)
+        full_ts = match(self._setup())
+
+        assert big_stop_ts.num_nodes == full_ts.num_nodes
+        assert big_stop_ts.num_edges == full_ts.num_edges
+
     def test_keep_intermediates_without_workdir_errors(self):
         """keep_intermediates=True without workdir raises ValueError."""
         import pytest
