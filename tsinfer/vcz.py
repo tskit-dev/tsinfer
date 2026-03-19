@@ -1245,6 +1245,10 @@ class _AlleleEncoder:
     def num_alleles(self, ref_site_idx: int) -> int:
         return len(self._allele_table[ref_site_idx])
 
+    def num_alleles_array(self) -> np.ndarray:
+        """Return (num_sites,) uint64 array of allele counts per site."""
+        return np.array([len(t) for t in self._allele_table], dtype=np.uint64)
+
     def site_alleles_array(self) -> np.ndarray:
         """Return (num_sites, max_alleles) object array for extend_ts."""
         max_a = max(len(t) for t in self._allele_table) if self._allele_table else 2
@@ -1562,6 +1566,21 @@ class HaplotypeReader:
             )
             self._readers[name] = reader
 
+        # Pre-register all alleles from all sources so that num_alleles
+        # is fully populated before any Matcher is created.
+        for reader in self._readers.values():
+            for ref_idx, src_idx in reader._position_map:
+                site_alleles = reader._src_alleles[src_idx]
+                allele_list = (
+                    site_alleles.tolist()
+                    if hasattr(site_alleles, "tolist")
+                    else site_alleles
+                )
+                for a in allele_list:
+                    a_str = str(a)
+                    if a_str:
+                        self._allele_encoder.encode(int(ref_idx), a_str)
+
         # Validate that the cache can fit at least one chunk from every source
         max_chunk = 0
         max_chunk_source = None
@@ -1636,6 +1655,10 @@ class HaplotypeReader:
         """
         reader = self._get_reader(job.source)
         return reader.read_haplotype(job.sample_id, job.ploidy_index)
+
+    def get_num_alleles(self) -> np.ndarray:
+        """Return (num_sites,) uint64 array of allele counts per site."""
+        return self._allele_encoder.num_alleles_array()
 
     def get_site_alleles(self) -> np.ndarray:
         """Return (num_sites, max_alleles) object array of allele strings.
