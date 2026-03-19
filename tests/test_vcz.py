@@ -29,6 +29,7 @@ from helpers import make_sample_vcz
 
 from tsinfer.grouping import MatchJob
 from tsinfer.vcz import (
+    ChunkCache,
     HaplotypeReader,
     VCZHaplotypeReader,
     num_contigs,
@@ -524,14 +525,28 @@ class TestVCZHaplotypeReader:
     def test_ancestor_store_direct(self):
         """VCZHaplotypeReader reads ancestor haplotypes correctly."""
         anc_store, _, _, positions, anc_alleles = _make_ancestor_and_sample_stores()
-        reader = VCZHaplotypeReader(anc_store, positions, anc_alleles)
+        cache = ChunkCache()
+        reader = VCZHaplotypeReader(
+            anc_store,
+            positions,
+            anc_alleles,
+            source_name="anc",
+            cache=cache,
+        )
         hap = reader.read_haplotype("a0", ploidy_index=0)
         np.testing.assert_array_equal(hap, [0, 1, 0])
 
     def test_sample_store_direct(self):
         """VCZHaplotypeReader reads and polarises sample haplotypes."""
         _, sample_store, _, positions, anc_alleles = _make_ancestor_and_sample_stores()
-        reader = VCZHaplotypeReader(sample_store, positions, anc_alleles)
+        cache = ChunkCache()
+        reader = VCZHaplotypeReader(
+            sample_store,
+            positions,
+            anc_alleles,
+            source_name="test",
+            cache=cache,
+        )
         # sample_0: gt [0, 1, 1] → encoded [0, 1, 1]
         hap = reader.read_haplotype("sample_0", ploidy_index=0)
         np.testing.assert_array_equal(hap, [0, 1, 1])
@@ -541,13 +556,20 @@ class TestVCZHaplotypeReader:
         anc_store, sample_store, _, positions, anc_alleles = (
             _make_ancestor_and_sample_stores()
         )
-        reader = VCZHaplotypeReader(sample_store, positions, anc_alleles, cache_size=3)
+        cache = ChunkCache(max_entries=3)
+        reader = VCZHaplotypeReader(
+            sample_store,
+            positions,
+            anc_alleles,
+            source_name="test",
+            cache=cache,
+        )
         reader.read_haplotype("sample_0")
         # Both samples are in the same chunk for this small store
-        assert len(reader._chunk_cache) == 1
+        assert len(cache._cache) == 1
         reader.read_haplotype("sample_1")
         # Should still be just 1 cached chunk
-        assert len(reader._chunk_cache) == 1
+        assert len(cache._cache) == 1
 
     def test_cache_eviction(self):
         """Oldest chunk is evicted when cache is full."""
@@ -573,17 +595,24 @@ class TestVCZHaplotypeReader:
         )
         cg.attrs["_ARRAY_DIMENSIONS"] = ["variants", "samples", "ploidy"]
         anc_alleles = np.array(["A"])
-        reader = VCZHaplotypeReader(sample_store, positions, anc_alleles, cache_size=2)
+        cache = ChunkCache(max_entries=2)
+        reader = VCZHaplotypeReader(
+            sample_store,
+            positions,
+            anc_alleles,
+            source_name="test",
+            cache=cache,
+        )
         # Read from chunk 0
         reader.read_haplotype("sample_0")
-        assert len(reader._chunk_cache) == 1
+        assert len(cache._cache) == 1
         # Read from chunk 1
         reader.read_haplotype("sample_2")
-        assert len(reader._chunk_cache) == 2
+        assert len(cache._cache) == 2
         # Read from chunk 2 — should evict chunk 0
         reader.read_haplotype("sample_4")
-        assert len(reader._chunk_cache) == 2
-        assert 0 not in reader._chunk_cache
+        assert len(cache._cache) == 2
+        assert ("test", 0) not in cache._cache
 
     def test_missing_genotype(self):
         """Missing genotypes encode as -1."""
@@ -597,7 +626,14 @@ class TestVCZHaplotypeReader:
             sequence_length=1000,
         )
         anc_alleles = np.array(["A", "A"])
-        reader = VCZHaplotypeReader(sample_store, positions, anc_alleles)
+        cache = ChunkCache()
+        reader = VCZHaplotypeReader(
+            sample_store,
+            positions,
+            anc_alleles,
+            source_name="test",
+            cache=cache,
+        )
         hap = reader.read_haplotype("sample_0")
         assert hap[0] == -1
         assert hap[1] == 0
@@ -618,8 +654,78 @@ class TestVCZHaplotypeReader:
         # Select only sample_1
         selection = np.array([1])
         anc_alleles = np.array(["A"])
+        cache = ChunkCache()
         reader = VCZHaplotypeReader(
-            sample_store, positions, anc_alleles, samples_selection=selection
+            sample_store,
+            positions,
+            anc_alleles,
+            source_name="test",
+            cache=cache,
+            samples_selection=selection,
         )
         hap = reader.read_haplotype("sample_1")
         np.testing.assert_array_equal(hap, [1])
+
+    def test_cross_source_eviction(self):
+        """Shared cache evicts across sources when at capacity."""
+        positions = np.array([100], dtype=np.int32)
+        gt = np.zeros((1, 1, 1), dtype=np.int8)
+        alleles = np.array([["A", "T"]])
+        anc_alleles = np.array(["A"])
+
+        store_a = make_sample_vcz(
+            genotypes=gt,
+            positions=positions,
+            alleles=alleles,
+            ancestral_state=np.array(["A"]),
+            sequence_length=1000,
+        )
+        store_b = make_sample_vcz(
+            genotypes=gt,
+            positions=positions,
+            alleles=alleles,
+            ancestral_state=np.array(["A"]),
+            sequence_length=1000,
+        )
+
+        cache = ChunkCache(max_entries=2)
+        reader_a = VCZHaplotypeReader(
+            store_a,
+            positions,
+            anc_alleles,
+            source_name="src_a",
+            cache=cache,
+        )
+        reader_b = VCZHaplotypeReader(
+            store_b,
+            positions,
+            anc_alleles,
+            source_name="src_b",
+            cache=cache,
+        )
+
+        reader_a.read_haplotype("sample_0")
+        assert len(cache._cache) == 1
+        reader_b.read_haplotype("sample_0")
+        assert len(cache._cache) == 2
+
+        # Third source should evict src_a's chunk
+        store_c = make_sample_vcz(
+            genotypes=gt,
+            positions=positions,
+            alleles=alleles,
+            ancestral_state=np.array(["A"]),
+            sequence_length=1000,
+        )
+        reader_c = VCZHaplotypeReader(
+            store_c,
+            positions,
+            anc_alleles,
+            source_name="src_c",
+            cache=cache,
+        )
+        reader_c.read_haplotype("sample_0")
+        assert len(cache._cache) == 2
+        assert ("src_a", 0) not in cache._cache
+        assert ("src_b", 0) in cache._cache
+        assert ("src_c", 0) in cache._cache

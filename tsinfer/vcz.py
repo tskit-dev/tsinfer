@@ -1148,6 +1148,65 @@ def finalize_ancestor_zarr(root, focal_positions_acc, compressor=None):
 # ---------------------------------------------------------------------------
 
 
+class ChunkCache:
+    """Unified LRU cache for sample chunks, keyed by (source_name, chunk_index)."""
+
+    def __init__(self, max_entries: int = 2):
+        self._max_entries = max_entries
+        self._cache: dict[tuple[str, int], np.ndarray] = {}
+        self._order: list[tuple[str, int]] = []
+        self._lock = threading.Lock()
+        self._hits = 0
+        self._misses = 0
+
+    def get(self, key: tuple[str, int]) -> np.ndarray | None:
+        """Return cached chunk or None. Thread-safe."""
+        with self._lock:
+            if key in self._cache:
+                self._order.remove(key)
+                self._order.append(key)
+                self._hits += 1
+                logger.info(
+                    "Chunk cache hit: source=%s chunk=%d",
+                    key[0],
+                    key[1],
+                )
+                return self._cache[key]
+            self._misses += 1
+            return None
+
+    def put(self, key: tuple[str, int], data: np.ndarray) -> None:
+        """Insert chunk, evicting LRU entry if at capacity. Thread-safe."""
+        with self._lock:
+            if key in self._cache:
+                return
+            if len(self._order) >= self._max_entries:
+                evict_key = self._order.pop(0)
+                evicted = self._cache.pop(evict_key)
+                logger.info(
+                    "Chunk cache evict: source=%s chunk=%d freed=%.1f MiB",
+                    evict_key[0],
+                    evict_key[1],
+                    evicted.nbytes / (1024 * 1024),
+                )
+            self._cache[key] = data
+            self._order.append(key)
+            logger.info(
+                "Chunk cache insert: source=%s chunk=%d"
+                " size=%.1f MiB (total: %.1f MiB, %d entries)",
+                key[0],
+                key[1],
+                data.nbytes / (1024 * 1024),
+                self.total_bytes / (1024 * 1024),
+                len(self._cache),
+            )
+
+    @property
+    def total_bytes(self) -> int:
+        """Sum of nbytes of all cached arrays."""
+        return sum(v.nbytes for v in self._cache.values())
+
+
 class VCZHaplotypeReader:
     """
     Reads and polarises haplotypes from a single VCZ store.
@@ -1156,8 +1215,8 @@ class VCZHaplotypeReader:
     aligned to a reference coordinate system, and genotypes are polarised
     so that the ancestral allele is always 0.
 
-    Maintains an LRU cache of sample chunks to avoid repeated zarr reads
-    when successive haplotypes fall in the same chunk.
+    Uses an external ``ChunkCache`` shared across all sources to avoid
+    repeated zarr reads when successive haplotypes fall in the same chunk.
 
     Parameters
     ----------
@@ -1165,10 +1224,14 @@ class VCZHaplotypeReader:
         The VCZ store to read from.
     positions : np.ndarray
         Reference variant positions (the coordinate system to align to).
+    ancestral_alleles : np.ndarray
+        Authoritative ancestral allele strings for polarisation.
+    source_name : str
+        Name used as the first element of the cache key.
+    cache : ChunkCache
+        Shared chunk cache instance.
     samples_selection : np.ndarray or None
         Optional subset of sample indices to use.
-    cache_size : int
-        Maximum number of sample chunks to keep in the cache.
     """
 
     def __init__(
@@ -1176,17 +1239,17 @@ class VCZHaplotypeReader:
         store,
         positions: np.ndarray,
         ancestral_alleles: np.ndarray,
+        *,
+        source_name: str,
+        cache: ChunkCache,
         samples_selection: np.ndarray | None = None,
-        cache_size: int = 3,
     ):
         self._store = open_store(store)
         self._ref_positions = np.asarray(positions, dtype=np.int32)
         self._num_ref_sites = len(self._ref_positions)
         self._samples_selection = samples_selection
-        self._cache_size = cache_size
-        self._cache_lock = threading.Lock()
-        self._chunk_cache: dict[int, np.ndarray] = {}
-        self._cache_order: list[int] = []
+        self._source_name = source_name
+        self._cache = cache
 
         # Build sample_id → column mapping
         raw_ids = self._store["sample_id"][:]
@@ -1247,18 +1310,16 @@ class VCZHaplotypeReader:
     def _load_sample_chunk(self, chunk_idx: int) -> np.ndarray:
         """Load a sample chunk from the zarr store, return raw int8 array.
 
-        Thread-safe: a lock protects the cache dict and LRU order list.
+        Thread-safe via the shared ``ChunkCache``.
         The returned numpy array remains valid even if later evicted from
         the cache, because Python's reference counting keeps it alive.
         """
-        with self._cache_lock:
-            if chunk_idx in self._chunk_cache:
-                # Move to end (most recently used)
-                self._cache_order.remove(chunk_idx)
-                self._cache_order.append(chunk_idx)
-                return self._chunk_cache[chunk_idx]
+        key = (self._source_name, chunk_idx)
+        cached = self._cache.get(key)
+        if cached is not None:
+            return cached
 
-        # Load outside the lock — zarr I/O can proceed concurrently
+        # Load outside the cache lock — zarr I/O can proceed concurrently
         col_start = chunk_idx * self._sample_chunk_size
         col_end = min(
             col_start + self._sample_chunk_size,
@@ -1269,19 +1330,8 @@ class VCZHaplotypeReader:
             dtype=np.int8,
         )
 
-        with self._cache_lock:
-            # Re-check: another thread may have loaded the same chunk
-            if chunk_idx in self._chunk_cache:
-                return self._chunk_cache[chunk_idx]
-
-            # Evict oldest if at capacity
-            if len(self._cache_order) >= self._cache_size:
-                evict_key = self._cache_order.pop(0)
-                del self._chunk_cache[evict_key]
-
-            self._chunk_cache[chunk_idx] = chunk_data
-            self._cache_order.append(chunk_idx)
-            return chunk_data
+        self._cache.put(key, chunk_data)
+        return chunk_data
 
     def read_haplotype(self, sample_id: str, ploidy_index: int = 0) -> np.ndarray:
         """
@@ -1342,7 +1392,7 @@ class HaplotypeReader:
         sources: dict,
         positions: np.ndarray,
         ancestral_alleles: np.ndarray,
-        cache_size: int = 3,
+        cache_size: int = 2,
     ):
         """
         Parameters
@@ -1357,12 +1407,12 @@ class HaplotypeReader:
             (num_sites,) array of ancestral allele strings, one per
             reference position.  Authoritative source for polarisation.
         cache_size : int
-            Per-source sample chunk cache size.
+            Total number of cached chunks across all sources.
         """
         self._positions = np.asarray(positions, dtype=np.int32)
         self._ancestral_alleles = ancestral_alleles
         self._sources = sources
-        self._cache_size = cache_size
+        self._cache = ChunkCache(max_entries=cache_size)
 
         # Create reader for ancestors
         self._readers: dict[str, VCZHaplotypeReader] = {
@@ -1370,7 +1420,8 @@ class HaplotypeReader:
                 ancestor_store_path,
                 positions,
                 ancestral_alleles,
-                cache_size=cache_size,
+                source_name="ancestors",
+                cache=self._cache,
             ),
         }
         self._readers_lock = threading.Lock()
@@ -1394,8 +1445,9 @@ class HaplotypeReader:
                 store,
                 self._positions,
                 self._ancestral_alleles,
+                source_name=source_name,
+                cache=self._cache,
                 samples_selection=samples_selection,
-                cache_size=self._cache_size,
             )
             self._readers[source_name] = reader
             return reader
