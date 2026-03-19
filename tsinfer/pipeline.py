@@ -26,6 +26,7 @@ import collections
 import dataclasses
 import json
 import logging
+import time as time_
 from pathlib import Path
 
 import numpy as np
@@ -37,98 +38,154 @@ from .ancestors import infer_ancestors
 from .config import Config
 from .grouping import (
     MatchJob,
-    compute_match_jobs,
+    assign_groups,
 )
 from .matching import Matcher, extend_ts, make_root_ts, relabel_alleles
 
 logger = logging.getLogger(__name__)
 
 
-@dataclasses.dataclass
-class _IndividualMetadataResult:
-    metadata: list[dict] | None
-    population_indices: list[int] | None
-    population_names: list[str] | None
+# ---------------------------------------------------------------------------
+# Build jobs with metadata, pre-assign individuals and populations
+# ---------------------------------------------------------------------------
 
 
-def _load_match_jobs(path) -> list[MatchJob]:
-    """Read a groups JSON file and return a list of MatchJob objects."""
-    records = json.loads(Path(path).read_text())
-    return [MatchJob(**rec) for rec in records]
-
-
-def _setup_workdir(workdir, cfg):
+def _build_jobs_with_metadata(cfg):
     """
-    Set up workdir: create dir, write or load groups.json.
+    Build MatchJobs with pre-assigned individual_id and population_id.
 
-    Returns (jobs, last_completed_group_idx, starting_ts_or_None).
+    Returns (jobs, individual_metadata_rows, population_metadata_rows).
     """
+    logger.info("Loading haplotype metadata")
+    t0 = time_.monotonic()
 
-    workdir = Path(workdir)
-    workdir.mkdir(parents=True, exist_ok=True)
-    groups_path = workdir / "groups.json"
-
-    if groups_path.exists():
-        logger.info("Loading existing groups from %s", groups_path)
-        jobs = _load_match_jobs(groups_path)
+    # Reference positions from first ancestor store (for default start/end)
+    if len(cfg.ancestors) > 0:
+        anc_store = vcz_mod.open_store(cfg.ancestors[0].path)
+        positions = np.asarray(anc_store["variant_position"][:], dtype=np.int32)
     else:
-        jobs = compute_match_jobs(cfg)
-        json_str = json.dumps([dataclasses.asdict(j) for j in jobs], indent=2)
-        groups_path.write_text(json_str)
-        logger.info("Wrote groups to %s", groups_path)
+        positions = np.array([], dtype=np.int32)
 
-    max_group_index = -1
-    for path in workdir.glob("group_*.trees"):
-        group_index = int(path.stem.split("_")[1])
-        max_group_index = max(group_index, max_group_index)
+    # Build MatchJobs directly from VCZ stores, assigning individual IDs
+    # in the same pass.
+    jobs: list[MatchJob] = []
+    ind_key_to_id: dict[tuple[str, str], int] = {}
+    hap_idx = 0
 
-    starting_ts = None
-    if max_group_index >= 0:
-        last_path = workdir / f"group_{max_group_index}.trees"
-        starting_ts = tskit.load(str(last_path))
-        logger.info("Resuming from group %d ", max_group_index)
+    for source_name in cfg.match.sources:
+        source = cfg.sources[source_name]
+        src_cfg = cfg.match.sources[source_name]
+        store = vcz_mod.open_store(source.path)
 
-    return jobs, max_group_index, starting_ts
+        # Shape metadata only — no data loaded
+        gt_shape = store["call_genotype"].shape
+        num_samples = gt_shape[1]
+        ploidy = gt_shape[2]
 
+        samples_selection = vcz_mod.resolve_samples_selection(store, source.samples)
+        if samples_selection is not None:
+            num_samples = len(samples_selection)
 
-def _build_individual_metadata(cfg, individual_jobs):
-    """
-    Build individual metadata and population assignments from config.
-
-    Parameters
-    ----------
-    cfg : Config
-    individual_jobs : list[MatchJob]
-        One MatchJob per individual (the first haplotype of each).
-
-    Returns an _IndividualMetadataResult with:
-    - metadata: list of dicts, one per individual
-    - population_indices: list of population indices, one per individual (or None)
-    - population_names: list of unique population names (or None)
-    """
-    ind_meta_cfg = cfg.individual_metadata
-    num_individuals = len(individual_jobs)
-
-    if num_individuals == 0:
-        return _IndividualMetadataResult(
-            metadata=None, population_indices=None, population_names=None
+        num_hap = num_samples * ploidy
+        logger.info(
+            "Source '%s': %d samples, ploidy %d, %d haplotypes",
+            source_name,
+            num_samples,
+            ploidy,
+            num_hap,
         )
 
-    ind_metadata_list = []
-    pop_indices = None
-    pop_names = None
+        # sample_time
+        all_num_samples = gt_shape[1]
+        sample_time_arr = vcz_mod.resolve_field(
+            store,
+            source.sample_time,
+            "sample_id",
+            all_num_samples,
+            fill_value=0,
+        )
+        if sample_time_arr is None:
+            sample_time_arr = np.zeros(num_samples, dtype=np.float64)
+        else:
+            sample_time_arr = np.asarray(sample_time_arr, dtype=np.float64)
+            if samples_selection is not None:
+                sample_time_arr = sample_time_arr[samples_selection]
 
-    # For each individual, find its source and sample index
-    for job in individual_jobs:
-        source_name = job.source
-        sample_id = job.sample_id
-        ind_md = {}
+        # sample_id
+        raw_ids = store["sample_id"][:]
+        if samples_selection is not None:
+            raw_ids = raw_ids[samples_selection]
+        sample_ids = [str(x) for x in raw_ids.tolist()]
 
+        # start/end positions
+        if "sample_start_position" in store and "sample_end_position" in store:
+            src_start = np.asarray(store["sample_start_position"][:], dtype=np.int32)
+            src_end = np.asarray(store["sample_end_position"][:], dtype=np.int32)
+        elif len(positions) > 0:
+            default_start = int(positions[0])
+            default_end = int(positions[-1])
+            src_start = None
+            src_end = None
+        else:
+            default_start = 0
+            default_end = 0
+            src_start = None
+            src_end = None
+
+        # Build one MatchJob per haplotype
+        for i in range(num_samples):
+            sample_time = float(sample_time_arr[i])
+            sid = sample_ids[i]
+
+            if src_start is not None:
+                start_pos = int(src_start[i])
+                end_pos = int(src_end[i])
+            else:
+                start_pos = default_start
+                end_pos = default_end
+
+            # Determine individual_id
+            if src_cfg.create_individuals:
+                key = (source.name, sid)
+                if key not in ind_key_to_id:
+                    ind_key_to_id[key] = len(ind_key_to_id)
+                individual_id = ind_key_to_id[key]
+            else:
+                individual_id = None
+
+            for p in range(ploidy):
+                jobs.append(
+                    MatchJob(
+                        haplotype_index=hap_idx,
+                        source=source.name,
+                        sample_id=sid,
+                        ploidy_index=p,
+                        time=sample_time,
+                        start_position=start_pos,
+                        end_position=end_pos,
+                        group=0,
+                        node_flags=src_cfg.node_flags,
+                        individual_id=individual_id,
+                        population_id=None,
+                    )
+                )
+                hap_idx += 1
+
+    elapsed = time_.monotonic() - t0
+    logger.info("Built %d match jobs in %.2fs", len(jobs), elapsed)
+
+    # Build individual metadata rows
+    ind_meta_cfg = cfg.individual_metadata
+    individual_metadata_rows: list[dict] = []
+    ind_keys_ordered = sorted(ind_key_to_id.keys(), key=lambda k: ind_key_to_id[k])
+    for source_name, sample_id in ind_keys_ordered:
+        ind_md = {"source": source_name, "sample_id": sample_id}
+
+        # Add configured metadata fields
         if ind_meta_cfg is not None and ind_meta_cfg.fields:
             if source_name and source_name in cfg.sources:
                 source = cfg.sources[source_name]
                 store = vcz_mod.open_store(source.path)
-
                 raw_ids = store["sample_id"][:]
                 sample_ids = [str(x) for x in raw_ids.tolist()]
                 try:
@@ -140,23 +197,22 @@ def _build_individual_metadata(cfg, individual_jobs):
                     for field_name, array_name in ind_meta_cfg.fields.items():
                         if array_name in store:
                             val = store[array_name][sample_idx]
-                            # Convert numpy types to Python types
                             if hasattr(val, "item"):
                                 val = val.item()
                             elif hasattr(val, "tolist"):
                                 val = val.tolist()
                             ind_md[field_name] = val
 
-        ind_metadata_list.append(ind_md)
+        individual_metadata_rows.append(ind_md)
 
     # Build populations if configured
-    if ind_meta_cfg is not None and ind_meta_cfg.population:
-        pop_values = []
-        for job in individual_jobs:
-            source_name = job.source
-            sample_id = job.sample_id
-            pop_val = None
+    population_metadata_rows: list[dict] = []
 
+    if ind_meta_cfg is not None and ind_meta_cfg.population:
+        # For each individual, determine its population
+        ind_pop_values: list[str | None] = []
+        for source_name, sample_id in ind_keys_ordered:
+            pop_val = None
             if source_name and source_name in cfg.sources:
                 source = cfg.sources[source_name]
                 store = vcz_mod.open_store(source.path)
@@ -176,24 +232,109 @@ def _build_individual_metadata(cfg, individual_jobs):
                         elif hasattr(val, "tolist"):
                             val = val.tolist()
                         pop_val = str(val)
-
-            pop_values.append(pop_val)
+            ind_pop_values.append(pop_val)
 
         # Build unique population list
-        unique_pops = []
-        for v in pop_values:
+        unique_pops: list[str] = []
+        for v in ind_pop_values:
             if v is not None and v not in unique_pops:
                 unique_pops.append(v)
 
         if unique_pops:
-            pop_names = unique_pops
-            pop_lookup = {name: i for i, name in enumerate(pop_names)}
-            pop_indices = [pop_lookup.get(v, -1) for v in pop_values]
+            pop_lookup = {name: i for i, name in enumerate(unique_pops)}
+            population_metadata_rows = [{"name": name} for name in unique_pops]
 
-    return _IndividualMetadataResult(
-        metadata=ind_metadata_list,
-        population_indices=pop_indices,
-        population_names=pop_names,
+            # Map individual → population
+            ind_to_pop: dict[int, int] = {}
+            for ind_idx, pop_val in enumerate(ind_pop_values):
+                if pop_val is not None and pop_val in pop_lookup:
+                    ind_to_pop[ind_idx] = pop_lookup[pop_val]
+
+            # Map population onto jobs via individual_id
+            for job in jobs:
+                if job.individual_id is not None and job.individual_id in ind_to_pop:
+                    job.population_id = ind_to_pop[job.individual_id]
+
+    # Assign groups
+    logger.info("Computing groups")
+    t0 = time_.monotonic()
+    jobs = assign_groups(jobs)
+    elapsed = time_.monotonic() - t0
+    num_groups = len({j.group for j in jobs})
+    logger.info("Computed %d groups in %.2fs", num_groups, elapsed)
+
+    return jobs, individual_metadata_rows, population_metadata_rows
+
+
+def compute_groups_json(cfg: Config) -> str:
+    """
+    Compute haplotype groups and return as a JSON string.
+
+    The output is a flat JSON array of objects, one per haplotype, ordered
+    by group then haplotype index.  Each object has the fields of
+    :class:`MatchJob` — suitable for loading into pandas with
+    ``pd.read_json`` or ``pd.DataFrame``.
+    """
+    t0 = time_.monotonic()
+    jobs, _, _ = _build_jobs_with_metadata(cfg)
+    elapsed = time_.monotonic() - t0
+
+    logger.info("Serialising %d match jobs to JSON", len(jobs))
+    t0 = time_.monotonic()
+    json_str = json.dumps([dataclasses.asdict(j) for j in jobs], indent=2)
+    elapsed = time_.monotonic() - t0
+    logger.info("Serialised in %.2fs", elapsed)
+    return json_str
+
+
+def _load_match_jobs(path) -> list[MatchJob]:
+    """Read a groups JSON file and return a list of MatchJob objects."""
+    records = json.loads(Path(path).read_text())
+    return [MatchJob(**rec) for rec in records]
+
+
+def _setup_workdir(workdir, cfg):
+    """
+    Set up workdir: create dir, write or load groups.json.
+
+    Returns (jobs, individual_metadata_rows, population_metadata_rows,
+             last_completed_group_idx, starting_ts_or_None).
+    """
+
+    workdir = Path(workdir)
+    workdir.mkdir(parents=True, exist_ok=True)
+    groups_path = workdir / "groups.json"
+
+    if groups_path.exists():
+        logger.info("Loading existing groups from %s", groups_path)
+        jobs = _load_match_jobs(groups_path)
+        individual_metadata_rows: list[dict] = []
+        population_metadata_rows: list[dict] = []
+    else:
+        jobs, individual_metadata_rows, population_metadata_rows = (
+            _build_jobs_with_metadata(cfg)
+        )
+        json_str = json.dumps([dataclasses.asdict(j) for j in jobs], indent=2)
+        groups_path.write_text(json_str)
+        logger.info("Wrote groups to %s", groups_path)
+
+    max_group_index = -1
+    for path in workdir.glob("group_*.trees"):
+        group_index = int(path.stem.split("_")[1])
+        max_group_index = max(group_index, max_group_index)
+
+    starting_ts = None
+    if max_group_index >= 0:
+        last_path = workdir / f"group_{max_group_index}.trees"
+        starting_ts = tskit.load(str(last_path))
+        logger.info("Resuming from group %d ", max_group_index)
+
+    return (
+        jobs,
+        individual_metadata_rows,
+        population_metadata_rows,
+        max_group_index,
+        starting_ts,
     )
 
 
@@ -225,10 +366,20 @@ def match(
     workdir = cfg.match.workdir
     last_completed_group = -1
     workdir_starting_ts = None
+    individual_metadata_rows: list[dict] = []
+    population_metadata_rows: list[dict] = []
     if workdir is not None:
-        jobs, last_completed_group, workdir_starting_ts = _setup_workdir(workdir, cfg)
+        (
+            jobs,
+            individual_metadata_rows,
+            population_metadata_rows,
+            last_completed_group,
+            workdir_starting_ts,
+        ) = _setup_workdir(workdir, cfg)
     else:
-        jobs = compute_match_jobs(cfg)
+        jobs, individual_metadata_rows, population_metadata_rows = (
+            _build_jobs_with_metadata(cfg)
+        )
 
     # 2. Load lightweight ancestor metadata (no genotypes)
     anc_store = vcz_mod.open_store(cfg.ancestors[0].path)
@@ -263,7 +414,14 @@ def match(
     if workdir_starting_ts is not None:
         ts = workdir_starting_ts
     else:
-        ts = make_root_ts(seq_len, positions, seq_intervals, max_time=max_anc_time)
+        ts = make_root_ts(
+            seq_len,
+            positions,
+            seq_intervals,
+            max_time=max_anc_time,
+            individuals=individual_metadata_rows if individual_metadata_rows else None,
+            populations=population_metadata_rows if population_metadata_rows else None,
+        )
 
     logger.info(
         "Match: %d haplotypes, %d sites, seq_len=%.0f",
@@ -279,9 +437,6 @@ def match(
     sorted_groups = sorted(groups_dict.keys())
 
     # 6. Match loop — process groups in order
-    individual_jobs: list[MatchJob] = []  # first job of each individual
-    seen_individuals: set[tuple[str, str]] = set()
-    sorted_groups = sorted(groups_dict.keys())
     num_groups = len(sorted_groups)
     total_haps = len(jobs)
     completed_haps = 0
@@ -336,14 +491,6 @@ def match(
             100.0 * completed_haps / total_haps if total_haps > 0 else 0,
         )
 
-        # Track individual_jobs for post-processing metadata
-        for job, _result in paired_results:
-            if job.create_individuals:
-                key = (job.source, job.sample_id)
-                if key not in seen_individuals:
-                    seen_individuals.add(key)
-                    individual_jobs.append(job)
-
         # Extend the tree sequence
         ts = extend_ts(
             ts,
@@ -366,12 +513,6 @@ def match(
     # 8. Relabel integer-string alleles to real allele strings
     ts = relabel_alleles(ts, reader.get_site_alleles())
 
-    # 9. Apply individual/population metadata as post-processing
-    ind_result = _build_individual_metadata(cfg, individual_jobs)
-
-    if ind_result.metadata is not None or ind_result.population_names is not None:
-        ts = _apply_individual_metadata(ts, ind_result)
-
     logger.info(
         "Match complete: %d nodes, %d individuals",
         ts.num_nodes,
@@ -379,48 +520,6 @@ def match(
     )
 
     return ts
-
-
-def _apply_individual_metadata(
-    ts: tskit.TreeSequence,
-    ind_result: _IndividualMetadataResult,
-) -> tskit.TreeSequence:
-    """Apply individual metadata and population assignments to a tree sequence."""
-    tables = ts.dump_tables()
-
-    # Add populations if specified
-    if ind_result.population_names is not None:
-        tables.populations.metadata_schema = tskit.MetadataSchema({"codec": "json"})
-        for pop_name in ind_result.population_names:
-            tables.populations.add_row(metadata={"name": pop_name})
-
-    # Apply individual metadata (merge with existing metadata from extend_ts)
-    if ind_result.metadata is not None and tables.individuals.num_rows > 0:
-        old_inds = tables.individuals.copy()
-        tables.individuals.clear()
-        for i in range(old_inds.num_rows):
-            existing_md = old_inds[i].metadata
-            new_md = ind_result.metadata[i] if i < len(ind_result.metadata) else {}
-            merged = {**existing_md, **new_md}
-            tables.individuals.add_row(metadata=merged)
-
-    # Apply population assignments
-    if ind_result.population_indices is not None:
-        pop_lookup = {
-            ind_id: ind_result.population_indices[ind_id]
-            for ind_id in range(len(ind_result.population_indices))
-            if ind_id < tables.individuals.num_rows
-        }
-        for node_id in range(tables.nodes.num_rows):
-            row = tables.nodes[node_id]
-            if row.individual >= 0 and row.individual in pop_lookup:
-                pop_id = pop_lookup[row.individual]
-                if pop_id >= 0:
-                    tables.nodes[node_id] = row.replace(population=pop_id)
-
-    tables.sort()
-    tables.build_index()
-    return tables.tree_sequence()
 
 
 def post_process(
