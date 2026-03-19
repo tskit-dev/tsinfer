@@ -71,11 +71,17 @@ def _simulate(
 def _make_config(sample_store, ancestor_store):
     """Build a Config suitable for match() from in-memory stores."""
     src = Source(path=sample_store, name="test")
+    anc_src = Source(path=ancestor_store, name="ancestors", sample_time="sample_time")
     return Config(
-        sources={"test": src},
-        ancestors=AncestorsConfig(path=ancestor_store, sources=["test"]),
+        sources={"test": src, "ancestors": anc_src},
+        ancestors=[
+            AncestorsConfig(name="ancestors", path=ancestor_store, sources=["test"])
+        ],
         match=MatchConfig(
-            sources={"test": MatchSourceConfig()},
+            sources={
+                "ancestors": MatchSourceConfig(node_flags=0, create_individuals=False),
+                "test": MatchSourceConfig(),
+            },
             output="output.trees",
         ),
     )
@@ -84,11 +90,15 @@ def _make_config(sample_store, ancestor_store):
 def _make_config_for_run(sample_store):
     """Build a Config suitable for run() from in-memory sample store."""
     src = Source(path=sample_store, name="test")
+    anc_src = Source(path=None, name="ancestors", sample_time="sample_time")
     return Config(
-        sources={"test": src},
-        ancestors=AncestorsConfig(path=None, sources=["test"]),
+        sources={"test": src, "ancestors": anc_src},
+        ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
         match=MatchConfig(
-            sources={"test": MatchSourceConfig()},
+            sources={
+                "ancestors": MatchSourceConfig(node_flags=0, create_individuals=False),
+                "test": MatchSourceConfig(),
+            },
             output="output.trees",
         ),
     )
@@ -97,7 +107,7 @@ def _make_config_for_run(sample_store):
 def _infer_and_match(sim_ts):
     """Helper: simulate → sample VCZ → infer ancestors → match → return output ts."""
     sample_store = ts_to_sample_vcz(sim_ts)
-    anc_cfg = AncestorsConfig(path=None, sources=["test"])
+    anc_cfg = AncestorsConfig(name="ancestors", path=None, sources=["test"])
     ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
     cfg = _make_config(sample_store, ancestor_store)
     return match(cfg)
@@ -152,7 +162,7 @@ class TestMatch:
             ancestral_state=np.array(["A", "A"]),
             sequence_length=1000,
         )
-        anc_cfg = AncestorsConfig(path=None, sources=["test"])
+        anc_cfg = AncestorsConfig(name="ancestors", path=None, sources=["test"])
         ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
         cfg = _make_config(sample_store, ancestor_store)
         out_ts = match(cfg)
@@ -170,10 +180,20 @@ class TestPostProcess:
         sim_ts = _simulate(num_samples=6, random_seed=10)
         matched_ts = _infer_and_match(sim_ts)
         cfg = Config(
-            sources={"test": Source(path=None, name="test")},
-            ancestors=AncestorsConfig(path=None, sources=["test"]),
+            sources={
+                "test": Source(path=None, name="test"),
+                "ancestors": Source(
+                    path=None, name="ancestors", sample_time="sample_time"
+                ),
+            },
+            ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
             match=MatchConfig(
-                sources={"test": MatchSourceConfig()},
+                sources={
+                    "ancestors": MatchSourceConfig(
+                        node_flags=0, create_individuals=False
+                    ),
+                    "test": MatchSourceConfig(),
+                },
                 output="out.trees",
             ),
             post_process=PostProcessConfig(split_ultimate=False, erase_flanks=False),
@@ -186,10 +206,20 @@ class TestPostProcess:
         sim_ts = _simulate(num_samples=4, random_seed=11)
         matched_ts = _infer_and_match(sim_ts)
         cfg = Config(
-            sources={"test": Source(path=None, name="test")},
-            ancestors=AncestorsConfig(path=None, sources=["test"]),
+            sources={
+                "test": Source(path=None, name="test"),
+                "ancestors": Source(
+                    path=None, name="ancestors", sample_time="sample_time"
+                ),
+            },
+            ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
             match=MatchConfig(
-                sources={"test": MatchSourceConfig()},
+                sources={
+                    "ancestors": MatchSourceConfig(
+                        node_flags=0, create_individuals=False
+                    ),
+                    "test": MatchSourceConfig(),
+                },
                 output="out.trees",
             ),
             post_process=None,
@@ -201,10 +231,20 @@ class TestPostProcess:
         sim_ts = _simulate(num_samples=6, random_seed=12)
         matched_ts = _infer_and_match(sim_ts)
         cfg = Config(
-            sources={"test": Source(path=None, name="test")},
-            ancestors=AncestorsConfig(path=None, sources=["test"]),
+            sources={
+                "test": Source(path=None, name="test"),
+                "ancestors": Source(
+                    path=None, name="ancestors", sample_time="sample_time"
+                ),
+            },
+            ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
             match=MatchConfig(
-                sources={"test": MatchSourceConfig()},
+                sources={
+                    "ancestors": MatchSourceConfig(
+                        node_flags=0, create_individuals=False
+                    ),
+                    "test": MatchSourceConfig(),
+                },
                 output="out.trees",
             ),
             post_process=PostProcessConfig(split_ultimate=False, erase_flanks=True),
@@ -239,11 +279,17 @@ class TestRun:
         sim_ts = _simulate(num_samples=6, random_seed=22)
         sample_store = ts_to_sample_vcz(sim_ts)
         src = Source(path=sample_store, name="test")
+        anc_src = Source(path=None, name="ancestors", sample_time="sample_time")
         cfg = Config(
-            sources={"test": src},
-            ancestors=AncestorsConfig(path=None, sources=["test"]),
+            sources={"test": src, "ancestors": anc_src},
+            ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
             match=MatchConfig(
-                sources={"test": MatchSourceConfig()},
+                sources={
+                    "ancestors": MatchSourceConfig(
+                        node_flags=0, create_individuals=False
+                    ),
+                    "test": MatchSourceConfig(),
+                },
                 output="output.trees",
             ),
             post_process=PostProcessConfig(split_ultimate=False, erase_flanks=True),
@@ -348,11 +394,17 @@ class TestIndividualMetadata:
             sequence_length=1000,
         )
         src = Source(path=sample_store, name="test")
+        anc_src = Source(path=None, name="ancestors", sample_time="sample_time")
         cfg = Config(
-            sources={"test": src},
-            ancestors=AncestorsConfig(path=None, sources=["test"]),
+            sources={"test": src, "ancestors": anc_src},
+            ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
             match=MatchConfig(
-                sources={"test": MatchSourceConfig()},
+                sources={
+                    "ancestors": MatchSourceConfig(
+                        node_flags=0, create_individuals=False
+                    ),
+                    "test": MatchSourceConfig(),
+                },
                 output="output.trees",
             ),
             individual_metadata=IndividualMetadataConfig(
@@ -376,11 +428,17 @@ class TestIndividualMetadata:
             sample_population=np.array(["pop_A", "pop_B"]),
         )
         src = Source(path=sample_store, name="test")
+        anc_src = Source(path=None, name="ancestors", sample_time="sample_time")
         cfg = Config(
-            sources={"test": src},
-            ancestors=AncestorsConfig(path=None, sources=["test"]),
+            sources={"test": src, "ancestors": anc_src},
+            ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
             match=MatchConfig(
-                sources={"test": MatchSourceConfig()},
+                sources={
+                    "ancestors": MatchSourceConfig(
+                        node_flags=0, create_individuals=False
+                    ),
+                    "test": MatchSourceConfig(),
+                },
                 output="output.trees",
             ),
             individual_metadata=IndividualMetadataConfig(
@@ -434,7 +492,7 @@ class TestPipelineLogging:
 
         sim_ts = _simulate(num_samples=4, random_seed=31)
         sample_store = ts_to_sample_vcz(sim_ts)
-        anc_cfg = AncestorsConfig(path=None, sources=["test"])
+        anc_cfg = AncestorsConfig(name="ancestors", path=None, sources=["test"])
         ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
         cfg = _make_config(sample_store, ancestor_store)
         with caplog.at_level(logging.INFO, logger="tsinfer.pipeline"):
@@ -456,7 +514,7 @@ class TestPipelineProgress:
         """match(progress=True) does not crash."""
         sim_ts = _simulate(num_samples=4, random_seed=33)
         sample_store = ts_to_sample_vcz(sim_ts)
-        anc_cfg = AncestorsConfig(path=None, sources=["test"])
+        anc_cfg = AncestorsConfig(name="ancestors", path=None, sources=["test"])
         ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
         cfg = _make_config(sample_store, ancestor_store)
         out_ts = match(cfg, progress=True)
@@ -475,7 +533,7 @@ class TestComputeGroupsJson:
 
         sim_ts = _simulate(num_samples=4, random_seed=40)
         sample_store = ts_to_sample_vcz(sim_ts)
-        anc_cfg = AncestorsConfig(path=None, sources=["test"])
+        anc_cfg = AncestorsConfig(name="ancestors", path=None, sources=["test"])
         ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
         cfg = _make_config(sample_store, ancestor_store)
         records = json.loads(compute_groups_json(cfg))
@@ -488,7 +546,7 @@ class TestComputeGroupsJson:
 
         sim_ts = _simulate(num_samples=4, random_seed=41)
         sample_store = ts_to_sample_vcz(sim_ts)
-        anc_cfg = AncestorsConfig(path=None, sources=["test"])
+        anc_cfg = AncestorsConfig(name="ancestors", path=None, sources=["test"])
         ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
         cfg = _make_config(sample_store, ancestor_store)
         records = json.loads(compute_groups_json(cfg))
@@ -504,7 +562,7 @@ class TestComputeGroupsJson:
 
         sim_ts = _simulate(num_samples=6, random_seed=42)
         sample_store = ts_to_sample_vcz(sim_ts)
-        anc_cfg = AncestorsConfig(path=None, sources=["test"])
+        anc_cfg = AncestorsConfig(name="ancestors", path=None, sources=["test"])
         ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
         cfg = _make_config(sample_store, ancestor_store)
         records = json.loads(compute_groups_json(cfg))
@@ -522,7 +580,7 @@ class TestComputeGroupsJson:
             ancestral_state=np.array(["A", "A"]),
             sequence_length=1000,
         )
-        anc_cfg = AncestorsConfig(path=None, sources=["test"])
+        anc_cfg = AncestorsConfig(name="ancestors", path=None, sources=["test"])
         ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
         cfg = _make_config(sample_store, ancestor_store)
         records = json.loads(compute_groups_json(cfg))
@@ -554,7 +612,7 @@ class TestWorkdir:
     def _setup(self, random_seed=50):
         sim_ts = _simulate(num_samples=4, random_seed=random_seed)
         sample_store = ts_to_sample_vcz(sim_ts)
-        anc_cfg = AncestorsConfig(path=None, sources=["test"])
+        anc_cfg = AncestorsConfig(name="ancestors", path=None, sources=["test"])
         ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
         cfg = _make_config(sample_store, ancestor_store)
         return cfg
@@ -654,10 +712,22 @@ class TestWorkdir:
 
         with pytest.raises(ValueError, match="keep_intermediates requires workdir"):
             Config(
-                sources={"test": Source(path="dummy", name="test")},
-                ancestors=AncestorsConfig(path="dummy", sources=["test"]),
+                sources={
+                    "test": Source(path="dummy", name="test"),
+                    "ancestors": Source(
+                        path="dummy", name="ancestors", sample_time="sample_time"
+                    ),
+                },
+                ancestors=[
+                    AncestorsConfig(name="ancestors", path="dummy", sources=["test"])
+                ],
                 match=MatchConfig(
-                    sources={"test": MatchSourceConfig()},
+                    sources={
+                        "ancestors": MatchSourceConfig(
+                            node_flags=0, create_individuals=False
+                        ),
+                        "test": MatchSourceConfig(),
+                    },
                     output="out.trees",
                     keep_intermediates=True,
                 ),

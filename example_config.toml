@@ -65,7 +65,8 @@ field = "variant_AA"
 # ============================================================================
 # Controls the ancestor-generation step (infer-ancestors).
 
-[ancestors]
+[[ancestors]]
+name = "ancestors"
 path = "data/ancestors.vcz"          # output path for the ancestor store
 sources = ["1kgp_chr20"]             # which source(s) to build from
 
@@ -114,6 +115,10 @@ output = "data/output.trees"         # output tree sequence path
 #
 #   node_flags:          tskit node flags (default: 1 = NODE_IS_SAMPLE)
 #   create_individuals:  group nodes into tskit individuals (default: true)
+
+[match.sources.ancestors]
+node_flags = 0
+create_individuals = false
 
 [match.sources.1kgp_chr20]
 # node_flags = 1                     # default: 1 (NODE_IS_SAMPLE)

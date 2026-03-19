@@ -57,6 +57,7 @@ def _cfg(
     genotype_encoding=0,
 ):
     return AncestorsConfig(
+        name="ancestors",
         path=None,
         sources=["src"],
         max_gap_length=max_gap_length,
@@ -1377,7 +1378,7 @@ class TestFilesystemStore:
         mem_result = infer_ancestors(_src(gt), _cfg())
 
         fs_path = tmp_path / "ancestors.zarr"
-        fs_cfg = AncestorsConfig(path=fs_path, sources=["src"])
+        fs_cfg = AncestorsConfig(name="ancestors", path=fs_path, sources=["src"])
         fs_result = infer_ancestors(_src(gt), fs_cfg)
 
         self._compare_groups(mem_result, fs_result)
@@ -1397,7 +1398,7 @@ class TestFilesystemStore:
         mem_result = infer_ancestors(_src(gt), _cfg())
 
         fs_path = tmp_path / "ancestors.zarr"
-        fs_cfg = AncestorsConfig(path=fs_path, sources=["src"])
+        fs_cfg = AncestorsConfig(name="ancestors", path=fs_path, sources=["src"])
         fs_result = infer_ancestors(_src(gt), fs_cfg)
 
         self._compare_groups(mem_result, fs_result)
@@ -1420,7 +1421,7 @@ class TestFilesystemStore:
         """infer_ancestors with all-fixed sites writes empty output to filesystem."""
         gt = _haploid_store([[0, 0], [0, 0]], [100, 200], [["A", "T"]] * 2, ["A", "A"])
         fs_path = tmp_path / "empty_anc.zarr"
-        fs_cfg = AncestorsConfig(path=fs_path, sources=["src"])
+        fs_cfg = AncestorsConfig(name="ancestors", path=fs_path, sources=["src"])
         anc = infer_ancestors(_src(gt), fs_cfg)
 
         assert anc["call_genotype"].shape[1] == 0

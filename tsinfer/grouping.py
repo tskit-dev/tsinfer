@@ -52,7 +52,6 @@ class HaplotypeMetadata:
     """Arrays needed by ``compute_groups`` — no genotype data."""
 
     times: np.ndarray  # (n,) float64
-    is_ancestor: np.ndarray  # (n,) bool
     start_positions: np.ndarray  # (n,) int32
     end_positions: np.ndarray  # (n,) int32
     source: list[str]  # (n,) source name per haplotype
@@ -80,44 +79,33 @@ class MatchJob:
 
 def collect_haplotype_metadata(cfg: Config) -> HaplotypeMetadata:
     """
-    Load only the 1-D metadata arrays from the ancestor VCZ and sample
-    sources — no ``call_genotype`` data is read.
+    Load only the 1-D metadata arrays from all sources in
+    ``cfg.match.sources`` — no ``call_genotype`` data is read.
+
+    Sources include both ancestor sources (auto-created from
+    ``cfg.ancestors``) and sample sources, treated uniformly.
     """
     logger.info("Loading haplotype metadata (lightweight, no genotypes)")
 
-    # --- Ancestors ---
-    anc_store = vcz_mod.open_store(cfg.ancestors.path)
-    positions = np.asarray(anc_store["variant_position"][:], dtype=np.int32)
+    # Reference positions from first ancestor store (for default start/end)
+    if len(cfg.ancestors) > 0:
+        anc_store = vcz_mod.open_store(cfg.ancestors[0].path)
+        positions = np.asarray(anc_store["variant_position"][:], dtype=np.int32)
+    else:
+        positions = np.array([], dtype=np.int32)
 
-    anc_times = np.asarray(anc_store["sample_time"][:], dtype=np.float64)
-    anc_start = np.asarray(anc_store["sample_start_position"][:], dtype=np.int32)
-    anc_end = np.asarray(anc_store["sample_end_position"][:], dtype=np.int32)
-    num_anc = len(anc_times)
-    logger.info("Loaded %d ancestors from %s", num_anc, cfg.ancestors.path)
-
-    anc_is_ancestor = np.ones(num_anc, dtype=bool)
-
-    # Per-haplotype identity for ancestors
-    anc_ids = [str(x) for x in anc_store["sample_id"][:].tolist()]
-    anc_source: list[str] = ["ancestors"] * num_anc
-    anc_sample_id: list[str] = anc_ids
-    anc_ploidy_index: list[int] = [0] * num_anc
-    anc_node_flags: list[int] = [0] * num_anc
-    anc_create_individuals: list[bool] = [False] * num_anc
-
-    # --- Sample sources ---
-    sample_times_list: list[np.ndarray] = []
-    sample_start_list: list[np.ndarray] = []
-    sample_end_list: list[np.ndarray] = []
-    sample_is_ancestor_list: list[np.ndarray] = []
-    sample_source_list: list[str] = []
-    sample_sample_id_list: list[str] = []
-    sample_ploidy_index_list: list[int] = []
-    sample_node_flags_list: list[int] = []
-    sample_create_individuals_list: list[bool] = []
+    times_list: list[np.ndarray] = []
+    start_list: list[np.ndarray] = []
+    end_list: list[np.ndarray] = []
+    source_list: list[str] = []
+    sample_id_list: list[str] = []
+    ploidy_index_list: list[int] = []
+    node_flags_list: list[int] = []
+    create_individuals_list: list[bool] = []
 
     for source_name in cfg.match.sources:
         source = cfg.sources[source_name]
+        src_cfg = cfg.match.sources[source_name]
         store = vcz_mod.open_store(source.path)
 
         # Shape metadata only — no data loaded
@@ -158,75 +146,58 @@ def collect_haplotype_metadata(cfg: Config) -> HaplotypeMetadata:
             raw_ids = raw_ids[samples_selection]
         sample_ids = [str(x) for x in raw_ids.tolist()]
 
-        # Per-haplotype identity
-        src_cfg = cfg.match.sources[source_name]
-        for i in range(num_samples):
-            for p in range(ploidy):
-                sample_source_list.append(source.name)
-                sample_sample_id_list.append(sample_ids[i])
-                sample_ploidy_index_list.append(p)
-                sample_node_flags_list.append(src_cfg.node_flags)
-                sample_create_individuals_list.append(src_cfg.create_individuals)
-
-        # Default start/end from positions
-        if len(positions) > 0:
+        # start/end positions: use store arrays if available, else defaults
+        if "sample_start_position" in store and "sample_end_position" in store:
+            src_start = np.asarray(store["sample_start_position"][:], dtype=np.int32)
+            src_end = np.asarray(store["sample_end_position"][:], dtype=np.int32)
+            hap_start = np.repeat(src_start, ploidy)
+            hap_end = np.repeat(src_end, ploidy)
+        elif len(positions) > 0:
             hap_start = np.full(num_hap, int(positions[0]), dtype=np.int32)
             hap_end = np.full(num_hap, int(positions[-1]), dtype=np.int32)
         else:
             hap_start = np.zeros(num_hap, dtype=np.int32)
             hap_end = np.zeros(num_hap, dtype=np.int32)
 
-        sample_times_list.append(hap_times)
-        sample_start_list.append(hap_start)
-        sample_end_list.append(hap_end)
-        sample_is_ancestor_list.append(np.zeros(num_hap, dtype=bool))
+        # Per-haplotype identity
+        for i in range(num_samples):
+            for p in range(ploidy):
+                source_list.append(source.name)
+                sample_id_list.append(sample_ids[i])
+                ploidy_index_list.append(p)
+                node_flags_list.append(src_cfg.node_flags)
+                create_individuals_list.append(src_cfg.create_individuals)
+
+        times_list.append(hap_times)
+        start_list.append(hap_start)
+        end_list.append(hap_end)
 
     # --- Concatenate ---
-    if sample_times_list:
-        all_times = np.concatenate([anc_times] + sample_times_list)
-        all_start = np.concatenate([anc_start] + sample_start_list)
-        all_end = np.concatenate([anc_end] + sample_end_list)
-        all_is_ancestor = np.concatenate([anc_is_ancestor] + sample_is_ancestor_list)
-        all_source = anc_source + sample_source_list
-        all_sample_id = anc_sample_id + sample_sample_id_list
-        all_ploidy_index = anc_ploidy_index + sample_ploidy_index_list
-        all_node_flags = anc_node_flags + sample_node_flags_list
-        all_create_individuals = anc_create_individuals + sample_create_individuals_list
+    if times_list:
+        all_times = np.concatenate(times_list)
+        all_start = np.concatenate(start_list)
+        all_end = np.concatenate(end_list)
     else:
-        all_times = anc_times
-        all_start = anc_start
-        all_end = anc_end
-        all_is_ancestor = anc_is_ancestor
-        all_source = anc_source
-        all_sample_id = anc_sample_id
-        all_ploidy_index = anc_ploidy_index
-        all_node_flags = anc_node_flags
-        all_create_individuals = anc_create_individuals
+        all_times = np.array([], dtype=np.float64)
+        all_start = np.array([], dtype=np.int32)
+        all_end = np.array([], dtype=np.int32)
 
     num_total = len(all_times)
-    num_ancestors = int(np.sum(all_is_ancestor))
-    num_samples = num_total - num_ancestors
-    logger.info(
-        "Collected metadata for %d haplotypes (%d ancestors, %d samples)",
-        num_total,
-        num_ancestors,
-        num_samples,
-    )
+    logger.info("Collected metadata for %d haplotypes", num_total)
 
     return HaplotypeMetadata(
         times=all_times,
-        is_ancestor=all_is_ancestor,
         start_positions=all_start,
         end_positions=all_end,
-        source=all_source,
-        sample_id=all_sample_id,
-        ploidy_index=all_ploidy_index,
-        node_flags=all_node_flags,
-        create_individuals=all_create_individuals,
+        source=source_list,
+        sample_id=sample_id_list,
+        ploidy_index=ploidy_index_list,
+        node_flags=node_flags_list,
+        create_individuals=create_individuals_list,
     )
 
 
-def merge_overlapping_ancestors(start, end, time):
+def merge_overlapping_haplotypes(start, end, time):
     """
     Merge overlapping, same-time ancestors by scanning along each time epoch
     from left to right, detecting breaks.
@@ -338,7 +309,7 @@ def find_groups(children_data, children_indices, incoming_edge_count):
     return group_id
 
 
-def group_ancestors_by_linesweep(start, end, time):
+def group_haplotypes_by_linesweep(start, end, time):
     """
     Group ancestors for matching in parallel using a linesweep approach.
 
@@ -356,7 +327,7 @@ def group_ancestors_by_linesweep(start, end, time):
         new_time,
         old_indexes,
         sort_indices,
-    ) = merge_overlapping_ancestors(start, end, time)
+    ) = merge_overlapping_haplotypes(start, end, time)
     logger.info(f"Merged to {len(new_start)} ancestors in {time_.time() - t:.2f}s")
 
     t = time_.time()
@@ -412,54 +383,29 @@ def group_ancestors_by_linesweep(start, end, time):
 
 def compute_groups(
     times: np.ndarray,  # (n_haplotypes,) float64
-    is_ancestor: np.ndarray,  # (n_haplotypes,) bool
     start_positions: np.ndarray,  # (n_haplotypes,) int32 — from sample_start_position
     end_positions: np.ndarray,  # (n_haplotypes,) int32 — from sample_end_position
 ) -> list[np.ndarray]:
     """
     Return an ordered list of haplotype-index arrays, oldest group first.
 
-    - Haplotypes are ordered by descending time.
-    - At the same time, ancestor groups come before sample groups.
-    - Same-time ancestors with overlapping intervals are placed in the SAME
-      group so they don't match against each other. Grouping is determined
-      by a linesweep + topological sort that respects time dependencies.
-    - Sample haplotypes are always grouped together by time (no interval
-      splitting), because samples are never used as copying parents.
+    All haplotypes (ancestors and samples) are treated uniformly.
+    Same-time overlapping haplotypes are placed in the SAME group so they
+    don't match against each other. Grouping is determined by a linesweep +
+    topological sort that respects time dependencies.
     """
     times = np.asarray(times, dtype=np.float64)
-    is_ancestor = np.asarray(is_ancestor, dtype=bool)
     start_positions = np.asarray(start_positions, dtype=np.int32)
     end_positions = np.asarray(end_positions, dtype=np.int32)
 
+    if len(times) == 0:
+        return []
+
+    grouping = group_haplotypes_by_linesweep(start_positions, end_positions, times)
     groups: list[np.ndarray] = []
-
-    # Separate ancestors and samples
-    anc_indices = np.where(is_ancestor)[0]
-    sample_indices = np.where(~is_ancestor)[0]
-
-    # Ancestor groups via linesweep
-    if len(anc_indices) > 0:
-        anc_starts = start_positions[anc_indices]
-        anc_ends = end_positions[anc_indices]
-        anc_times = times[anc_indices]
-        ancestor_grouping = group_ancestors_by_linesweep(anc_starts, anc_ends, anc_times)
-        # ancestor_grouping: {group_id: [local_indices...]} ordered by group_id
-        for group_id in sorted(ancestor_grouping.keys()):
-            local_ids = ancestor_grouping[group_id]
-            global_ids = np.array(
-                [int(anc_indices[i]) for i in local_ids], dtype=np.int32
-            )
-            groups.append(global_ids)
-
-    # Sample groups: group by descending time
-    if len(sample_indices) > 0:
-        sample_times_set = sorted(set(times[sample_indices].tolist()), reverse=True)
-        for t in sample_times_set:
-            samp_at_t = sample_indices[np.isclose(times[sample_indices], t)]
-            if len(samp_at_t) > 0:
-                groups.append(samp_at_t.astype(np.int32))
-
+    for group_id in sorted(grouping.keys()):
+        ids = grouping[group_id]
+        groups.append(np.array(ids, dtype=np.int32))
     return groups
 
 
@@ -477,13 +423,9 @@ def compute_match_jobs(cfg: Config) -> list[MatchJob]:
     t0 = time_.monotonic()
     hap_meta = collect_haplotype_metadata(cfg)
     elapsed = time_.monotonic() - t0
-    num_anc = int(np.sum(hap_meta.is_ancestor))
-    num_samples = len(hap_meta.times) - num_anc
     logger.info(
-        "Loaded %d haplotypes (%d ancestors, %d samples) in %.2fs",
+        "Loaded %d haplotypes in %.2fs",
         len(hap_meta.times),
-        num_anc,
-        num_samples,
         elapsed,
     )
 
@@ -491,7 +433,6 @@ def compute_match_jobs(cfg: Config) -> list[MatchJob]:
     t0 = time_.monotonic()
     groups = compute_groups(
         hap_meta.times,
-        hap_meta.is_ancestor,
         hap_meta.start_positions,
         hap_meta.end_positions,
     )

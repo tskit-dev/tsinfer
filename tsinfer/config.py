@@ -109,6 +109,7 @@ class AncestralState:
 class AncestorsConfig:
     """Configuration for the infer_ancestors step."""
 
+    name: str
     path: str | Path
     sources: list[str]
     max_gap_length: int = 500_000
@@ -169,20 +170,23 @@ class Config:
     """
 
     sources: dict[str, Source]
-    ancestors: AncestorsConfig | None
+    ancestors: list[AncestorsConfig]
     match: MatchConfig
     ancestral_state: AncestralState | None = None
     individual_metadata: IndividualMetadataConfig | None = None
     post_process: PostProcessConfig | None = None
 
     def __post_init__(self):
-        if self.ancestors is None and self.match.reference_ts is None:
+        if len(self.ancestors) == 0 and self.match.reference_ts is None:
             raise ValueError(
-                "Config must contain either an [ancestors] section "
+                "Config must contain either an [[ancestors]] section "
                 "or [match].reference_ts"
             )
         if self.match.keep_intermediates and self.match.workdir is None:
             raise ValueError("keep_intermediates requires workdir to be set")
+        for anc in self.ancestors:
+            if anc.name not in self.match.sources:
+                raise ValueError(f"Ancestor '{anc.name}' must appear in [match.sources]")
 
     def format(self) -> str:
         """Return the resolved config as a human-readable string."""
@@ -210,12 +214,12 @@ class Config:
             lines.append(f"  field = {self.ancestral_state.field}")
             lines.append("")
 
-        if self.ancestors is not None:
-            lines.append("[ancestors]")
-            lines.append(f"  path = {self.ancestors.path}")
-            lines.append(f"  sources = {self.ancestors.sources}")
-            lines.append(f"  max_gap_length = {self.ancestors.max_gap_length}")
-            enc = "one_bit" if self.ancestors.genotype_encoding == 1 else "eight_bit"
+        for anc in self.ancestors:
+            lines.append(f"[[ancestors]] (name={anc.name})")
+            lines.append(f"  path = {anc.path}")
+            lines.append(f"  sources = {anc.sources}")
+            lines.append(f"  max_gap_length = {anc.max_gap_length}")
+            enc = "one_bit" if anc.genotype_encoding == 1 else "eight_bit"
             lines.append(f"  genotype_encoding = {enc}")
             lines.append("")
 
@@ -253,7 +257,12 @@ class Config:
         """Check that all input paths exist. Return list of error strings."""
         errors = []
 
+        # Ancestor source paths are outputs — skip existence checks for them
+        ancestor_names = {anc.name for anc in self.ancestors}
+
         for name, src in self.sources.items():
+            if name in ancestor_names:
+                continue  # ancestor paths are outputs, not inputs
             if src.path is not None:
                 p = Path(str(src.path))
                 if not p.exists():
@@ -267,26 +276,30 @@ class Config:
 
         # ancestors.path is an output — don't check for existence.
         # But check that ancestral state info is available.
-        if self.ancestors is not None and self.ancestral_state is None:
-            for src_name in self.ancestors.sources:
-                src = self.sources.get(src_name)
-                if src is None:
-                    errors.append(f"Ancestors references unknown source: '{src_name}'")
-                    continue
-                if src.path is None:
-                    continue
-                p = Path(str(src.path))
-                if p.exists():
-                    try:
-                        store = zarr.open(str(p), mode="r")
-                        if "variant_ancestral_allele" not in store:
-                            errors.append(
-                                f"Source '{src_name}' has no "
-                                f"'variant_ancestral_allele' array and no "
-                                f"[ancestral_state] section is configured"
-                            )
-                    except Exception:
-                        pass  # path existence errors reported above
+        for anc in self.ancestors:
+            if self.ancestral_state is None:
+                for src_name in anc.sources:
+                    src = self.sources.get(src_name)
+                    if src is None:
+                        errors.append(
+                            f"Ancestors '{anc.name}' references unknown "
+                            f"source: '{src_name}'"
+                        )
+                        continue
+                    if src.path is None:
+                        continue
+                    p = Path(str(src.path))
+                    if p.exists():
+                        try:
+                            store = zarr.open(str(p), mode="r")
+                            if "variant_ancestral_allele" not in store:
+                                errors.append(
+                                    f"Source '{src_name}' has no "
+                                    f"'variant_ancestral_allele' array and no "
+                                    f"[ancestral_state] section is configured"
+                                )
+                        except Exception:
+                            pass  # path existence errors reported above
 
         if self.match.reference_ts is not None:
             p = Path(str(self.match.reference_ts))
@@ -341,6 +354,7 @@ _KNOWN_SOURCE_KEYS = {
 _KNOWN_ANCESTRAL_STATE_KEYS = {"path", "field"}
 
 _KNOWN_ANCESTORS_KEYS = {
+    "name",
     "path",
     "sources",
     "max_gap_length",
@@ -418,12 +432,11 @@ def _parse_ancestral_state(raw: dict) -> AncestralState | None:
         raise ValueError(f"[ancestral_state] missing required key: {e}") from e
 
 
-def _parse_ancestors(raw: dict) -> AncestorsConfig | None:
-    entry = raw.get("ancestors")
-    if entry is None:
-        return None
+def _parse_one_ancestor(entry: dict) -> AncestorsConfig:
+    """Parse a single ancestor config entry."""
     _check_unknown_keys("ancestors", entry, _KNOWN_ANCESTORS_KEYS)
     try:
+        name = entry.get("name", "ancestors")
         genotype_encoding = entry.get("genotype_encoding", 0)
         if isinstance(genotype_encoding, str):
             _encoding_names = {"eight_bit": 0, "one_bit": 1}
@@ -434,6 +447,7 @@ def _parse_ancestors(raw: dict) -> AncestorsConfig | None:
                 )
             genotype_encoding = _encoding_names[genotype_encoding.lower()]
         return AncestorsConfig(
+            name=str(name),
             path=_resolve_path(entry["path"]),
             sources=list(entry["sources"]),
             max_gap_length=int(entry.get("max_gap_length", 500_000)),
@@ -445,6 +459,18 @@ def _parse_ancestors(raw: dict) -> AncestorsConfig | None:
         )
     except KeyError as e:
         raise ValueError(f"[ancestors] missing required key: {e}") from e
+
+
+def _parse_ancestors(raw: dict) -> list[AncestorsConfig]:
+    entry = raw.get("ancestors")
+    if entry is None:
+        return []
+    # TOML [[ancestors]] produces a list; [ancestors] produces a dict
+    if isinstance(entry, dict):
+        return [_parse_one_ancestor(entry)]
+    if isinstance(entry, list):
+        return [_parse_one_ancestor(e) for e in entry]
+    raise ValueError("[ancestors] must be a table or array of tables")
 
 
 def _parse_match(raw: dict) -> MatchConfig:
@@ -511,6 +537,19 @@ def _parse_config(raw: dict) -> Config:
     sources = _parse_sources(raw)
     ancestors = _parse_ancestors(raw)
     match = _parse_match(raw)
+
+    # Auto-create a Source for each ancestor config
+    for anc in ancestors:
+        if anc.name in sources:
+            raise ValueError(
+                f"Ancestor name '{anc.name}' conflicts with a [[source]] name"
+            )
+        sources[anc.name] = Source(
+            path=anc.path,
+            name=anc.name,
+            sample_time="sample_time",
+        )
+
     return Config(
         sources=sources,
         ancestors=ancestors,

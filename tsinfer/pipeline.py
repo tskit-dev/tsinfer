@@ -224,25 +224,27 @@ def match(
         jobs = compute_match_jobs(cfg)
 
     # 2. Load lightweight ancestor metadata (no genotypes)
-    anc_store = vcz_mod.open_store(cfg.ancestors.path)
+    anc_store = vcz_mod.open_store(cfg.ancestors[0].path)
     positions = np.asarray(anc_store["variant_position"][:], dtype=np.int32)
     site_alleles = np.asarray(anc_store["variant_allele"][:])
     seq_intervals = np.asarray(anc_store["sequence_intervals"][:], dtype=np.int32)
 
-    # Derive seq_len from first sample source (or seq_intervals fallback)
+    # Derive seq_len from first non-ancestor sample source (or seq_intervals)
+    ancestor_names = {anc.name for anc in cfg.ancestors}
     seq_len = None
     for source_name in cfg.match.sources:
-        source = cfg.sources[source_name]
-        seq_len = float(vcz_mod.sequence_length(vcz_mod.open_store(source.path)))
-        break
+        if source_name not in ancestor_names:
+            source = cfg.sources[source_name]
+            seq_len = float(vcz_mod.sequence_length(vcz_mod.open_store(source.path)))
+            break
     if seq_len is None:
         seq_len = float(np.max(seq_intervals)) if len(seq_intervals) > 0 else 1.0
 
-    # 3. Create lazy reader
+    # 3. Create lazy reader with all match sources
     ancestral_alleles = site_alleles[:, 0]
+    match_sources = {name: cfg.sources[name] for name in cfg.match.sources}
     reader = vcz_mod.HaplotypeReader(
-        cfg.ancestors.path,
-        cfg.sources,
+        match_sources,
         positions,
         ancestral_alleles,
         cache_size_mb=cache_size,
@@ -476,18 +478,24 @@ def run(
     Run the full pipeline: infer_ancestors, match, post_process.
     """
     logger.info("Starting full pipeline")
-    source_name = cfg.ancestors.sources[0]
+    anc_cfg = cfg.ancestors[0]
+    source_name = anc_cfg.sources[0]
     source = cfg.sources[source_name]
     ancestor_store = infer_ancestors(
         source,
-        cfg.ancestors,
+        anc_cfg,
         cfg.ancestral_state,
         progress=progress,
         num_threads=num_threads,
     )
 
-    original_path = cfg.ancestors.path
-    cfg.ancestors.path = ancestor_store
+    original_path = anc_cfg.path
+    anc_cfg.path = ancestor_store
+    cfg.sources[anc_cfg.name] = cfg.sources[anc_cfg.name].__class__(
+        path=ancestor_store,
+        name=anc_cfg.name,
+        sample_time="sample_time",
+    )
 
     try:
         ts = match(
@@ -499,7 +507,7 @@ def run(
         )
         ts = post_process(ts, cfg, **kwargs)
     finally:
-        cfg.ancestors.path = original_path
+        anc_cfg.path = original_path
 
     logger.info(
         "Pipeline complete: %d nodes, %d edges, %d sites",

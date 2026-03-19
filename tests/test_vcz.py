@@ -331,16 +331,19 @@ def _make_ancestor_and_sample_stores():
         sequence_length=1000,
     )
     source = Source(path=sample_store, name="test")
+    anc_source = Source(path=anc_store, name="ancestors", sample_time="sample_time")
     ancestral_alleles = np.asarray(anc_store["variant_allele"][:])[:, 0]
-    return anc_store, sample_store, source, positions, ancestral_alleles
+    return anc_store, sample_store, source, anc_source, positions, ancestral_alleles
 
 
 class TestHaplotypeReader:
     def test_ancestor_haplotype(self):
-        anc_store, sample_store, source, positions, anc_alleles = (
+        anc_store, sample_store, source, anc_source, positions, anc_alleles = (
             _make_ancestor_and_sample_stores()
         )
-        reader = HaplotypeReader(anc_store, {"test": source}, positions, anc_alleles)
+        reader = HaplotypeReader(
+            {"ancestors": anc_source, "test": source}, positions, anc_alleles
+        )
         # a0 has genotype [0, 1, 0]
         job = MatchJob(
             haplotype_index=1,
@@ -356,10 +359,12 @@ class TestHaplotypeReader:
         np.testing.assert_array_equal(hap, [0, 1, 0])
 
     def test_ancestor_haplotype_second(self):
-        anc_store, sample_store, source, positions, anc_alleles = (
+        anc_store, sample_store, source, anc_source, positions, anc_alleles = (
             _make_ancestor_and_sample_stores()
         )
-        reader = HaplotypeReader(anc_store, {"test": source}, positions, anc_alleles)
+        reader = HaplotypeReader(
+            {"ancestors": anc_source, "test": source}, positions, anc_alleles
+        )
         # a1 has genotype [1, 0, 1]
         job = MatchJob(
             haplotype_index=2,
@@ -375,10 +380,12 @@ class TestHaplotypeReader:
         np.testing.assert_array_equal(hap, [1, 0, 1])
 
     def test_sample_haplotype_encoding(self):
-        anc_store, sample_store, source, positions, anc_alleles = (
+        anc_store, sample_store, source, anc_source, positions, anc_alleles = (
             _make_ancestor_and_sample_stores()
         )
-        reader = HaplotypeReader(anc_store, {"test": source}, positions, anc_alleles)
+        reader = HaplotypeReader(
+            {"ancestors": anc_source, "test": source}, positions, anc_alleles
+        )
         # sample_0: gt [0, 1, 1] → encoded [0=anc, 1=derived, 1=derived]
         job = MatchJob(
             haplotype_index=3,
@@ -394,10 +401,12 @@ class TestHaplotypeReader:
         np.testing.assert_array_equal(hap, [0, 1, 1])
 
     def test_sample_haplotype_second(self):
-        anc_store, sample_store, source, positions, anc_alleles = (
+        anc_store, sample_store, source, anc_source, positions, anc_alleles = (
             _make_ancestor_and_sample_stores()
         )
-        reader = HaplotypeReader(anc_store, {"test": source}, positions, anc_alleles)
+        reader = HaplotypeReader(
+            {"ancestors": anc_source, "test": source}, positions, anc_alleles
+        )
         # sample_1: gt [1, 0, 0] → encoded [1=derived, 0=anc, 0=anc]
         job = MatchJob(
             haplotype_index=4,
@@ -437,8 +446,11 @@ class TestHaplotypeReader:
             sequence_length=1000,
         )
         source = Source(path=sample_store, name="test")
+        anc_source = Source(path=anc_store, name="ancestors", sample_time="sample_time")
         anc_alleles = np.asarray(anc_store["variant_allele"][:])[:, 0]
-        reader = HaplotypeReader(anc_store, {"test": source}, positions, anc_alleles)
+        reader = HaplotypeReader(
+            {"ancestors": anc_source, "test": source}, positions, anc_alleles
+        )
         job = MatchJob(
             haplotype_index=2,
             source="test",
@@ -484,11 +496,14 @@ class TestHaplotypeReader:
             sequence_length=1000,
         )
         sources = {
+            "ancestors": Source(
+                path=anc_store, name="ancestors", sample_time="sample_time"
+            ),
             "src_a": Source(path=store_a, name="src_a"),
             "src_b": Source(path=store_b, name="src_b"),
         }
         anc_alleles = np.asarray(anc_store["variant_allele"][:])[:, 0]
-        reader = HaplotypeReader(anc_store, sources, positions, anc_alleles)
+        reader = HaplotypeReader(sources, positions, anc_alleles)
 
         job_a = MatchJob(
             haplotype_index=2,
@@ -517,22 +532,12 @@ class TestHaplotypeReader:
 
     def test_cache_size_mb_too_small(self):
         """HaplotypeReader raises ValueError when cache can't fit one chunk."""
-        anc_store, sample_store, source, positions, anc_alleles = (
+        anc_store, sample_store, source, anc_source, positions, anc_alleles = (
             _make_ancestor_and_sample_stores()
         )
-        # Ancestor store has 3 sites * chunk_samples * 1 ploidy * 1 byte;
-        # cache_size_mb=0 means 0 bytes, which can't fit anything.
-        # We need a cache_size_mb that converts to fewer bytes than one chunk.
-        # Use a very small store but cache_size_mb that won't even fit it.
-        # The smallest possible cache_size_mb is 1, which is 1 MiB.
-        # Our test chunks are tiny, so we need to go lower.
-        # Instead, test with a custom large-enough store.
-        # Actually, the simplest approach: create a store where chunk > 1 MiB
-        # is impractical in tests. Let's just call with cache_size_mb=0.
         with pytest.raises(ValueError, match="cannot fit a single chunk"):
             HaplotypeReader(
-                anc_store,
-                {"test": source},
+                {"ancestors": anc_source, "test": source},
                 positions,
                 anc_alleles,
                 cache_size_mb=0,
@@ -540,7 +545,7 @@ class TestHaplotypeReader:
 
     def test_cache_size_mb_warning(self):
         """HaplotypeReader warns when fewer than 2 chunks fit."""
-        anc_store, sample_store, source, positions, anc_alleles = (
+        anc_store, sample_store, source, anc_source, positions, anc_alleles = (
             _make_ancestor_and_sample_stores()
         )
         # Ancestor chunk: 3 sites * N samples * 1 ploidy * 1 byte.
@@ -564,7 +569,7 @@ class TestHaplotypeReader:
 class TestVCZHaplotypeReader:
     def test_ancestor_store_direct(self):
         """VCZHaplotypeReader reads ancestor haplotypes correctly."""
-        anc_store, _, _, positions, anc_alleles = _make_ancestor_and_sample_stores()
+        anc_store, _, _, _, positions, anc_alleles = _make_ancestor_and_sample_stores()
         cache = ChunkCache(max_bytes=1024 * 1024)
         reader = VCZHaplotypeReader(
             anc_store,
@@ -578,7 +583,9 @@ class TestVCZHaplotypeReader:
 
     def test_sample_store_direct(self):
         """VCZHaplotypeReader reads and polarises sample haplotypes."""
-        _, sample_store, _, positions, anc_alleles = _make_ancestor_and_sample_stores()
+        _, sample_store, _, _, positions, anc_alleles = (
+            _make_ancestor_and_sample_stores()
+        )
         cache = ChunkCache(max_bytes=1024 * 1024)
         reader = VCZHaplotypeReader(
             sample_store,
@@ -593,7 +600,7 @@ class TestVCZHaplotypeReader:
 
     def test_cache_hit(self):
         """Second read for a sample in the same chunk uses the cache."""
-        anc_store, sample_store, _, positions, anc_alleles = (
+        anc_store, sample_store, _, _, positions, anc_alleles = (
             _make_ancestor_and_sample_stores()
         )
         cache = ChunkCache(max_bytes=1024 * 1024)

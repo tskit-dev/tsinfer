@@ -47,15 +47,14 @@ from tsinfer.grouping import (
     compute_groups_json,
     compute_match_jobs,
     find_groups,
-    group_ancestors_by_linesweep,
-    merge_overlapping_ancestors,
+    group_haplotypes_by_linesweep,
+    merge_overlapping_haplotypes,
 )
 
 
 @dataclass
 class _GroupInputs:
     times: np.ndarray
-    is_ancestor: np.ndarray
     start_positions: np.ndarray
     end_positions: np.ndarray
 
@@ -74,9 +73,8 @@ class TestComputeGroups:
     5. Samples are always grouped together by time (no interval splitting).
     """
 
-    def _make_inputs(self, times, is_ancestor, starts=None, ends=None):
+    def _make_inputs(self, times, starts=None, ends=None):
         times = np.asarray(times, dtype=np.float64)
-        is_ancestor = np.asarray(is_ancestor, dtype=bool)
         n = len(times)
         if starts is None:
             starts = np.zeros(n, dtype=np.int32)
@@ -88,7 +86,6 @@ class TestComputeGroups:
             ends = np.asarray(ends, dtype=np.int32)
         return _GroupInputs(
             times=times,
-            is_ancestor=is_ancestor,
             start_positions=starts,
             end_positions=ends,
         )
@@ -97,242 +94,176 @@ class TestComputeGroups:
     # Basic ordering (no interval effects)
     # -------------------------------------------------------------------
 
-    def test_single_ancestor(self):
-        # One ancestor only
-        gi = self._make_inputs([0.5], [True])
-        groups = compute_groups(
-            gi.times, gi.is_ancestor, gi.start_positions, gi.end_positions
-        )
+    def test_single_haplotype(self):
+        gi = self._make_inputs([0.5])
+        groups = compute_groups(gi.times, gi.start_positions, gi.end_positions)
         assert len(groups) == 1
         assert list(groups[0]) == [0]
 
-    def test_multiple_ancestor_time_levels_ordering(self):
-        # Ancestors at 0.8, 0.5, 0.3 — should be in descending order
-        gi = self._make_inputs([0.8, 0.5, 0.3], [True, True, True])
-        groups = compute_groups(
-            gi.times, gi.is_ancestor, gi.start_positions, gi.end_positions
-        )
+    def test_multiple_time_levels_ordering(self):
+        # Haplotypes at 0.8, 0.5, 0.3 — should be in descending order
+        gi = self._make_inputs([0.8, 0.5, 0.3])
+        groups = compute_groups(gi.times, gi.start_positions, gi.end_positions)
         assert len(groups) == 3
         assert list(groups[0]) == [0]  # time 0.8
         assert list(groups[1]) == [1]  # time 0.5
         assert list(groups[2]) == [2]  # time 0.3
 
     def test_samples_only_modern(self):
-        # 3 modern samples (time=0)
-        gi = self._make_inputs([0.0, 0.0, 0.0], [False, False, False])
-        groups = compute_groups(
-            gi.times, gi.is_ancestor, gi.start_positions, gi.end_positions
-        )
+        # 3 modern samples (time=0) — all overlap → same group
+        gi = self._make_inputs([0.0, 0.0, 0.0])
+        groups = compute_groups(gi.times, gi.start_positions, gi.end_positions)
         assert len(groups) == 1
         assert set(groups[0]) == {0, 1, 2}
 
-    def test_ancient_samples_before_modern(self):
-        # Ancient sample (time=0.5) + modern sample (time=0)
-        gi = self._make_inputs([0.5, 0.0], [False, False])
-        groups = compute_groups(
-            gi.times, gi.is_ancestor, gi.start_positions, gi.end_positions
-        )
+    def test_ancient_before_modern(self):
+        # Ancient (time=0.5) + modern (time=0)
+        gi = self._make_inputs([0.5, 0.0])
+        groups = compute_groups(gi.times, gi.start_positions, gi.end_positions)
         assert len(groups) == 2
-        assert list(groups[0]) == [0]  # ancient sample first
-        assert list(groups[1]) == [1]  # modern sample last
+        assert list(groups[0]) == [0]  # ancient first
+        assert list(groups[1]) == [1]  # modern last
 
-    def test_ancestors_before_samples_at_same_time(self):
-        # Ancestor at t=0.5 + sample at t=0.5
-        gi = self._make_inputs([0.5, 0.5], [True, False])
-        groups = compute_groups(
-            gi.times, gi.is_ancestor, gi.start_positions, gi.end_positions
-        )
-        # Should have: ancestor, then sample (even at same time)
-        assert len(groups) == 2
-        assert list(groups[0]) == [0]  # ancestor
-        assert list(groups[1]) == [1]  # sample
+    def test_same_time_overlapping_haplotypes_same_group(self):
+        # Two haplotypes at t=0.5 with overlapping intervals → SAME group
+        gi = self._make_inputs([0.5, 0.5])
+        groups = compute_groups(gi.times, gi.start_positions, gi.end_positions)
+        assert len(groups) == 1
+        assert set(groups[0]) == {0, 1}
 
     def test_mixed_ordering(self):
-        # Ancestors at 0.9 and 0.4, samples at 0.4 and 0.0
-        gi = self._make_inputs([0.9, 0.4, 0.4, 0.0], [True, True, False, False])
-        groups = compute_groups(
-            gi.times, gi.is_ancestor, gi.start_positions, gi.end_positions
-        )
-        # All ancestors have default intervals [0, 100] -> overlapping -> separate groups
-        # group 0: ancestor at t=0.9
-        # group 1: ancestor at t=0.4
-        # group 2: sample at t=0.4
-        # group 3: sample at t=0.0
-        assert len(groups) == 4
-        assert list(groups[0]) == [0]
-        assert list(groups[1]) == [1]
-        assert list(groups[2]) == [2]
-        assert list(groups[3]) == [3]
+        # Haplotypes at 0.9, 0.4, 0.4, 0.0 — all default intervals [0,100]
+        gi = self._make_inputs([0.9, 0.4, 0.4, 0.0])
+        groups = compute_groups(gi.times, gi.start_positions, gi.end_positions)
+        # t=0.9: group alone; t=0.4: two overlap → same group; t=0.0: alone
+        assert len(groups) == 3
+        assert list(groups[0]) == [0]  # t=0.9
+        assert set(groups[1]) == {1, 2}  # t=0.4, overlapping → same group
+        assert list(groups[2]) == [3]  # t=0.0
 
     def test_returns_int32_arrays(self):
-        gi = self._make_inputs([0.5], [True])
-        groups = compute_groups(
-            gi.times, gi.is_ancestor, gi.start_positions, gi.end_positions
-        )
+        gi = self._make_inputs([0.5])
+        groups = compute_groups(gi.times, gi.start_positions, gi.end_positions)
         for g in groups:
             assert g.dtype == np.int32
 
     def test_empty_returns_empty(self):
-        gi = self._make_inputs([], [])
-        groups = compute_groups(
-            gi.times, gi.is_ancestor, gi.start_positions, gi.end_positions
-        )
+        gi = self._make_inputs([])
+        groups = compute_groups(gi.times, gi.start_positions, gi.end_positions)
         assert len(groups) == 0
 
     # -------------------------------------------------------------------
     # Interval-based grouping for same-time ancestors
     # -------------------------------------------------------------------
 
-    def test_two_same_time_ancestors_overlapping(self):
-        """
-        Two ancestors at time 0.5, both spanning the full range -> overlap
-        -> must be in SAME group (so they don't match against each other).
-        """
+    def test_two_same_time_overlapping(self):
+        """Two at time 0.5, full range -> overlap -> SAME group."""
         gi = self._make_inputs(
             [0.5, 0.5],
-            [True, True],
             starts=[0, 0],
             ends=[100, 100],
         )
-        groups = compute_groups(
-            gi.times, gi.is_ancestor, gi.start_positions, gi.end_positions
-        )
+        groups = compute_groups(gi.times, gi.start_positions, gi.end_positions)
         assert len(groups) == 1
         assert set(groups[0]) == {0, 1}
 
-    def test_two_same_time_ancestors_disjoint(self):
-        """
-        Two ancestors at time 0.5 with disjoint intervals -> no overlap
-        -> can share ONE group.
-        """
+    def test_two_same_time_disjoint(self):
+        """Two at time 0.5 with disjoint intervals -> one group."""
         gi = self._make_inputs(
             [0.5, 0.5],
-            [True, True],
             starts=[0, 60],
             ends=[30, 100],
         )
-        groups = compute_groups(
-            gi.times, gi.is_ancestor, gi.start_positions, gi.end_positions
-        )
+        groups = compute_groups(gi.times, gi.start_positions, gi.end_positions)
         assert len(groups) == 1
         assert set(groups[0]) == {0, 1}
 
-    def test_two_same_time_ancestors_adjacent(self):
-        """
-        Two ancestors at time 0.5, intervals touching at boundary (no overlap).
-        -> can share ONE group.
-        """
+    def test_two_same_time_adjacent(self):
+        """Two at time 0.5, touching boundary -> one group."""
         gi = self._make_inputs(
             [0.5, 0.5],
-            [True, True],
             starts=[0, 50],
             ends=[50, 100],
         )
-        groups = compute_groups(
-            gi.times, gi.is_ancestor, gi.start_positions, gi.end_positions
-        )
+        groups = compute_groups(gi.times, gi.start_positions, gi.end_positions)
         assert len(groups) == 1
         assert set(groups[0]) == {0, 1}
 
-    def test_two_same_time_ancestors_one_site_overlap(self):
-        """
-        Two ancestors at time 0.5, intervals overlapping by one unit.
-        -> SAME group (so they don't match against each other).
-        """
+    def test_two_same_time_one_site_overlap(self):
+        """Two at time 0.5, overlapping by one unit -> SAME group."""
         gi = self._make_inputs(
             [0.5, 0.5],
-            [True, True],
             starts=[0, 49],
             ends=[50, 100],
         )
-        groups = compute_groups(
-            gi.times, gi.is_ancestor, gi.start_positions, gi.end_positions
-        )
+        groups = compute_groups(gi.times, gi.start_positions, gi.end_positions)
         assert len(groups) == 1
         assert set(groups[0]) == {0, 1}
 
-    def test_three_same_time_ancestors_all_disjoint(self):
-        """Three ancestors at time 0.5, all disjoint -> one group."""
+    def test_three_same_time_all_disjoint(self):
+        """Three at time 0.5, all disjoint -> one group."""
         gi = self._make_inputs(
             [0.5, 0.5, 0.5],
-            [True, True, True],
             starts=[0, 30, 60],
             ends=[20, 50, 100],
         )
-        groups = compute_groups(
-            gi.times, gi.is_ancestor, gi.start_positions, gi.end_positions
-        )
+        groups = compute_groups(gi.times, gi.start_positions, gi.end_positions)
         assert len(groups) == 1
         assert set(groups[0]) == {0, 1, 2}
 
-    def test_three_same_time_ancestors_chain_overlap(self):
-        """Three ancestors at time 0.5 with chain overlap -> SAME group."""
+    def test_three_same_time_chain_overlap(self):
+        """Three at time 0.5 with chain overlap -> SAME group."""
         gi = self._make_inputs(
             [0.5, 0.5, 0.5],
-            [True, True, True],
             starts=[0, 25, 50],
             ends=[35, 55, 100],
         )
-        groups = compute_groups(
-            gi.times, gi.is_ancestor, gi.start_positions, gi.end_positions
-        )
+        groups = compute_groups(gi.times, gi.start_positions, gi.end_positions)
         assert len(groups) == 1
         assert set(groups[0]) == {0, 1, 2}
 
-    def test_three_same_time_ancestors_all_overlapping(self):
-        """Three ancestors at time 0.5, all pairwise overlapping -> SAME group."""
+    def test_three_same_time_all_overlapping(self):
+        """Three at time 0.5, all pairwise overlapping -> SAME group."""
         gi = self._make_inputs(
             [0.5, 0.5, 0.5],
-            [True, True, True],
             starts=[0, 10, 20],
             ends=[80, 90, 100],
         )
-        groups = compute_groups(
-            gi.times, gi.is_ancestor, gi.start_positions, gi.end_positions
-        )
+        groups = compute_groups(gi.times, gi.start_positions, gi.end_positions)
         assert len(groups) == 1
         assert set(groups[0]) == {0, 1, 2}
 
-    def test_same_time_ancestors_at_multiple_time_levels(self):
-        """Two time levels (0.8 and 0.5), each with two disjoint ancestors."""
+    def test_same_time_at_multiple_time_levels(self):
+        """Two time levels (0.8 and 0.5), each with two disjoint haplotypes."""
         gi = self._make_inputs(
             [0.8, 0.8, 0.5, 0.5],
-            [True, True, True, True],
             starts=[0, 60, 0, 60],
             ends=[30, 100, 30, 100],
         )
-        groups = compute_groups(
-            gi.times, gi.is_ancestor, gi.start_positions, gi.end_positions
-        )
+        groups = compute_groups(gi.times, gi.start_positions, gi.end_positions)
         assert len(groups) == 2  # t=0.8 group + t=0.5 group
         assert set(groups[0]) == {0, 1}  # t=0.8 disjoint
         assert set(groups[1]) == {2, 3}  # t=0.5 disjoint
 
-    def test_samples_ignore_intervals(self):
-        """Samples are always grouped together by time, regardless of intervals."""
+    def test_same_time_overlapping_full_range(self):
+        """Same-time overlapping haplotypes are in the same group."""
         gi = self._make_inputs(
             [0.0, 0.0],
-            [False, False],
             starts=[0, 0],
             ends=[100, 100],
         )
-        groups = compute_groups(
-            gi.times, gi.is_ancestor, gi.start_positions, gi.end_positions
-        )
+        groups = compute_groups(gi.times, gi.start_positions, gi.end_positions)
         assert len(groups) == 1
         assert set(groups[0]) == {0, 1}
 
-    def test_single_ancestor_no_splitting_needed(self):
-        """A single ancestor at a time level needs no splitting."""
+    def test_single_no_splitting_needed(self):
+        """A single haplotype needs no splitting."""
         gi = self._make_inputs(
             [0.5],
-            [True],
             starts=[0],
             ends=[100],
         )
-        groups = compute_groups(
-            gi.times, gi.is_ancestor, gi.start_positions, gi.end_positions
-        )
+        groups = compute_groups(gi.times, gi.start_positions, gi.end_positions)
         assert len(groups) == 1
         assert list(groups[0]) == [0]
 
@@ -340,27 +271,21 @@ class TestComputeGroups:
         """Nested intervals -> SAME group."""
         gi = self._make_inputs(
             [0.5, 0.5],
-            [True, True],
             starts=[0, 20],
             ends=[100, 60],
         )
-        groups = compute_groups(
-            gi.times, gi.is_ancestor, gi.start_positions, gi.end_positions
-        )
+        groups = compute_groups(gi.times, gi.start_positions, gi.end_positions)
         assert len(groups) == 1
         assert set(groups[0]) == {0, 1}
 
-    def test_empty_interval_ancestor(self):
+    def test_empty_interval(self):
         """Zero-length interval can't overlap -> can share a group."""
         gi = self._make_inputs(
             [0.5, 0.5],
-            [True, True],
             starts=[0, 50],
             ends=[100, 50],
         )
-        groups = compute_groups(
-            gi.times, gi.is_ancestor, gi.start_positions, gi.end_positions
-        )
+        groups = compute_groups(gi.times, gi.start_positions, gi.end_positions)
         assert len(groups) == 1
         assert set(groups[0]) == {0, 1}
 
@@ -491,7 +416,7 @@ class TestGroupAncestorsLinesweep:
             new_time,
             old_indexes,
             sort_indices,
-        ) = merge_overlapping_ancestors(
+        ) = merge_overlapping_haplotypes(
             np.array(case["start"]),
             np.array(case["end"]),
             np.array(case["time"], dtype=np.float32),
@@ -582,7 +507,7 @@ class TestGroupAncestorsLinesweep:
         ids=[case["name"] for case in grouping_fixed_test_cases],
     )
     def test_grouping_fixed_cases(self, case):
-        output = group_ancestors_by_linesweep(
+        output = group_haplotypes_by_linesweep(
             np.array(case["start"]), np.array(case["end"]), np.array(case["time"])
         )
         for group in output:
@@ -595,7 +520,7 @@ class TestGroupAncestorsLinesweep:
         start = rng.randint(0, 200, size=n)
         end = start + rng.randint(1, 100, size=n)
         time = rng.randint(0, 40, size=n)
-        output = group_ancestors_by_linesweep(start, end, time)
+        output = group_haplotypes_by_linesweep(start, end, time)
 
         group_ids = np.full(n, -1, dtype=np.int32)
         for group_id, group in output.items():
@@ -629,11 +554,17 @@ class TestGroupAncestorsLinesweep:
 def _make_cfg(sample_store, ancestor_store):
     """Build a Config suitable for collect_haplotype_metadata."""
     src = Source(path=sample_store, name="test")
+    anc_src = Source(path=ancestor_store, name="ancestors", sample_time="sample_time")
     return Config(
-        sources={"test": src},
-        ancestors=AncestorsConfig(path=ancestor_store, sources=["test"]),
+        sources={"test": src, "ancestors": anc_src},
+        ancestors=[
+            AncestorsConfig(name="ancestors", path=ancestor_store, sources=["test"])
+        ],
         match=MatchConfig(
-            sources={"test": MatchSourceConfig()},
+            sources={
+                "ancestors": MatchSourceConfig(node_flags=0, create_individuals=False),
+                "test": MatchSourceConfig(),
+            },
             output="output.trees",
         ),
     )
@@ -648,7 +579,7 @@ def _build_stores():
         ancestral_state=np.array(["A", "A"]),
         sequence_length=1000,
     )
-    anc_cfg = AncestorsConfig(path=None, sources=["test"])
+    anc_cfg = AncestorsConfig(name="ancestors", path=None, sources=["test"])
     ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
     return sample_store, ancestor_store
 
@@ -666,10 +597,8 @@ class TestCollectHaplotypeMetadata:
         assert isinstance(meta, HaplotypeMetadata)
         n = len(meta.times)
         assert meta.times.ndim == 1
-        assert meta.is_ancestor.ndim == 1
         assert meta.start_positions.ndim == 1
         assert meta.end_positions.ndim == 1
-        assert len(meta.is_ancestor) == n
         assert len(meta.source) == n
         assert len(meta.sample_id) == n
         assert len(meta.ploidy_index) == n
@@ -678,7 +607,6 @@ class TestCollectHaplotypeMetadata:
         sample_store, ancestor_store = _build_stores()
         cfg = _make_cfg(sample_store, ancestor_store)
         meta = collect_haplotype_metadata(cfg)
-        assert meta.is_ancestor[0] is True or meta.is_ancestor[0] == True  # noqa: E712
         assert meta.source[0] == "ancestors"
         # No virtual root — first entry is a real ancestor
         assert meta.sample_id[0] != "virtual_root"
@@ -687,8 +615,8 @@ class TestCollectHaplotypeMetadata:
         sample_store, ancestor_store = _build_stores()
         cfg = _make_cfg(sample_store, ancestor_store)
         meta = collect_haplotype_metadata(cfg)
-        num_anc = int(np.sum(meta.is_ancestor))
-        num_samp = len(meta.times) - num_anc
+        num_anc = sum(1 for s in meta.source if s == "ancestors")
+        num_samp = sum(1 for s in meta.source if s == "test")
         assert num_anc >= 1  # at least one real ancestor
         assert num_samp == 2  # 2 haploid samples
 
@@ -697,9 +625,8 @@ class TestCollectHaplotypeMetadata:
         cfg = _make_cfg(sample_store, ancestor_store)
         meta = collect_haplotype_metadata(cfg)
         # Sample haplotypes should have source="test"
-        sample_indices = [i for i in range(len(meta.times)) if not meta.is_ancestor[i]]
+        sample_indices = [i for i in range(len(meta.times)) if meta.source[i] == "test"]
         for i in sample_indices:
-            assert meta.source[i] == "test"
             assert meta.sample_id[i].startswith("sample_")
             assert meta.ploidy_index[i] == 0  # haploid
 
@@ -712,7 +639,7 @@ class TestCollectHaplotypeMetadata:
             ancestral_state=np.array(["A", "A"]),
             sequence_length=1000,
         )
-        anc_cfg = AncestorsConfig(path=None, sources=["test"])
+        anc_cfg = AncestorsConfig(name="ancestors", path=None, sources=["test"])
         ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
         cfg = _make_cfg(sample_store, ancestor_store)
         meta = collect_haplotype_metadata(cfg)
@@ -735,14 +662,13 @@ class TestComputeGroupsFromGrouping:
     def test_basic_grouping(self):
         groups = compute_groups(
             times=np.array([1.0, 0.5, 0.0], dtype=np.float64),
-            is_ancestor=np.array([True, True, False]),
             start_positions=np.array([0, 0, 0], dtype=np.int32),
             end_positions=np.array([100, 100, 100], dtype=np.int32),
         )
         assert len(groups) == 3
-        assert list(groups[0]) == [0]  # ancestor at t=1.0
-        assert list(groups[1]) == [1]  # ancestor at t=0.5
-        assert list(groups[2]) == [2]  # sample at t=0.0
+        assert list(groups[0]) == [0]  # t=1.0
+        assert list(groups[1]) == [1]  # t=0.5
+        assert list(groups[2]) == [2]  # t=0.0
 
 
 # ---------------------------------------------------------------------------
