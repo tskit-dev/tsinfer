@@ -14,3 +14,6 @@ using them
 
 - It's not clear why we're using kwargs.get in pipeline.match. This is an antipattern,
 avoid unless there's a very strong reason for it.
+
+- The ancestors config is asymmetric to the samples sources. We want to define *how*
+to generate the ancestors source(s) but then treat them like any other for matching.
