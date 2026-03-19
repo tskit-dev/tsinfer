@@ -348,20 +348,31 @@ def extend_ts(
     tables.sort()
     t_sort = time_.monotonic() - t0
 
+    t0 = time_.monotonic()
     tables.build_index()
-    tables.compute_mutation_parents()
+    t_index = time_.monotonic() - t0
 
+    t0 = time_.monotonic()
+    tables.compute_mutation_parents()
+    t_mut_parents = time_.monotonic() - t0
+
+    t0 = time_.monotonic()
     result_ts = tables.tree_sequence()
+    t_ts = time_.monotonic() - t0
 
     logger.info(
         "extend_ts: added %d nodes (%d total), %d edges, %d mutations, "
-        "%d individuals | sort=%.3fs total=%.3fs",
+        "%d individuals | sort=%.3fs index=%.3fs mut_parents=%.3fs "
+        "tree_sequence=%.3fs total=%.3fs",
         len(new_node_ids),
         result_ts.num_nodes,
         result_ts.num_edges,
         result_ts.num_mutations,
         result_ts.num_individuals,
         t_sort,
+        t_index,
+        t_mut_parents,
+        t_ts,
         time_.monotonic() - t_start,
     )
 
