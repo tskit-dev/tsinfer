@@ -159,9 +159,25 @@ def infer_ancestors_cmd(config, threads, force, progress, verbose):
     show_default=True,
     help="Genotype chunk cache size in MiB.",
 )
+@click.option(
+    "--group-stop",
+    type=int,
+    default=None,
+    help="Stop before this group index (0-indexed, like range()). "
+    "e.g. --group-stop 2 processes groups 0 and 1. "
+    "Requires --workdir for useful resume behavior.",
+)
 @_add_options(_runtime_options)
 def match_cmd(
-    config, workdir, keep_intermediates, cache_size, threads, force, progress, verbose
+    config,
+    workdir,
+    keep_intermediates,
+    cache_size,
+    group_stop,
+    threads,
+    force,
+    progress,
+    verbose,
 ):
     """Run the unified match loop (ancestors + samples)."""
     _setup_logging(verbose)
@@ -173,7 +189,11 @@ def match_cmd(
     _check_output(cfg.match.output, force)
     logger.info("Running match")
     ts = pipeline_match(
-        cfg, progress=progress, num_threads=threads, cache_size=cache_size
+        cfg,
+        progress=progress,
+        num_threads=threads,
+        cache_size=cache_size,
+        group_stop=group_stop,
     )
     ts.dump(str(cfg.match.output))
     logger.info("Match complete: %d nodes, %d edges", ts.num_nodes, ts.num_edges)

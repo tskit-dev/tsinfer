@@ -203,6 +203,7 @@ def match(
     progress: bool = False,
     num_threads: int = 0,
     cache_size: int = 256,
+    group_stop: int | None = None,
     **kwargs,
 ) -> tskit.TreeSequence:
     """
@@ -213,6 +214,12 @@ def match(
     sequence is extended with the results.
     """
     path_compression = kwargs.get("path_compression", cfg.match.path_compression)
+
+    # Validate group_stop
+    if group_stop is not None and group_stop < 0:
+        raise ValueError("group_stop must be non-negative")
+    if group_stop is not None and cfg.match.workdir is None:
+        logger.warning("group_stop without workdir; partial result cannot be resumed")
 
     # 1. Get ordered MatchJob list (and workdir state if applicable)
     workdir = cfg.match.workdir
@@ -289,6 +296,15 @@ def match(
             completed_haps += num_in_group
             logger.info("Group %d/%d: skipped (already completed)", gi + 1, num_groups)
             continue
+
+        # Stop before reaching group_stop (range semantics)
+        if group_stop is not None and group_idx >= group_stop:
+            logger.info(
+                "Stopping at group %d (group_stop=%d)",
+                group_idx,
+                group_stop,
+            )
+            break
 
         logger.info("Group %d/%d: %d haplotypes", gi + 1, num_groups, num_in_group)
 
