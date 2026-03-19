@@ -321,6 +321,21 @@ class TestRun:
         result = runner.invoke(main, ["run", "/nonexistent/config.toml"])
         assert result.exit_code != 0
 
+    def test_cache_size_in_help(self):
+        runner = CliRunner()
+        result = runner.invoke(main, ["run", "--help"])
+        assert "--cache-size" in result.output
+
+    def test_run_with_cache_size(self):
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sample_path = _write_sample_vcz_to_disk(tmp_dir)
+            config_path = _write_run_config(tmp_dir, sample_path)
+            result = runner.invoke(main, ["run", config_path, "--cache-size", "128"])
+            assert result.exit_code == 0, result.output
+            output_path = os.path.join(tmp_dir, "out.trees")
+            assert Path(output_path).exists()
+
 
 # ---------------------------------------------------------------------------
 # TestInferAncestors
@@ -346,6 +361,11 @@ class TestMatch:
         result = runner.invoke(main, ["match", "--help"])
         assert result.exit_code == 0
         assert "match" in result.output.lower()
+
+    def test_cache_size_in_help(self):
+        runner = CliRunner()
+        result = runner.invoke(main, ["match", "--help"])
+        assert "--cache-size" in result.output
 
 
 # ---------------------------------------------------------------------------

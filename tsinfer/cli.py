@@ -150,8 +150,16 @@ def infer_ancestors_cmd(config, threads, force, progress, verbose):
     is_flag=True,
     help="Keep all intermediate .trees files in workdir.",
 )
+@click.option(
+    "--cache-size",
+    default=256,
+    show_default=True,
+    help="Genotype chunk cache size in MiB.",
+)
 @_add_options(_runtime_options)
-def match_cmd(config, workdir, keep_intermediates, threads, force, progress, verbose):
+def match_cmd(
+    config, workdir, keep_intermediates, cache_size, threads, force, progress, verbose
+):
     """Run the unified match loop (ancestors + samples)."""
     _setup_logging(verbose)
     cfg = Config.from_toml(config)
@@ -161,7 +169,9 @@ def match_cmd(config, workdir, keep_intermediates, threads, force, progress, ver
         cfg.match.keep_intermediates = True
     _check_output(cfg.match.output, force)
     logger.info("Running match")
-    ts = pipeline_match(cfg, progress=progress, num_threads=threads)
+    ts = pipeline_match(
+        cfg, progress=progress, num_threads=threads, cache_size=cache_size
+    )
     ts.dump(str(cfg.match.output))
     logger.info("Match complete: %d nodes, %d edges", ts.num_nodes, ts.num_edges)
 
@@ -191,14 +201,20 @@ def post_process_cmd(config, input_ts, threads, force, progress, verbose):
 
 @main.command("run")
 @_config_arg
+@click.option(
+    "--cache-size",
+    default=256,
+    show_default=True,
+    help="Genotype chunk cache size in MiB.",
+)
 @_add_options(_runtime_options)
-def run_cmd(config, threads, force, progress, verbose):
+def run_cmd(config, cache_size, threads, force, progress, verbose):
     """Run the full pipeline: infer-ancestors, match, post-process."""
     _setup_logging(verbose)
     cfg = Config.from_toml(config)
     _check_output(cfg.match.output, force)
     logger.info("Running full pipeline")
-    ts = pipeline_run(cfg, progress=progress, num_threads=threads)
+    ts = pipeline_run(cfg, progress=progress, num_threads=threads, cache_size=cache_size)
     ts.dump(str(cfg.match.output))
     logger.info(
         "Pipeline complete: %d nodes, %d edges, %d sites",

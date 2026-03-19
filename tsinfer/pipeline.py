@@ -202,6 +202,7 @@ def match(
     reference_ts: tskit.TreeSequence | None = None,
     progress: bool = False,
     num_threads: int = 0,
+    cache_size: int = 256,
     **kwargs,
 ) -> tskit.TreeSequence:
     """
@@ -240,7 +241,11 @@ def match(
     # 3. Create lazy reader
     ancestral_alleles = site_alleles[:, 0]
     reader = vcz_mod.HaplotypeReader(
-        cfg.ancestors.path, cfg.sources, positions, ancestral_alleles
+        cfg.ancestors.path,
+        cfg.sources,
+        positions,
+        ancestral_alleles,
+        cache_size_mb=cache_size,
     )
 
     # 4. Build initial root TS (or resume from workdir checkpoint)
@@ -464,6 +469,7 @@ def run(
     cfg: Config,
     progress: bool = False,
     num_threads: int = 0,
+    cache_size: int = 256,
     **kwargs,
 ) -> tskit.TreeSequence:
     """
@@ -484,7 +490,13 @@ def run(
     cfg.ancestors.path = ancestor_store
 
     try:
-        ts = match(cfg, progress=progress, num_threads=num_threads, **kwargs)
+        ts = match(
+            cfg,
+            progress=progress,
+            num_threads=num_threads,
+            cache_size=cache_size,
+            **kwargs,
+        )
         ts = post_process(ts, cfg, **kwargs)
     finally:
         cfg.ancestors.path = original_path
