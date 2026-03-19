@@ -142,6 +142,8 @@ def make_root_ts(
     positions: np.ndarray,  # (num_sites,) int32
     sequence_intervals: np.ndarray,  # (n_intervals, 2) int32
     max_time: float = 0.0,
+    individuals: list[dict] | None = None,
+    populations: list[dict] | None = None,
 ) -> tskit.TreeSequence:
     """
     Build the root tree sequence that starts the match loop.
@@ -159,6 +161,12 @@ def make_root_ts(
     a string lookup table.
 
     Stores *sequence_intervals* in the tree sequence top-level metadata.
+
+    If *populations* is provided, sets a JSON metadata schema on the
+    populations table and adds one row per dict.
+
+    If *individuals* is provided, adds one row per dict to the individuals
+    table (which already has a JSON metadata schema).
     """
     virtual_root_time = max_time + 1
     ultimate_root_time = max_time + 2
@@ -173,6 +181,18 @@ def make_root_ts(
 
     tables.nodes.metadata_schema = tskit.MetadataSchema({"codec": "json"})
     tables.individuals.metadata_schema = tskit.MetadataSchema({"codec": "json"})
+
+    # Pre-create populations if provided
+    if populations is not None:
+        tables.populations.metadata_schema = tskit.MetadataSchema({"codec": "json"})
+        for pop_md in populations:
+            tables.populations.add_row(metadata=pop_md)
+
+    # Pre-create individuals if provided
+    if individuals is not None:
+        for ind_md in individuals:
+            tables.individuals.add_row(metadata=ind_md)
+
     # Node 0: ultimate root
     tables.nodes.add_row(time=ultimate_root_time, flags=0, metadata={})
     # Node 1: virtual root
@@ -324,10 +344,10 @@ def extend_ts(
     """
     Extend ts with the match results for one group.
 
-    Adds nodes, edges, mutations, and individuals directly via the tskit
-    Tables API — no TSB roundtrip.  When ``job.create_individuals`` is True,
-    nodes are grouped by ``(source, sample_id)`` into tskit individuals.
-    Within each individual, nodes are ordered by ``haplotype_index``.
+    Adds nodes, edges, and mutations directly via the tskit Tables API — no
+    TSB roundtrip.  When ``job.individual_id`` is set, the node is assigned
+    to the pre-existing individual row; when ``job.population_id`` is set,
+    the node is assigned to the pre-existing population row.
 
     Mutation derived states are stored as integer-string allele codes
     ("0", "1", "2", …) matching the codes produced by ``_AlleleMap``.
@@ -354,7 +374,11 @@ def extend_ts(
             "ploidy_index": job.ploidy_index,
         }
         node_id = tables.nodes.add_row(
-            time=job.time, flags=job.node_flags, metadata=node_meta
+            time=job.time,
+            flags=job.node_flags,
+            metadata=node_meta,
+            individual=job.individual_id if job.individual_id is not None else -1,
+            population=job.population_id if job.population_id is not None else -1,
         )
         new_node_ids.append(node_id)
 
@@ -371,18 +395,6 @@ def extend_ts(
                 derived_state=str(mut.derived_state),
                 parent=-1,
             )
-
-    # Build individuals: group by (source, sample_id), with individual metadata
-    ind_key_to_id: dict[tuple[str, str], int] = {}
-    for i, (job, _result) in enumerate(paired_results):
-        if job.create_individuals:
-            key = (job.source, job.sample_id)
-            if key not in ind_key_to_id:
-                ind_meta = {"source": job.source, "sample_id": job.sample_id}
-                ind_key_to_id[key] = tables.individuals.add_row(metadata=ind_meta)
-            nid = new_node_ids[i]
-            row = tables.nodes[nid]
-            tables.nodes[nid] = row.replace(individual=ind_key_to_id[key])
 
     t0 = time_.monotonic()
     tables.sort()
