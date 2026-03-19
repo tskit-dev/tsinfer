@@ -74,8 +74,9 @@ path = "{ancestors_path}"
 sources = ["test"]
 
 [match]
-sources = ["test"]
 output = "{output_path}"
+
+[match.sources.test]
 """
     config_path = os.path.join(tmp_dir, "config.toml")
     with open(config_path, "w") as f:
@@ -98,8 +99,9 @@ path = "{ancestors_path}"
 sources = ["test"]
 
 [match]
-sources = ["test"]
 output = "{output_path}"
+
+[match.sources.test]
 """
     config_path = os.path.join(tmp_dir, "config.toml")
     with open(config_path, "w") as f:
@@ -180,8 +182,9 @@ path = "/nonexistent/ancestors.vcz"
 sources = ["test"]
 
 [match]
-sources = ["test"]
 output = "out.trees"
+
+[match.sources.test]
 """
             config_path = os.path.join(tmp_dir, "config.toml")
             with open(config_path, "w") as f:
@@ -231,8 +234,9 @@ path = "{anc_path}"
 sources = ["test"]
 
 [match]
-sources = ["test"]
 output = "{out_path}"
+
+[match.sources.test]
 """
             config_path = os.path.join(tmp_dir, "config.toml")
             with open(config_path, "w") as f:
@@ -260,8 +264,9 @@ path = "{anc_path}"
 sources = ["nonexistent"]
 
 [match]
-sources = ["test"]
 output = "{out_path}"
+
+[match.sources.test]
 """
             config_path = os.path.join(tmp_dir, "config.toml")
             with open(config_path, "w") as f:

@@ -35,6 +35,7 @@ from tsinfer.config import (
     Config,
     IndividualMetadataConfig,
     MatchConfig,
+    MatchSourceConfig,
     PostProcessConfig,
     Source,
 )
@@ -74,7 +75,7 @@ def _make_config(sample_store, ancestor_store):
         sources={"test": src},
         ancestors=AncestorsConfig(path=ancestor_store, sources=["test"]),
         match=MatchConfig(
-            sources=["test"],
+            sources={"test": MatchSourceConfig()},
             output="output.trees",
         ),
     )
@@ -87,7 +88,7 @@ def _make_config_for_run(sample_store):
         sources={"test": src},
         ancestors=AncestorsConfig(path=None, sources=["test"]),
         match=MatchConfig(
-            sources=["test"],
+            sources={"test": MatchSourceConfig()},
             output="output.trees",
         ),
     )
@@ -172,7 +173,7 @@ class TestPostProcess:
             sources={"test": Source(path=None, name="test")},
             ancestors=AncestorsConfig(path=None, sources=["test"]),
             match=MatchConfig(
-                sources=["test"],
+                sources={"test": MatchSourceConfig()},
                 output="out.trees",
             ),
             post_process=PostProcessConfig(split_ultimate=False, erase_flanks=False),
@@ -188,7 +189,7 @@ class TestPostProcess:
             sources={"test": Source(path=None, name="test")},
             ancestors=AncestorsConfig(path=None, sources=["test"]),
             match=MatchConfig(
-                sources=["test"],
+                sources={"test": MatchSourceConfig()},
                 output="out.trees",
             ),
             post_process=None,
@@ -203,7 +204,7 @@ class TestPostProcess:
             sources={"test": Source(path=None, name="test")},
             ancestors=AncestorsConfig(path=None, sources=["test"]),
             match=MatchConfig(
-                sources=["test"],
+                sources={"test": MatchSourceConfig()},
                 output="out.trees",
             ),
             post_process=PostProcessConfig(split_ultimate=False, erase_flanks=True),
@@ -242,7 +243,7 @@ class TestRun:
             sources={"test": src},
             ancestors=AncestorsConfig(path=None, sources=["test"]),
             match=MatchConfig(
-                sources=["test"],
+                sources={"test": MatchSourceConfig()},
                 output="output.trees",
             ),
             post_process=PostProcessConfig(split_ultimate=False, erase_flanks=True),
@@ -351,7 +352,7 @@ class TestIndividualMetadata:
             sources={"test": src},
             ancestors=AncestorsConfig(path=None, sources=["test"]),
             match=MatchConfig(
-                sources=["test"],
+                sources={"test": MatchSourceConfig()},
                 output="output.trees",
             ),
             individual_metadata=IndividualMetadataConfig(
@@ -379,7 +380,7 @@ class TestIndividualMetadata:
             sources={"test": src},
             ancestors=AncestorsConfig(path=None, sources=["test"]),
             match=MatchConfig(
-                sources=["test"],
+                sources={"test": MatchSourceConfig()},
                 output="output.trees",
             ),
             individual_metadata=IndividualMetadataConfig(
@@ -535,6 +536,8 @@ class TestComputeGroupsJson:
             "start_position",
             "end_position",
             "group",
+            "node_flags",
+            "create_individuals",
         }
         for rec in records:
             assert set(rec.keys()) == expected_keys
@@ -654,7 +657,7 @@ class TestWorkdir:
                 sources={"test": Source(path="dummy", name="test")},
                 ancestors=AncestorsConfig(path="dummy", sources=["test"]),
                 match=MatchConfig(
-                    sources=["test"],
+                    sources={"test": MatchSourceConfig()},
                     output="out.trees",
                     keep_intermediates=True,
                 ),

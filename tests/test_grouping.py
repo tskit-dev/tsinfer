@@ -32,7 +32,13 @@ import pytest
 from helpers import make_sample_vcz
 
 from tsinfer.ancestors import infer_ancestors
-from tsinfer.config import AncestorsConfig, Config, MatchConfig, Source
+from tsinfer.config import (
+    AncestorsConfig,
+    Config,
+    MatchConfig,
+    MatchSourceConfig,
+    Source,
+)
 from tsinfer.grouping import (
     HaplotypeMetadata,
     MatchJob,
@@ -627,7 +633,7 @@ def _make_cfg(sample_store, ancestor_store):
         sources={"test": src},
         ancestors=AncestorsConfig(path=ancestor_store, sources=["test"]),
         match=MatchConfig(
-            sources=["test"],
+            sources={"test": MatchSourceConfig()},
             output="output.trees",
         ),
     )
@@ -811,6 +817,8 @@ class TestComputeGroupsJsonFromGrouping:
             "start_position",
             "end_position",
             "group",
+            "node_flags",
+            "create_individuals",
         }
         for rec in records:
             assert set(rec.keys()) == expected_keys

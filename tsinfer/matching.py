@@ -421,6 +421,7 @@ def extend_ts(
     results: list[MatchResult],
     node_metadata: list[dict],  # provenance metadata per haplotype
     create_individuals: np.ndarray,  # (n_haplotypes,) bool
+    node_flags: np.ndarray | None = None,  # (n_haplotypes,) uint32
     ploidy: int = 1,
     path_compression: bool = True,
 ) -> tskit.TreeSequence:
@@ -449,8 +450,9 @@ def extend_ts(
 
     t0 = time_.monotonic()
     new_node_ids = []
-    for time, result in zip(node_times, results):
-        node_id = tsb.add_node(float(time))
+    for i, (time, result) in enumerate(zip(node_times, results)):
+        flags = int(node_flags[i]) if node_flags is not None else 1
+        node_id = tsb.add_node(float(time), flags=flags)
         new_node_ids.append(node_id)
 
         if len(result.path) > 0:

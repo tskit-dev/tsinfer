@@ -44,6 +44,7 @@ from tsinfer.config import (
     AncestorsConfig,
     Config,
     MatchConfig,
+    MatchSourceConfig,
     Source,
 )
 from tsinfer.pipeline import match
@@ -277,7 +278,7 @@ def _make_config(
         sources={"test": src},
         ancestors=AncestorsConfig(path=ancestor_store, sources=["test"]),
         match=MatchConfig(
-            sources=["test"],
+            sources={"test": MatchSourceConfig()},
             output="output.trees",
             path_compression=path_compression,
         ),
@@ -366,6 +367,18 @@ class TestPerfectInference:
         cfg = _make_config(sample_vcz, ancestor_vcz)
         inferred_ts = match(cfg)
         assert_edges_equal(ts, inferred_ts)
+        # Verify node flags: ancestor nodes have flags=0, sample nodes flags=1
+        for node in inferred_ts.nodes():
+            md = node.metadata
+            if md:
+                if md.get("source") == "ancestors":
+                    assert node.flags == 0, (
+                        f"Ancestor node {node.id} has flags={node.flags}"
+                    )
+                else:
+                    assert node.flags == tskit.NODE_IS_SAMPLE, (
+                        f"Sample node {node.id} has flags={node.flags}"
+                    )
 
     def test_single_tree(self):
         ts = tskit.load(DATA_DIR / "single_tree.trees")
