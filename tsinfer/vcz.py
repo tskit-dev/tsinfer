@@ -1238,6 +1238,22 @@ class ChunkCache:
         if event is not None:
             event.set()
 
+    def evict_for(self, nbytes: int) -> None:
+        """Pre-evict LRU entries to make room for an upcoming insert."""
+        evicted_info = []
+        with self._lock:
+            while self._cache and self._current_bytes + nbytes > self._max_bytes:
+                evict_key, evicted = self._cache.popitem(last=False)
+                self._current_bytes -= evicted.nbytes
+                evicted_info.append((evict_key, evicted.nbytes))
+        for ek, eb in evicted_info:
+            logger.info(
+                "Chunk cache evict: source=%s chunk=%d freed=%.1f MiB",
+                ek[0],
+                ek[1],
+                eb / (1024 * 1024),
+            )
+
     @property
     def total_bytes(self) -> int:
         """Current memory usage of cached arrays in bytes."""
@@ -1542,6 +1558,14 @@ class VCZHaplotypeReader:
         data = self._cache.get_or_wait(key)
         if data is not None:
             return data
+        # Pre-evict so peak memory stays within the cache limit
+        sc_start = chunk_idx * self._sample_chunk_size
+        chunk_samples = min(
+            self._sample_chunk_size,
+            self._num_store_samples - sc_start,
+        )
+        estimated_bytes = self._num_selected * chunk_samples * self._ploidy
+        self._cache.evict_for(estimated_bytes)
         # We are the loader
         result = None
         try:
