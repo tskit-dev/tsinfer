@@ -1215,6 +1215,47 @@ class ChunkCache:
         return self._current_bytes
 
 
+class _AlleleEncoder:
+    """Assigns consistent integer codes to alleles across sources.
+
+    Thread-safe. Code 0 is always the ancestral allele.
+    """
+
+    def __init__(self, ancestral_alleles: np.ndarray):
+        self._num_sites = len(ancestral_alleles)
+        # _allele_table[i] = [ancestral_allele, derived1, derived2, ...]
+        self._allele_table = [[str(a)] for a in ancestral_alleles]
+        self._lock = threading.Lock()
+
+    def encode(self, ref_site_idx: int, allele_string: str) -> int:
+        """Return code for allele_string at site. Assigns new code if first seen."""
+        table = self._allele_table[ref_site_idx]
+        # Fast path: check without lock (list is append-only)
+        try:
+            return table.index(allele_string)
+        except ValueError:
+            pass
+        with self._lock:
+            try:
+                return table.index(allele_string)
+            except ValueError:
+                table.append(allele_string)
+                return len(table) - 1
+
+    def num_alleles(self, ref_site_idx: int) -> int:
+        return len(self._allele_table[ref_site_idx])
+
+    def site_alleles_array(self) -> np.ndarray:
+        """Return (num_sites, max_alleles) object array for extend_ts."""
+        max_a = max(len(t) for t in self._allele_table) if self._allele_table else 2
+        max_a = max(max_a, 2)
+        result = np.full((self._num_sites, max_a), "", dtype=object)
+        for i, table in enumerate(self._allele_table):
+            for j, a in enumerate(table):
+                result[i, j] = a
+        return result
+
+
 class VCZHaplotypeReader:
     """
     Reads and polarises haplotypes from a single VCZ store.
@@ -1251,6 +1292,7 @@ class VCZHaplotypeReader:
         source_name: str,
         cache: ChunkCache,
         samples_selection: np.ndarray | None = None,
+        _allele_encoder: _AlleleEncoder | None = None,
     ):
         self._store = open_store(store)
         self._ref_positions = np.asarray(positions, dtype=np.int32)
@@ -1258,6 +1300,7 @@ class VCZHaplotypeReader:
         self._samples_selection = samples_selection
         self._source_name = source_name
         self._cache = cache
+        self._allele_encoder = _allele_encoder
 
         # Build sample_id → column mapping
         raw_ids = self._store["sample_id"][:]
@@ -1295,7 +1338,6 @@ class VCZHaplotypeReader:
         # Build ancestral allele index for polarisation using the
         # authoritative ancestral alleles from the ancestor store, not
         # the local store's variant_ancestral_allele field.
-        src_alleles = np.asarray(self._store["variant_allele"][:])
         num_src_sites = len(src_positions)
 
         # Map ref-site ancestral alleles to a position-keyed lookup
@@ -1304,27 +1346,59 @@ class VCZHaplotypeReader:
             for i, p in enumerate(self._ref_positions.tolist())
         }
 
+        # Source allele strings (for encoding during load)
+        self._src_alleles = np.asarray(self._store["variant_allele"][:])
+
         self._ancestral_allele_index = np.full(num_src_sites, -1, dtype=np.int8)
         for i in range(num_src_sites):
             pos = int(src_positions[i])
             anc_str = anc_by_pos.get(pos)
             if anc_str is None:
                 continue
-            for j, a in enumerate(src_alleles[i].tolist()):
+            for j, a in enumerate(self._src_alleles[i].tolist()):
                 if a and str(a) == anc_str:
                     self._ancestral_allele_index[i] = j
                     break
 
+        # Variant selection: which source variants match a reference position
+        self._variant_select = np.zeros(num_src_sites, dtype=bool)
+        if len(self._position_map) > 0:
+            self._variant_select[self._position_map[:, 1]] = True
+        self._num_selected = int(np.count_nonzero(self._variant_select))
+
+        # Map: source variant index → row in cached chunk (-1 if not selected)
+        self._src_var_to_selected_row = np.full(num_src_sites, -1, dtype=np.int32)
+        self._src_var_to_selected_row[self._variant_select] = np.arange(
+            self._num_selected, dtype=np.int32
+        )
+
+        # Map: selected row index → ref site index
+        # In source-variant order (ascending src_site_idx)
+        if len(self._position_map) > 0:
+            order = np.argsort(self._position_map[:, 1])
+            self._selected_to_ref_idx = self._position_map[order, 0]
+        else:
+            self._selected_to_ref_idx = np.empty(0, dtype=np.int32)
+
+        # Zarr variant chunk size for chunk-wise iteration
+        self._variant_chunk_size = (
+            call_gt.chunks[0]
+            if hasattr(call_gt, "chunks") and call_gt.chunks is not None
+            else call_gt.shape[0]
+        )
+
     @property
     def chunk_bytes(self) -> int:
-        """Byte size of one sample chunk from this source's zarr store."""
-        gt = self._store["call_genotype"]
-        num_sites = gt.shape[0]
-        ploidy = gt.shape[2]
-        return num_sites * self._sample_chunk_size * ploidy * gt.dtype.itemsize
+        """Byte size of one cached sample chunk (selected variants only)."""
+        return self._num_selected * self._sample_chunk_size * self._ploidy * 1
 
     def _load_sample_chunk(self, chunk_idx: int) -> np.ndarray:
-        """Load a sample chunk from the zarr store, return raw int8 array.
+        """Load a sample chunk, selecting only matched variants.
+
+        On cache miss, iterates over zarr variant chunks, skipping chunks
+        with no selected variants. When ``_allele_encoder`` is set, allele
+        encoding is performed at load time. Returns array of shape
+        ``(num_selected, chunk_samples, ploidy)``.
 
         Thread-safe via the shared ``ChunkCache``.
         The returned numpy array remains valid even if later evicted from
@@ -1335,19 +1409,63 @@ class VCZHaplotypeReader:
         if cached is not None:
             return cached
 
-        # Load outside the cache lock — zarr I/O can proceed concurrently
         col_start = chunk_idx * self._sample_chunk_size
-        col_end = min(
-            col_start + self._sample_chunk_size,
-            self._num_store_samples,
-        )
-        chunk_data = np.asarray(
-            self._store["call_genotype"][:, col_start:col_end, :],
-            dtype=np.int8,
+        col_end = min(col_start + self._sample_chunk_size, self._num_store_samples)
+        chunk_samples = col_end - col_start
+
+        # Allocate output for selected variants only
+        result = np.full(
+            (self._num_selected, chunk_samples, self._ploidy), -1, dtype=np.int8
         )
 
-        self._cache.put(key, chunk_data)
-        return chunk_data
+        call_gt = self._store["call_genotype"]
+        num_src_sites = call_gt.shape[0]
+        vc_size = self._variant_chunk_size
+
+        for vc_start in range(0, num_src_sites, vc_size):
+            vc_end = min(vc_start + vc_size, num_src_sites)
+            local_select = self._variant_select[vc_start:vc_end]
+            if not np.any(local_select):
+                continue
+
+            # Load one zarr variant chunk
+            vc_data = np.asarray(
+                call_gt[vc_start:vc_end, col_start:col_end, :], dtype=np.int8
+            )
+
+            local_indices = np.where(local_select)[0]
+            for li in local_indices:
+                src_var_idx = vc_start + li
+                out_row = self._src_var_to_selected_row[src_var_idx]
+                raw = vc_data[li, :, :]  # (chunk_samples, ploidy)
+
+                if self._allele_encoder is not None:
+                    ref_site_idx = int(self._selected_to_ref_idx[out_row])
+                    site_alleles = self._src_alleles[src_var_idx]
+                    allele_list = [
+                        str(a)
+                        for a in (
+                            site_alleles.tolist()
+                            if hasattr(site_alleles, "tolist")
+                            else site_alleles
+                        )
+                    ]
+                    max_code = len(allele_list)
+                    lookup = np.full(max_code, np.int8(-1), dtype=np.int8)
+                    for j, a_str in enumerate(allele_list):
+                        if a_str:
+                            lookup[j] = self._allele_encoder.encode(ref_site_idx, a_str)
+                    result[out_row, :chunk_samples, :] = np.where(
+                        raw < 0,
+                        np.int8(-1),
+                        lookup[np.clip(raw, 0, max_code - 1)],
+                    )
+                else:
+                    # Fallback: store raw genotypes (standalone use)
+                    result[out_row, :chunk_samples, :] = raw
+
+        self._cache.put(key, result)
+        return result
 
     def read_haplotype(self, sample_id: str, ploidy_index: int = 0) -> np.ndarray:
         """
@@ -1368,30 +1486,30 @@ class VCZHaplotypeReader:
         chunk_idx = store_col // self._sample_chunk_size
         chunk_offset = store_col % self._sample_chunk_size
 
-        # Read from cache
+        # Read from cache — shape (num_selected, chunk_samples, ploidy)
         chunk_data = self._load_sample_chunk(chunk_idx)
-        raw_gt = chunk_data[:, chunk_offset, ploidy_index]
+        encoded_col = chunk_data[:, chunk_offset, ploidy_index]  # (num_selected,)
 
-        # Align to reference positions and polarise
         hap = np.full(self._num_ref_sites, np.int8(-1), dtype=np.int8)
-
-        if len(self._position_map) == 0:
-            return hap
-
-        anc_idxs = self._position_map[:, 0]
-        src_idxs = self._position_map[:, 1]
-        raw = raw_gt[src_idxs]
-        ai = self._ancestral_allele_index[src_idxs]
-        valid = ai >= 0
-        raw_v = raw[valid]
-        ai_v = ai[valid]
-        anc_v = anc_idxs[valid]
-        encoded = np.where(
-            raw_v < 0,
-            np.int8(-1),
-            np.where(raw_v == ai_v, np.int8(0), np.int8(1)),
-        )
-        hap[anc_v] = encoded
+        if self._num_selected > 0:
+            if self._allele_encoder is not None:
+                # Already encoded at load time
+                hap[self._selected_to_ref_idx] = encoded_col
+            else:
+                # Fallback: polarise from raw genotypes
+                src_idxs = self._position_map[:, 1]
+                anc_idxs = self._position_map[:, 0]
+                selected_rows = self._src_var_to_selected_row[src_idxs]
+                raw = encoded_col[selected_rows]
+                ai = self._ancestral_allele_index[src_idxs]
+                valid = ai >= 0
+                raw_v, ai_v, anc_v = raw[valid], ai[valid], anc_idxs[valid]
+                encoded = np.where(
+                    raw_v < 0,
+                    np.int8(-1),
+                    np.where(raw_v == ai_v, np.int8(0), np.int8(1)),
+                )
+                hap[anc_v] = encoded
         return hap
 
 
@@ -1426,6 +1544,7 @@ class HaplotypeReader:
         self._ancestral_alleles = ancestral_alleles
         self._sources = sources
         max_bytes = cache_size_mb * 1024 * 1024
+        self._allele_encoder = _AlleleEncoder(ancestral_alleles)
 
         # Eagerly create all source readers so we can validate sizes
         self._readers: dict[str, VCZHaplotypeReader] = {}
@@ -1439,6 +1558,7 @@ class HaplotypeReader:
                 source_name=name,
                 cache=None,  # placeholder, set below
                 samples_selection=samples_selection,
+                _allele_encoder=self._allele_encoder,
             )
             self._readers[name] = reader
 
@@ -1502,6 +1622,7 @@ class HaplotypeReader:
                 source_name=source_name,
                 cache=self._cache,
                 samples_selection=samples_selection,
+                _allele_encoder=self._allele_encoder,
             )
             self._readers[source_name] = reader
             return reader
@@ -1515,6 +1636,15 @@ class HaplotypeReader:
         """
         reader = self._get_reader(job.source)
         return reader.read_haplotype(job.sample_id, job.ploidy_index)
+
+    def get_site_alleles(self) -> np.ndarray:
+        """Return (num_sites, max_alleles) object array of allele strings.
+
+        Allele codes are consistent with the encoding used by
+        ``read_haplotype``: index 0 is always the ancestral allele,
+        index 1 is the first derived allele seen across all sources, etc.
+        """
+        return self._allele_encoder.site_alleles_array()
 
 
 def write_empty_ancestor_vcz(
