@@ -288,14 +288,14 @@ def compute_groups_json(cfg: Config) -> str:
 
 
 def _load_match_jobs(path) -> list[MatchJob]:
-    """Read a match-work JSON file and return a list of MatchJob objects."""
+    """Read a match-jobs JSON file and return a list of MatchJob objects."""
     records = json.loads(Path(path).read_text())
     return [MatchJob(**rec) for rec in records]
 
 
 def _setup_workdir(workdir, cfg):
     """
-    Set up workdir: create dir, write or load match-work.json.
+    Set up workdir: create dir, write or load match-jobs.json.
 
     Returns (jobs, individual_metadata_rows, population_metadata_rows,
              last_completed_group_idx, starting_ts_or_None).
@@ -303,7 +303,7 @@ def _setup_workdir(workdir, cfg):
 
     workdir = Path(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
-    groups_path = workdir / "match-work.json"
+    groups_path = workdir / "match-jobs.json"
 
     if groups_path.exists():
         logger.info("Loading existing groups from %s", groups_path)

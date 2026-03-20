@@ -253,10 +253,10 @@ def run_cmd(config, cache_size, threads, force, progress, verbose):
 # ---------------------------------------------------------------------------
 
 
-@main.command("show-match-work")
+@main.command("show-match-jobs")
 @click.argument("json_file", metavar="JSON_FILE", type=click.Path(exists=True))
-def show_match_work_cmd(json_file):
-    """Show a histogram of match-work group sizes."""
+def show_match_jobs_cmd(json_file):
+    """Show a histogram of match-jobs group sizes."""
     records = json.loads(Path(json_file).read_text())
 
     group_counts: dict[int, int] = {}

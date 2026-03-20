@@ -412,7 +412,7 @@ class TestPostProcess:
 
 class TestMatchWorkdirCLI:
     def test_match_with_workdir(self):
-        """match --workdir creates match-work.json and checkpoint files."""
+        """match --workdir creates match-jobs.json and checkpoint files."""
         runner = CliRunner()
         with tempfile.TemporaryDirectory() as tmp_dir:
             sample_path = _write_sample_vcz_to_disk(tmp_dir)
@@ -424,7 +424,7 @@ class TestMatchWorkdirCLI:
             assert result.exit_code == 0, result.output
             output_path = os.path.join(tmp_dir, "out.trees")
             assert Path(output_path).exists()
-            assert Path(workdir, "match-work.json").exists()
+            assert Path(workdir, "match-jobs.json").exists()
 
     def test_match_with_keep_intermediates(self):
         """match --workdir --keep-intermediates retains all .trees files."""
@@ -450,9 +450,9 @@ class TestMatchWorkdirCLI:
             assert len(trees_files) >= 1
 
 
-class TestShowMatchWork:
-    def test_show_match_work(self):
-        """show-match-work prints a histogram from a match-work.json file."""
+class TestShowMatchJobs:
+    def test_show_match_jobs(self):
+        """show-match-jobs prints a histogram from a match-jobs.json file."""
         runner = CliRunner()
         with tempfile.TemporaryDirectory() as tmp_dir:
             sample_path = _write_sample_vcz_to_disk(tmp_dir)
@@ -462,8 +462,8 @@ class TestShowMatchWork:
             workdir = os.path.join(tmp_dir, "workdir")
             result = runner.invoke(main, ["match", config_path, "--workdir", workdir])
             assert result.exit_code == 0, result.output
-            json_path = os.path.join(workdir, "match-work.json")
-            result = runner.invoke(main, ["show-match-work", json_path])
+            json_path = os.path.join(workdir, "match-jobs.json")
+            result = runner.invoke(main, ["show-match-jobs", json_path])
             assert result.exit_code == 0, result.output
             assert "Group" in result.output
             assert "#" in result.output
