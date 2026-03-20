@@ -83,8 +83,7 @@ def _build_jobs_with_metadata(cfg):
         ploidy = gt_shape[2]
 
         samples_selection = vcz_mod.resolve_samples_selection(store, source.samples)
-        if samples_selection is not None:
-            num_samples = len(samples_selection)
+        num_samples = len(samples_selection)
 
         num_hap = num_samples * ploidy
         logger.info(
@@ -626,7 +625,6 @@ def augment_sites(
     view = vcz_mod.MultiSourceView(
         source_configs,
         cfg.ancestral_state,
-        require_ancestral_match=False,
     )
 
     # --- Post-filter positions ---
@@ -638,14 +636,17 @@ def augment_sites(
         dtype=bool,
     )
     filtered_positions = view.positions[mask]
-    filtered_alleles = view.alleles[mask]
-    filtered_source_has_site = view.source_has_site[mask]
 
-    n_sites = len(filtered_positions)
-    if n_sites == 0:
+    # Prepare the view for the filtered subset
+    if len(filtered_positions) == 0:
         logger.info("augment_sites: no new sites to add")
         return ts
 
+    view.prepare(filtered_positions)
+    filtered_alleles = view.alleles
+    filtered_source_has_site = view.source_has_site[mask]
+
+    n_sites = len(filtered_positions)
     logger.info("augment_sites: %d new sites to place", n_sites)
     n_sources = view.num_sources
 

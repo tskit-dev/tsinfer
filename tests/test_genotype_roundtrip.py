@@ -73,20 +73,28 @@ def _run_pipeline(sample_store):
     return run(cfg)
 
 
-def _run_pipeline_with_augment(sample_store, augment_store=None):
+def _run_pipeline_with_augment(sample_store, augment_store=None, ann_store=None):
     """Run pipeline with augment_sites to recover non-inference sites.
 
     If *augment_store* is None, the same *sample_store* is reused as the
     augment source — augment_sites will add back any positions that the
     inference pipeline dropped (singletons, multi-allelic, fixed, etc.).
+
+    If *ann_store* is None, *sample_store* is used as the annotation store.
     """
     if augment_store is None:
         augment_store = sample_store
+    if ann_store is None:
+        ann_store = sample_store
     src = Source(path=sample_store, name="test")
     aug_src = Source(path=augment_store, name="augment")
     anc_src = Source(path=None, name="ancestors", sample_time="sample_time")
     cfg = Config(
-        sources={"test": src, "augment": aug_src, "ancestors": anc_src},
+        sources={
+            "test": src,
+            "augment": aug_src,
+            "ancestors": anc_src,
+        },
         ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
         match=MatchConfig(
             sources={
@@ -97,7 +105,7 @@ def _run_pipeline_with_augment(sample_store, augment_store=None):
         ),
         post_process=PostProcessConfig(),
         augment_sites=AugmentSitesConfig(sources=["augment"]),
-        ancestral_state=_anc_state(sample_store),
+        ancestral_state=_anc_state(ann_store),
     )
     return run(cfg)
 
@@ -547,7 +555,17 @@ class TestAugmentedRoundtrip:
             ancestral_state=np.array(["A", "C", "A"]),
             sequence_length=1000,
         )
-        ts = _run_pipeline_with_augment(main_store, augment_store=aug_store)
+        # Combined annotation store covering all positions
+        ann_store = make_sample_vcz(
+            genotypes=np.zeros((4, 1, 1), dtype=np.int8),
+            positions=np.array([100, 200, 300, 400], dtype=np.int32),
+            alleles=np.array([["A", "T"], ["A", "T"], ["A", "G"], ["C", "G"]]),
+            ancestral_state=np.array(["A", "A", "A", "C"]),
+            sequence_length=1000,
+        )
+        ts = _run_pipeline_with_augment(
+            main_store, augment_store=aug_store, ann_store=ann_store
+        )
 
         output_positions = set(ts.sites_position)
         assert 200.0 not in output_positions  # duplicate — excluded
