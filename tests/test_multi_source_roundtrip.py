@@ -27,8 +27,6 @@ multi-source ancestor inference is implemented.
 
 from __future__ import annotations
 
-import os
-
 import numpy as np
 import zarr
 from helpers import make_sample_vcz
@@ -81,21 +79,20 @@ def _write_vcz_to_disk(tmp_path):
         sequence_length=_SEQUENCE_LENGTH,
         sample_ids=_SAMPLE_IDS,
     )
-    vcz_path = os.path.join(str(tmp_path), "samples.vcz")
+    vcz_path = tmp_path / "samples.vcz"
     zarr.save(vcz_path, **{k: store[k][:] for k in store})
     return vcz_path
 
 
 def _toml_path(path):
     """Forward-slash path for TOML strings."""
-    return path.replace("\\", "/")
+    return str(path).replace("\\", "/")
 
 
 def _write_toml(tmp_path, content):
     """Write TOML string to config.toml, return path."""
-    config_path = os.path.join(str(tmp_path), "config.toml")
-    with open(config_path, "w") as f:
-        f.write(content)
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(content)
     return config_path
 
 
@@ -116,17 +113,21 @@ def _check_genotypes(input_vcz_path, output_ts):
     samples_array = output_ts.samples()
     node_to_sample_idx = {int(nid): idx for idx, nid in enumerate(samples_array)}
 
-    # For each output sample index, find the corresponding input haplotype index
+    # For each output sample index, find the corresponding input haplotype index.
+    # Only map individuals whose sample_id appears in this input VCZ;
+    # skip individuals from other sources.
     output_to_input = np.full(len(samples_array), -1, dtype=int)
     for ind in output_ts.individuals():
         meta = ind.metadata
         sid = meta["sample_id"]
+        if sid not in input_id_to_idx:
+            continue
         input_sample_idx = input_id_to_idx[sid]
+        ploidy = input_gt.shape[2]
         for _ploidy_offset, nid in enumerate(ind.nodes):
             out_idx = node_to_sample_idx[int(nid)]
-            input_hap_idx = input_sample_idx  # haploid: 1 node per individual
+            input_hap_idx = input_sample_idx * ploidy + _ploidy_offset
             output_to_input[out_idx] = input_hap_idx
-    assert np.all(output_to_input >= 0)
 
     pos_to_idx = {}
     for i, p in enumerate(input_pos):
@@ -137,19 +138,27 @@ def _check_genotypes(input_vcz_path, output_ts):
             continue
         pos_to_idx[int(p)] = i
 
+    # Indices of output samples that belong to this input VCZ
+    mapped_mask = output_to_input >= 0
+    mapped_out_indices = np.where(mapped_mask)[0]
+    mapped_input_indices = output_to_input[mapped_mask]
+    # Sort by input haplotype index so observed aligns with expected
+    sort_order = np.argsort(mapped_input_indices)
+    mapped_out_indices = mapped_out_indices[sort_order]
+
     for variant in output_ts.variants():
         pos = int(variant.site.position)
         if pos not in pos_to_idx:
             continue
         i = pos_to_idx.pop(pos)
 
-        # Reorder output genotypes to match input sample order
-        input_hap_gt = input_gt[i].reshape(-1)  # (num_samples,)
+        # Expected genotypes from input VCZ
+        input_hap_gt = input_gt[i].reshape(-1)  # (num_haplotypes,)
         expected = np.asarray(input_alleles[i])[input_hap_gt]
+        # Observed genotypes from output TS, only for this source's samples
         alleles_arr = np.array(variant.alleles)
         observed_all = alleles_arr[variant.genotypes]
-        # Map output order back to input order
-        observed = observed_all[np.argsort(output_to_input)]
+        observed = observed_all[mapped_out_indices]
 
         np.testing.assert_array_equal(
             observed,
@@ -169,8 +178,8 @@ class TestMultiSourceRoundtrip:
     def test_split_samples(self, tmp_path):
         """First/second half of samples, ancestors from both."""
         sample_vcz = _write_vcz_to_disk(tmp_path)
-        ancestor_vcz = _toml_path(os.path.join(str(tmp_path), "ancestors.vcz"))
-        output_trees = _toml_path(os.path.join(str(tmp_path), "output.trees"))
+        ancestor_vcz = _toml_path(tmp_path / "ancestors.vcz")
+        output_trees = _toml_path(tmp_path / "output.trees")
 
         toml_content = f"""\
 [[source]]
@@ -206,8 +215,8 @@ create_individuals = false
     def test_interleaved_samples(self, tmp_path):
         """Even/odd indexed samples, ancestors from both."""
         sample_vcz = _write_vcz_to_disk(tmp_path)
-        ancestor_vcz = _toml_path(os.path.join(str(tmp_path), "ancestors.vcz"))
-        output_trees = _toml_path(os.path.join(str(tmp_path), "output.trees"))
+        ancestor_vcz = _toml_path(tmp_path / "ancestors.vcz")
+        output_trees = _toml_path(tmp_path / "output.trees")
 
         toml_content = f"""\
 [[source]]
@@ -243,8 +252,8 @@ create_individuals = false
     def test_split_sites(self, tmp_path):
         """Low/high position split at midpoint, ancestors from both."""
         sample_vcz = _write_vcz_to_disk(tmp_path)
-        ancestor_vcz = _toml_path(os.path.join(str(tmp_path), "ancestors.vcz"))
-        output_trees = _toml_path(os.path.join(str(tmp_path), "output.trees"))
+        ancestor_vcz = _toml_path(tmp_path / "ancestors.vcz")
+        output_trees = _toml_path(tmp_path / "output.trees")
 
         toml_content = f"""\
 [[source]]
@@ -283,8 +292,8 @@ create_individuals = false
     def test_interleaved_sites(self, tmp_path):
         """Alternating positions, ancestors from both."""
         sample_vcz = _write_vcz_to_disk(tmp_path)
-        ancestor_vcz = _toml_path(os.path.join(str(tmp_path), "ancestors.vcz"))
-        output_trees = _toml_path(os.path.join(str(tmp_path), "output.trees"))
+        ancestor_vcz = _toml_path(tmp_path / "ancestors.vcz")
+        output_trees = _toml_path(tmp_path / "output.trees")
 
         toml_content = f"""\
 [[source]]
@@ -319,3 +328,154 @@ create_individuals = false
         cfg = Config.from_toml(config_path)
         ts = run(cfg)
         _check_genotypes(sample_vcz, ts)
+
+
+# ---------------------------------------------------------------------------
+# Mixed-ploidy helpers and data
+# ---------------------------------------------------------------------------
+
+# Haploid VCZ: 4 haploid samples from columns 0–3 of _GENOTYPES
+_HAPLOID_GENOTYPES = _GENOTYPES[:, :4, :]  # shape (10, 4, 1)
+_HAPLOID_SAMPLE_IDS = np.array([f"h{i}" for i in range(4)])
+
+# Diploid VCZ: 2 diploid individuals from columns 4–7 of _GENOTYPES
+# Reshape (10, 4, 1) -> (10, 2, 2): ind0 gets cols 4,5; ind1 gets cols 6,7
+_DIPLOID_GENOTYPES = _GENOTYPES[:, 4:, :].reshape(10, 2, 2)
+_DIPLOID_SAMPLE_IDS = np.array([f"d{i}" for i in range(2)])
+
+
+def _write_mixed_ploidy_vcz(tmp_path):
+    """Write haploid and diploid VCZ stores to disk, return paths."""
+    haploid_store = make_sample_vcz(
+        genotypes=_HAPLOID_GENOTYPES,
+        positions=_POSITIONS,
+        alleles=_ALLELES,
+        ancestral_state=_ANCESTRAL,
+        sequence_length=_SEQUENCE_LENGTH,
+        sample_ids=_HAPLOID_SAMPLE_IDS,
+    )
+    haploid_path = tmp_path / "haploid.vcz"
+    zarr.save(haploid_path, **{k: haploid_store[k][:] for k in haploid_store})
+
+    diploid_store = make_sample_vcz(
+        genotypes=_DIPLOID_GENOTYPES,
+        positions=_POSITIONS,
+        alleles=_ALLELES,
+        ancestral_state=_ANCESTRAL,
+        sequence_length=_SEQUENCE_LENGTH,
+        sample_ids=_DIPLOID_SAMPLE_IDS,
+    )
+    diploid_path = tmp_path / "diploid.vcz"
+    zarr.save(diploid_path, **{k: diploid_store[k][:] for k in diploid_store})
+
+    return haploid_path, diploid_path
+
+
+class TestMixedPloidyRoundtrip:
+    def test_haploid_and_diploid_sources(self, tmp_path):
+        """Both haploid and diploid sources contribute to ancestors."""
+        haploid_vcz, diploid_vcz = _write_mixed_ploidy_vcz(tmp_path)
+        ancestor_vcz = _toml_path(tmp_path / "ancestors.vcz")
+        output_trees = _toml_path(tmp_path / "output.trees")
+
+        toml_content = f"""\
+[[source]]
+name = "haploid"
+path = "{_toml_path(haploid_vcz)}"
+
+[[source]]
+name = "diploid"
+path = "{_toml_path(diploid_vcz)}"
+
+[[ancestors]]
+name = "ancestors"
+path = "{ancestor_vcz}"
+sources = ["haploid", "diploid"]
+
+[match]
+output = "{output_trees}"
+
+[match.sources.ancestors]
+node_flags = 0
+create_individuals = false
+
+[match.sources.haploid]
+[match.sources.diploid]
+"""
+        config_path = _write_toml(tmp_path, toml_content)
+        cfg = Config.from_toml(config_path)
+        ts = run(cfg)
+        _check_genotypes(haploid_vcz, ts)
+        _check_genotypes(diploid_vcz, ts)
+
+    def test_haploid_and_diploid_ancestors_from_one(self, tmp_path):
+        """Ancestors from haploid only; diploid matched against them."""
+        haploid_vcz, diploid_vcz = _write_mixed_ploidy_vcz(tmp_path)
+        ancestor_vcz = _toml_path(tmp_path / "ancestors.vcz")
+        output_trees = _toml_path(tmp_path / "output.trees")
+
+        toml_content = f"""\
+[[source]]
+name = "haploid"
+path = "{_toml_path(haploid_vcz)}"
+
+[[source]]
+name = "diploid"
+path = "{_toml_path(diploid_vcz)}"
+
+[[ancestors]]
+name = "ancestors"
+path = "{ancestor_vcz}"
+sources = ["haploid"]
+
+[match]
+output = "{output_trees}"
+
+[match.sources.ancestors]
+node_flags = 0
+create_individuals = false
+
+[match.sources.haploid]
+[match.sources.diploid]
+"""
+        config_path = _write_toml(tmp_path, toml_content)
+        cfg = Config.from_toml(config_path)
+        ts = run(cfg)
+        _check_genotypes(haploid_vcz, ts)
+        _check_genotypes(diploid_vcz, ts)
+
+    def test_diploid_only_ancestors(self, tmp_path):
+        """Ancestors from diploid only; haploid matched against them."""
+        haploid_vcz, diploid_vcz = _write_mixed_ploidy_vcz(tmp_path)
+        ancestor_vcz = _toml_path(tmp_path / "ancestors.vcz")
+        output_trees = _toml_path(tmp_path / "output.trees")
+
+        toml_content = f"""\
+[[source]]
+name = "haploid"
+path = "{_toml_path(haploid_vcz)}"
+
+[[source]]
+name = "diploid"
+path = "{_toml_path(diploid_vcz)}"
+
+[[ancestors]]
+name = "ancestors"
+path = "{ancestor_vcz}"
+sources = ["diploid"]
+
+[match]
+output = "{output_trees}"
+
+[match.sources.ancestors]
+node_flags = 0
+create_individuals = false
+
+[match.sources.haploid]
+[match.sources.diploid]
+"""
+        config_path = _write_toml(tmp_path, toml_content)
+        cfg = Config.from_toml(config_path)
+        ts = run(cfg)
+        _check_genotypes(haploid_vcz, ts)
+        _check_genotypes(diploid_vcz, ts)
