@@ -427,6 +427,49 @@ class TestAugmentedRoundtrip:
 
         _check_genotypes(store, ts, ploidy=1, check_all=True)
 
+    def test_ancestral_state_overrides_parsimony(self):
+        """Specified ancestral state is used even when parsimony would differ.
+
+        With 4 samples carrying genotypes [1, 1, 1, 0] at a singleton site,
+        parsimony would choose allele 1 ("T") as ancestral. But the specified
+        ancestral state is allele 0 ("A"), so we should get ancestral_state="A"
+        with 3 mutations rather than the more parsimonious 1 mutation.
+        """
+        # 2 inference sites (non-singleton) + 1 singleton where the
+        # "rare" allele (allele 0 = "A") is declared ancestral.
+        genotypes = np.array(
+            [
+                [[0], [1], [1], [0]],  # inference site
+                [[1], [1], [1], [0]],  # singleton: 3×T, 1×A; ancestral = A
+                [[1], [0], [0], [1]],  # inference site
+            ],
+            dtype=np.int8,
+        )
+        positions = np.array([100, 200, 300], dtype=np.int32)
+        alleles = np.array([["A", "T"], ["A", "T"], ["C", "G"]])
+        # Ancestral allele at position 200 is "A" (allele 0), the minority
+        ancestral = np.array(["A", "A", "C"])
+
+        store = make_sample_vcz(
+            genotypes=genotypes,
+            positions=positions,
+            alleles=alleles,
+            ancestral_state=ancestral,
+            sequence_length=1000,
+        )
+        ts = _run_pipeline_with_augment(store)
+
+        site = ts.site(position=200.0)
+        # Ancestral state must be "A" (the specified value), not "T"
+        assert site.ancestral_state == "A"
+        # With ancestral="A" and genotypes [1,1,1,0], there should be
+        # at least one mutation to "T"
+        assert len(site.mutations) >= 1
+        derived_states = {m.derived_state for m in site.mutations}
+        assert "T" in derived_states
+
+        _check_genotypes(store, ts, ploidy=1, check_all=True)
+
     def test_simulated_with_singletons(self):
         """Simulated data roundtrips correctly with augment_sites."""
         sim_ts = _simulate(

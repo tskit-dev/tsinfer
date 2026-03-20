@@ -615,8 +615,18 @@ def augment_sites(
 
     existing = set(ts.sites_position)
 
+    # --- Build ancestral state lookup (same logic as _compute_inference_sites) ---
+    ann_lookup = None
+    if cfg.ancestral_state is not None:
+        ann_store = vcz_mod.open_store(cfg.ancestral_state.path)
+        ann_positions = np.asarray(ann_store["variant_position"][:])
+        ann_values = np.asarray(ann_store[cfg.ancestral_state.field][:])
+        ann_lookup = {
+            int(k): str(v) for k, v in zip(ann_positions.tolist(), ann_values.tolist())
+        }
+
     # --- Pass 1: collect new positions from each source ---
-    # Each entry: (position, alleles_tuple, source_index)
+    # Each entry: (position, alleles_tuple, ancestral_allele_str, source_index)
     pos_to_info: dict[int, tuple] = {}
     source_names = aug_cfg.sources
     source_configs = []
@@ -624,9 +634,12 @@ def augment_sites(
         source = cfg.sources[src_name]
         source_configs.append(source)
         store = vcz_mod.open_store(source.path)
+        fields = ["variant_position", "variant_allele"]
+        if ann_lookup is None:
+            fields.append("variant_ancestral_allele")
         for var in vcz_mod.iter_variants(
             store,
-            fields=["variant_position", "variant_allele"],
+            fields=fields,
             include=source.include,
             exclude=source.exclude,
             regions=source.regions,
@@ -640,7 +653,11 @@ def augment_sites(
             if pos not in pos_to_info:
                 alleles_raw = var["variant_allele"]
                 alleles = tuple(str(a) for a in alleles_raw if str(a) != "")
-                pos_to_info[pos] = (alleles, src_idx)
+                if ann_lookup is not None:
+                    anc_str = ann_lookup.get(pos, "")
+                else:
+                    anc_str = str(var["variant_ancestral_allele"])
+                pos_to_info[pos] = (alleles, anc_str, src_idx)
 
     if len(pos_to_info) == 0:
         logger.info("augment_sites: no new sites to add")
@@ -652,6 +669,7 @@ def augment_sites(
     n_sources = len(source_names)
 
     site_alleles = []  # alleles tuple per unified site
+    site_ancestral = []  # ancestral allele string per unified site
     source_has_site = np.zeros((n_sites, n_sources), dtype=bool)
     # Track which sources have each position
     # Re-scan all sources to build the full source_has_site mask
@@ -672,7 +690,9 @@ def augment_sites(
                 source_positions_set[src_idx].add(pos)
 
     for ui, pos in enumerate(sorted_positions):
-        site_alleles.append(pos_to_info[pos][0])
+        info = pos_to_info[pos]
+        site_alleles.append(info[0])
+        site_ancestral.append(info[1])
         for src_idx in range(n_sources):
             source_has_site[ui, src_idx] = pos in source_positions_set[src_idx]
 
@@ -773,9 +793,17 @@ def augment_sites(
                         genotypes[ts_sample_idx] = val
 
         alleles = list(site_alleles[ui])
+        anc_allele = site_ancestral[ui]
         pos = float(sorted_positions[ui])
         tree.seek(pos)
-        ancestral_state, mutations = tree.map_mutations(genotypes, alleles)
+        # Use specified ancestral state if it matches a known allele;
+        # otherwise let parsimony choose.
+        if anc_allele in alleles:
+            ancestral_state, mutations = tree.map_mutations(
+                genotypes, alleles, ancestral_state=anc_allele
+            )
+        else:
+            ancestral_state, mutations = tree.map_mutations(genotypes, alleles)
         site_id = tables.sites.add_row(position=pos, ancestral_state=ancestral_state)
         mut_id_map = {tskit.NULL: tskit.NULL}
         for list_id, mut in enumerate(mutations):
