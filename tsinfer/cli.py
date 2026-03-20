@@ -33,6 +33,7 @@ Commands:
 
 from __future__ import annotations
 
+import json
 import logging
 import sys
 import warnings
@@ -250,6 +251,34 @@ def run_cmd(config, cache_size, threads, force, progress, verbose):
 # ---------------------------------------------------------------------------
 # Inspection commands
 # ---------------------------------------------------------------------------
+
+
+@main.command("show-match-work")
+@click.argument("json_file", metavar="JSON_FILE", type=click.Path(exists=True))
+def show_match_work_cmd(json_file):
+    """Show a histogram of match-work group sizes."""
+    records = json.loads(Path(json_file).read_text())
+
+    group_counts: dict[int, int] = {}
+    for rec in records:
+        g = rec["group"]
+        group_counts[g] = group_counts.get(g, 0) + 1
+
+    if not group_counts:
+        click.echo("No match jobs.")
+        return
+
+    sorted_groups = sorted(group_counts.items())
+    max_count = max(group_counts.values())
+    max_bar = 100
+
+    click.echo(f"{'Group':>6}  {'Count':>6}")
+    for group_idx, count in sorted_groups:
+        bar_len = round(count / max_count * max_bar) if max_count > 0 else 0
+        bar = "#" * bar_len
+        click.echo(f"{group_idx:>6}  {count:>6}  {bar}")
+
+    click.echo(f"\n{len(records)} jobs in {len(group_counts)} groups")
 
 
 # ---------------------------------------------------------------------------

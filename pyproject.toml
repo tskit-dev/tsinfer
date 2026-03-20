@@ -80,6 +80,7 @@ test = [
     "pytest-cov",
     "pytest-xdist",
     "xarray",
+    "pandas",
 ]
 
 docs = [

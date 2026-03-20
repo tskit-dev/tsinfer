@@ -603,6 +603,36 @@ class TestComputeGroupsJson:
             assert isinstance(rec["time"], float)
             assert isinstance(rec["group"], int)
 
+    def test_round_trip_pandas(self):
+        """match-work.json output can be loaded into a pandas DataFrame."""
+        import io
+        import json
+
+        import pandas as pd
+
+        sim_ts = _simulate(num_samples=4, random_seed=45)
+        sample_store = ts_to_sample_vcz(sim_ts)
+        anc_cfg = AncestorsConfig(name="ancestors", path=None, sources=["test"])
+        ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
+        cfg = _make_config(sample_store, ancestor_store)
+        json_str = compute_groups_json(cfg)
+        df = pd.read_json(io.StringIO(json_str))
+        assert len(df) > 0
+        expected_cols = {
+            "haplotype_index",
+            "source",
+            "sample_id",
+            "ploidy_index",
+            "time",
+            "start_position",
+            "end_position",
+            "group",
+            "node_flags",
+        }
+        assert expected_cols.issubset(set(df.columns))
+        records = json.loads(json_str)
+        assert len(df) == len(records)
+
 
 # ---------------------------------------------------------------------------
 # TestMatchWithGroups
@@ -619,7 +649,7 @@ class TestWorkdir:
         return cfg
 
     def test_workdir_creates_groups_and_trees(self, tmp_path):
-        """Fresh run creates groups.json and at least one .trees file."""
+        """Fresh run creates match-work.json and at least one .trees file."""
         import tskit
 
         cfg = self._setup()
@@ -630,7 +660,7 @@ class TestWorkdir:
         out_ts = match(cfg)
         assert out_ts.num_nodes > 0
 
-        assert (workdir / "groups.json").exists()
+        assert (workdir / "match-work.json").exists()
         written = list(workdir.glob("group_*.trees"))
         assert len(written) > 0
         for p in written:
@@ -696,7 +726,7 @@ class TestWorkdir:
         trees_files = list(workdir.glob("group_*.trees"))
         # Should have more than 1 if there are multiple groups
         assert len(trees_files) >= 1
-        assert (workdir / "groups.json").exists()
+        assert (workdir / "match-work.json").exists()
 
     def test_no_workdir_by_default(self, tmp_path):
         """workdir=None produces no files."""
@@ -705,7 +735,7 @@ class TestWorkdir:
 
         match(cfg)
         assert list(tmp_path.glob("*.trees")) == []
-        assert list(tmp_path.glob("groups.json")) == []
+        assert list(tmp_path.glob("match-work.json")) == []
 
     def test_group_stop_produces_partial_result(self, tmp_path):
         """group_stop=1 processes only group 0; checkpoint matches returned ts."""
@@ -725,7 +755,7 @@ class TestWorkdir:
         assert partial_ts.num_nodes < full_ts.num_nodes
 
         # Exactly one checkpoint: group_0.trees (the only group processed)
-        groups_json = json.loads((workdir / "groups.json").read_text())
+        groups_json = json.loads((workdir / "match-work.json").read_text())
         sorted_groups = sorted({r["group"] for r in groups_json})
         first_group = sorted_groups[0]
         expected_path = workdir / f"group_{first_group}.trees"
@@ -771,7 +801,7 @@ class TestWorkdir:
         base_cfg.match.workdir = str(workdir_probe)
         base_cfg.match.keep_intermediates = True
         match(base_cfg)
-        groups_json = json.loads((workdir_probe / "groups.json").read_text())
+        groups_json = json.loads((workdir_probe / "match-work.json").read_text())
         num_groups = max(r["group"] for r in groups_json) + 1
 
         for g in range(1, num_groups + 1):
@@ -798,7 +828,7 @@ class TestWorkdir:
         base_cfg.match.workdir = str(workdir_probe)
         base_cfg.match.keep_intermediates = True
         match(base_cfg)
-        groups_json = json.loads((workdir_probe / "groups.json").read_text())
+        groups_json = json.loads((workdir_probe / "match-work.json").read_text())
         num_groups = max(r["group"] for r in groups_json) + 1
 
         cfg = self._setup()
