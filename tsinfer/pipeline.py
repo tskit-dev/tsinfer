@@ -792,9 +792,9 @@ def augment_sites(
                     if val >= 0:
                         genotypes[ts_sample_idx] = val
 
-        # Skip monomorphic sites (all non-missing genotypes identical)
+        # Skip all-missing sites (no genotype data at all)
         non_missing = genotypes[genotypes >= 0]
-        if len(non_missing) == 0 or len(np.unique(non_missing)) < 2:
+        if len(non_missing) == 0:
             continue
 
         alleles = list(site_alleles[ui])

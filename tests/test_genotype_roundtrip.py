@@ -99,8 +99,8 @@ def _check_genotypes(input_store, output_ts, ploidy=1, check_all=False):
     """Assert output TS sample genotypes match input VCZ genotypes.
 
     When *check_all* is False (default), pre-filters to biallelic polymorphic
-    inference sites. When True, checks all polymorphic sites (including
-    singletons and multi-allelic).
+    inference sites. When True, checks all sites with at least one non-missing
+    genotype (including singletons, multi-allelic, and monomorphic).
     """
     input_gt = input_store["call_genotype"][:]  # (S, N, P)
     input_pos = input_store["variant_position"][:]  # (S,)
@@ -122,11 +122,12 @@ def _check_genotypes(input_store, output_ts, ploidy=1, check_all=False):
         non_missing = gt_flat[gt_flat >= 0]
         if len(non_missing) == 0:
             continue
-        n_distinct = len(np.unique(non_missing))
-        if n_distinct < 2:
-            continue  # monomorphic — skip
-        if not check_all and len(allele_list) != 2:
-            continue
+        if not check_all:
+            # Inference-only mode: biallelic polymorphic sites only
+            if len(allele_list) != 2:
+                continue
+            if len(np.unique(non_missing)) < 2:
+                continue
         pos_to_idx[int(p)] = i
 
     for variant in output_ts.variants():
@@ -427,6 +428,69 @@ class TestAugmentedRoundtrip:
 
         _check_genotypes(store, ts, ploidy=1, check_all=True)
 
+    def test_monomorphic_fixed_ancestral(self):
+        """Monomorphic site where all samples carry the ancestral allele."""
+        genotypes = np.array(
+            [
+                [[0], [1], [1]],  # inference site
+                [[0], [0], [0]],  # monomorphic: all ancestral
+                [[1], [0], [1]],  # inference site
+            ],
+            dtype=np.int8,
+        )
+        positions = np.array([100, 200, 300], dtype=np.int32)
+        alleles = np.array([["A", "T"], ["C", "G"], ["A", "T"]])
+        ancestral = np.array(["A", "C", "A"])
+
+        store = make_sample_vcz(
+            genotypes=genotypes,
+            positions=positions,
+            alleles=alleles,
+            ancestral_state=ancestral,
+            sequence_length=1000,
+        )
+        ts = _run_pipeline_with_augment(store)
+
+        site = ts.site(position=200.0)
+        assert site.ancestral_state == "C"
+        # All samples carry the ancestral allele — no mutations needed
+        assert len(site.mutations) == 0
+
+        _check_genotypes(store, ts, ploidy=1, check_all=True)
+
+    def test_monomorphic_fixed_derived(self):
+        """Monomorphic site where all samples carry the derived allele."""
+        genotypes = np.array(
+            [
+                [[0], [1], [1]],  # inference site
+                [[1], [1], [1]],  # monomorphic: all derived
+                [[1], [0], [1]],  # inference site
+            ],
+            dtype=np.int8,
+        )
+        positions = np.array([100, 200, 300], dtype=np.int32)
+        alleles = np.array([["A", "T"], ["C", "G"], ["A", "T"]])
+        ancestral = np.array(["A", "C", "A"])
+
+        store = make_sample_vcz(
+            genotypes=genotypes,
+            positions=positions,
+            alleles=alleles,
+            ancestral_state=ancestral,
+            sequence_length=1000,
+        )
+        ts = _run_pipeline_with_augment(store)
+
+        site = ts.site(position=200.0)
+        # Ancestral state is "C" but all samples carry "G"
+        assert site.ancestral_state == "C"
+        # Should have a mutation to "G" above all samples
+        assert len(site.mutations) >= 1
+        derived_states = {m.derived_state for m in site.mutations}
+        assert "G" in derived_states
+
+        _check_genotypes(store, ts, ploidy=1, check_all=True)
+
     def test_ancestral_state_overrides_parsimony(self):
         """Specified ancestral state is used even when parsimony would differ.
 
@@ -516,10 +580,10 @@ class TestAugmentedRoundtrip:
 
     @pytest.mark.parametrize("seed", [7, 20, 34, 42, 102, 131])
     def test_all_sites_present_after_augment(self, seed):
-        """Every polymorphic input site appears in augmented output.
+        """Every input site (including monomorphic) appears in augmented output.
 
         Parametrized across seeds that produce multi-allelic and monomorphic
-        sites to exercise edge cases in augment_sites filtering.
+        sites to exercise edge cases in augment_sites.
         """
         sim_ts = _simulate(
             num_samples=6,
@@ -536,8 +600,10 @@ class TestAugmentedRoundtrip:
         for i, p in enumerate(store["variant_position"][:]):
             gt_flat = gt[i].reshape(-1)
             non_missing = gt_flat[gt_flat >= 0]
-            if len(non_missing) > 0 and len(np.unique(non_missing)) >= 2:
+            if len(non_missing) > 0:
                 input_positions.add(int(p))
 
         output_positions = {int(s.position) for s in ts.sites()}
         assert input_positions == output_positions
+
+        _check_genotypes(store, ts, ploidy=1, check_all=True)
