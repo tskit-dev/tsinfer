@@ -29,3 +29,8 @@ directly on the sequence intervals from the metadata.
 for the contig in question.
 
 - Always use the ancestral state config - don't use variant_ancestral_allele
+
+- Add tests for missing data across the stack. Is missing data tolerated in the
+infer-ancestors stage? If we have missing data at an inference site is it imputed
+in the expected way in the final trees? Is missing data imputed at augemented
+sites correctly?
