@@ -32,6 +32,7 @@ from .ancestors import InferenceSites, infer_ancestors  # noqa: F401
 from .config import (  # noqa: F401
     AncestorsConfig,
     AncestralState,
+    AugmentSitesConfig,
     Config,
     IndividualMetadataConfig,
     MatchConfig,
@@ -39,4 +40,4 @@ from .config import (  # noqa: F401
     PostProcessConfig,
     Source,
 )
-from .pipeline import match, post_process, run  # noqa: F401
+from .pipeline import augment_sites, match, post_process, run  # noqa: F401
