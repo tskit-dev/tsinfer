@@ -2858,6 +2858,7 @@ dev = [
     { name = "ipywidgets" },
     { name = "jupyter-book" },
     { name = "msprime" },
+    { name = "pandas" },
     { name = "prek" },
     { name = "pyfaidx" },
     { name = "pytest" },
@@ -2895,6 +2896,7 @@ packaging = [
 test = [
     { name = "bio2zarr", extra = ["tskit"] },
     { name = "msprime" },
+    { name = "pandas" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "pytest-xdist" },
@@ -2929,6 +2931,7 @@ dev = [
     { name = "ipywidgets" },
     { name = "jupyter-book", specifier = "<2" },
     { name = "msprime" },
+    { name = "pandas" },
     { name = "prek", specifier = "==0.3.3" },
     { name = "pyfaidx" },
     { name = "pytest" },
@@ -2966,6 +2969,7 @@ packaging = [
 test = [
     { name = "bio2zarr", extras = ["tskit"] },
     { name = "msprime" },
+    { name = "pandas" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "pytest-xdist" },

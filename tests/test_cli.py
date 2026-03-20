@@ -412,7 +412,7 @@ class TestPostProcess:
 
 class TestMatchWorkdirCLI:
     def test_match_with_workdir(self):
-        """match --workdir creates groups.json and checkpoint files."""
+        """match --workdir creates match-work.json and checkpoint files."""
         runner = CliRunner()
         with tempfile.TemporaryDirectory() as tmp_dir:
             sample_path = _write_sample_vcz_to_disk(tmp_dir)
@@ -424,7 +424,7 @@ class TestMatchWorkdirCLI:
             assert result.exit_code == 0, result.output
             output_path = os.path.join(tmp_dir, "out.trees")
             assert Path(output_path).exists()
-            assert Path(workdir, "groups.json").exists()
+            assert Path(workdir, "match-work.json").exists()
 
     def test_match_with_keep_intermediates(self):
         """match --workdir --keep-intermediates retains all .trees files."""
@@ -448,3 +448,23 @@ class TestMatchWorkdirCLI:
             assert result.exit_code == 0, result.output
             trees_files = list(Path(workdir).glob("group_*.trees"))
             assert len(trees_files) >= 1
+
+
+class TestShowMatchWork:
+    def test_show_match_work(self):
+        """show-match-work prints a histogram from a match-work.json file."""
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sample_path = _write_sample_vcz_to_disk(tmp_dir)
+            config_path = _write_run_config(tmp_dir, sample_path)
+            result = runner.invoke(main, ["infer-ancestors", config_path])
+            assert result.exit_code == 0, result.output
+            workdir = os.path.join(tmp_dir, "workdir")
+            result = runner.invoke(main, ["match", config_path, "--workdir", workdir])
+            assert result.exit_code == 0, result.output
+            json_path = os.path.join(workdir, "match-work.json")
+            result = runner.invoke(main, ["show-match-work", json_path])
+            assert result.exit_code == 0, result.output
+            assert "Group" in result.output
+            assert "#" in result.output
+            assert "jobs in" in result.output
