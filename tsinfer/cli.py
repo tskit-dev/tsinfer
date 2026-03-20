@@ -26,6 +26,7 @@ Commands:
   infer-ancestors   Build the ancestor VCZ from the samples VCZ.
   match             Run the unified match loop.
   post-process      Post-process a matched tree sequence.
+  augment-sites     Place non-inference sites via parsimony.
   run               All steps in sequence.
   config show       Print resolved config with defaults filled in.
   config check      Validate config and verify all input paths.
@@ -45,6 +46,7 @@ import tskit
 
 from .ancestors import infer_ancestors
 from .config import Config
+from .pipeline import augment_sites as pipeline_augment_sites
 from .pipeline import match as pipeline_match
 from .pipeline import post_process as pipeline_post_process
 from .pipeline import run as pipeline_run
@@ -224,6 +226,35 @@ def post_process_cmd(config, input_ts, threads, force, progress, verbose):
     logger.info("Post-process complete: %d nodes", ts.num_nodes)
 
 
+@main.command("augment-sites")
+@_config_arg
+@click.option(
+    "--input",
+    "input_ts",
+    required=True,
+    type=click.Path(exists=True),
+    help="Input tree sequence file (output of match or post-process).",
+)
+@click.option(
+    "--output",
+    "output_path",
+    required=True,
+    type=click.Path(),
+    help="Output tree sequence file.",
+)
+@_add_options(_runtime_options)
+def augment_sites_cmd(config, input_ts, output_path, threads, force, progress, verbose):
+    """Place non-inference sites onto a tree sequence using parsimony."""
+    _setup_logging(verbose)
+    cfg = Config.from_toml(config)
+    ts = tskit.load(input_ts)
+    _check_output(output_path, force)
+    logger.info("Augmenting sites on %s (%d sites)", input_ts, ts.num_sites)
+    ts = pipeline_augment_sites(ts, cfg, progress=progress)
+    ts.dump(str(output_path))
+    logger.info("Augment complete: %d sites", ts.num_sites)
+
+
 @main.command("run")
 @_config_arg
 @click.option(
@@ -234,7 +265,7 @@ def post_process_cmd(config, input_ts, threads, force, progress, verbose):
 )
 @_add_options(_runtime_options)
 def run_cmd(config, cache_size, threads, force, progress, verbose):
-    """Run the full pipeline: infer-ancestors, match, post-process."""
+    """Run the full pipeline: infer-ancestors, match, post-process, augment-sites."""
     _setup_logging(verbose)
     cfg = Config.from_toml(config)
     _check_output(cfg.match.output, force)
