@@ -514,13 +514,18 @@ class TestAugmentedRoundtrip:
         ts = _run_pipeline_with_augment(store)
         _check_genotypes(store, ts, ploidy=1, check_all=True)
 
-    def test_all_sites_present_after_augment(self):
-        """Every polymorphic input site appears in augmented output."""
+    @pytest.mark.parametrize("seed", [7, 20, 34, 42, 102, 131])
+    def test_all_sites_present_after_augment(self, seed):
+        """Every polymorphic input site appears in augmented output.
+
+        Parametrized across seeds that produce multi-allelic and monomorphic
+        sites to exercise edge cases in augment_sites filtering.
+        """
         sim_ts = _simulate(
             num_samples=6,
             ploidy=1,
             mutation_rate=1e-7,
-            random_seed=102,
+            random_seed=seed,
         )
         assert sim_ts.num_sites > 0, "Simulation produced no sites"
         store = ts_to_sample_vcz(sim_ts)
