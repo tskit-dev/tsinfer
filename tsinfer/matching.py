@@ -68,15 +68,13 @@ def _tsb_from_ts(
     ts: tskit.TreeSequence,
     num_sites: int,
     positions: np.ndarray,
+    allele_mapper: AlleleMapper,
     num_alleles: np.ndarray | None = None,
-    allele_mapper: AlleleMapper | None = None,
 ):
     """Restore a _tsinfer.TreeSequenceBuilder from a tskit.TreeSequence.
 
-    When *allele_mapper* is provided, mutation derived_state values are
-    real allele strings and are reverse-mapped to integer codes via
-    ``allele_mapper.encode_mutations``.  Otherwise falls back to
-    integer-string alleles ("0", "1", …).
+    Mutation derived_state values are real allele strings and are
+    reverse-mapped to integer codes via ``allele_mapper.encode_mutations``.
     """
     if num_alleles is None:
         num_alleles = np.full(num_sites, 2, dtype=np.uint64)
@@ -112,15 +110,9 @@ def _tsb_from_ts(
     t_restore_mutations = 0
     if ts.num_mutations > 0:
         t0 = time_.monotonic()
-        if allele_mapper is not None:
-            mutations_state = allele_mapper.encode_mutations(
-                ts.mutations_site, list(ts.mutations_derived_state)
-            )
-        else:
-            # Fallback for test helpers using integer-string alleles
-            mutations_state = np.array(
-                [int(ds) for ds in ts.mutations_derived_state], dtype=np.int8
-            )
+        mutations_state = allele_mapper.encode_mutations(
+            ts.mutations_site, list(ts.mutations_derived_state)
+        )
         t_build_mutations = time_.monotonic() - t0
         t0 = time_.monotonic()
         tsb.restore_mutations(
@@ -149,10 +141,10 @@ def make_root_ts(
     sequence_length: float,
     positions: np.ndarray,  # (num_sites,) int32
     sequence_intervals: np.ndarray,  # (n_intervals, 2) int32
+    allele_mapper: AlleleMapper,
     max_time: float = 0.0,
     individuals: list[dict] | None = None,
     populations: list[dict] | None = None,
-    allele_mapper: AlleleMapper | None = None,
 ) -> tskit.TreeSequence:
     """
     Build the root tree sequence that starts the match loop.
@@ -165,8 +157,7 @@ def make_root_ts(
     The virtual root is placed at ``max_time + 1`` and the ultimate root at
     ``max_time + 2``, ensuring both are strictly older than any ancestor.
 
-    When *allele_mapper* is provided, sites use real ancestral allele strings.
-    Otherwise falls back to integer-string alleles ("0" = ancestral).
+    Sites use real ancestral allele strings from *allele_mapper*.
 
     Stores *sequence_intervals* in the tree sequence top-level metadata.
 
@@ -184,13 +175,9 @@ def make_root_ts(
     tables.metadata = {"sequence_intervals": np.asarray(sequence_intervals).tolist()}
 
     positions = np.asarray(positions)
-    if allele_mapper is not None:
-        ancestral = allele_mapper.ancestral_alleles()
-        for i, pos in enumerate(positions):
-            tables.sites.add_row(position=float(pos), ancestral_state=str(ancestral[i]))
-    else:
-        for pos in positions:
-            tables.sites.add_row(position=float(pos), ancestral_state="0")
+    ancestral = allele_mapper.ancestral_alleles()
+    for i, pos in enumerate(positions):
+        tables.sites.add_row(position=float(pos), ancestral_state=str(ancestral[i]))
 
     tables.nodes.metadata_schema = tskit.MetadataSchema({"codec": "json"})
     tables.individuals.metadata_schema = tskit.MetadataSchema({"codec": "json"})
@@ -237,9 +224,9 @@ class Matcher:
         self,
         ts: tskit.TreeSequence,
         positions: np.ndarray,  # (num_sites,) int32 — inference site positions
+        allele_mapper: AlleleMapper,
         path_compression: bool = True,
         num_alleles: np.ndarray | None = None,
-        allele_mapper: AlleleMapper | None = None,
     ):
         self._positions = np.asarray(positions, dtype=np.int32)
         self._num_sites = len(positions)
@@ -355,7 +342,7 @@ def extend_ts(
     ts: tskit.TreeSequence,
     *,
     paired_results: list[tuple[MatchJob, MatchResult]],
-    allele_mapper: AlleleMapper | None = None,
+    allele_mapper: AlleleMapper,
 ) -> tskit.TreeSequence:
     """
     Extend ts with the match results for one group.
@@ -365,9 +352,8 @@ def extend_ts(
     to the pre-existing individual row; when ``job.population_id`` is set,
     the node is assigned to the pre-existing population row.
 
-    When *allele_mapper* is provided, mutation derived states are stored as
-    real allele strings.  Otherwise falls back to integer-string allele
-    codes ("0", "1", "2", …).
+    Mutation derived states are stored as real allele strings via
+    *allele_mapper*.
 
     Returns the updated tree sequence, which becomes the reference panel for
     the next group.
@@ -411,10 +397,7 @@ def extend_ts(
     if mut_data:
         site_ids = np.array([m[0] for m in mut_data], dtype=np.int32)
         codes = np.array([m[1] for m in mut_data], dtype=np.int8)
-        if allele_mapper is not None:
-            allele_strings = allele_mapper.decode_mutations(site_ids, codes)
-        else:
-            allele_strings = [str(c) for c in codes]
+        allele_strings = allele_mapper.decode_mutations(site_ids, codes)
         for (site_id, _, node_id), allele_str in zip(mut_data, allele_strings):
             tables.mutations.add_row(
                 site=site_id,
