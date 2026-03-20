@@ -20,7 +20,9 @@
 End-to-end genotype round-trip tests for the tsinfer pipeline.
 
 Verifies that the output tree sequence from run() reproduces the input
-genotype data for simple biallelic cases where all sites are inference sites.
+genotype data. TestGenotypeRoundtrip covers biallelic inference sites only.
+TestAugmentedRoundtrip adds augment_sites to recover singletons and
+multi-allelic sites as well.
 """
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ from helpers import make_sample_vcz, ts_to_sample_vcz
 
 from tsinfer.config import (
     AncestorsConfig,
+    AugmentSitesConfig,
     Config,
     MatchConfig,
     MatchSourceConfig,
@@ -64,11 +67,40 @@ def _run_pipeline(sample_store):
     return run(cfg)
 
 
-def _check_genotypes(input_store, output_ts, ploidy=1):
+def _run_pipeline_with_augment(sample_store, augment_store=None):
+    """Run pipeline with augment_sites to recover non-inference sites.
+
+    If *augment_store* is None, the same *sample_store* is reused as the
+    augment source — augment_sites will add back any positions that the
+    inference pipeline dropped (singletons, multi-allelic, fixed, etc.).
+    """
+    if augment_store is None:
+        augment_store = sample_store
+    src = Source(path=sample_store, name="test")
+    aug_src = Source(path=augment_store, name="augment")
+    anc_src = Source(path=None, name="ancestors", sample_time="sample_time")
+    cfg = Config(
+        sources={"test": src, "augment": aug_src, "ancestors": anc_src},
+        ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
+        match=MatchConfig(
+            sources={
+                "ancestors": MatchSourceConfig(node_flags=0, create_individuals=False),
+                "test": MatchSourceConfig(),
+            },
+            output="output.trees",
+        ),
+        post_process=PostProcessConfig(),
+        augment_sites=AugmentSitesConfig(sources=["augment"]),
+    )
+    return run(cfg)
+
+
+def _check_genotypes(input_store, output_ts, ploidy=1, check_all=False):
     """Assert output TS sample genotypes match input VCZ genotypes.
 
-    Pre-filters to biallelic polymorphic inference sites, then compares
-    resolved allele strings from both sides.
+    When *check_all* is False (default), pre-filters to biallelic polymorphic
+    inference sites. When True, checks all polymorphic sites (including
+    singletons and multi-allelic).
     """
     input_gt = input_store["call_genotype"][:]  # (S, N, P)
     input_pos = input_store["variant_position"][:]  # (S,)
@@ -82,13 +114,18 @@ def _check_genotypes(input_store, output_ts, ploidy=1):
         sample_node_ids.extend(ind.nodes)
     assert len(sample_node_ids) == num_samples * ploidy
 
-    # Only check biallelic, polymorphic sites
+    # Build set of positions to check
     pos_to_idx = {}
     for i, p in enumerate(input_pos):
         allele_list = [str(a) for a in input_alleles[i] if str(a) != ""]
-        if len(allele_list) != 2:
+        gt_flat = input_gt[i].reshape(-1)
+        non_missing = gt_flat[gt_flat >= 0]
+        if len(non_missing) == 0:
             continue
-        if len(np.unique(input_gt[i])) < 2:
+        n_distinct = len(np.unique(non_missing))
+        if n_distinct < 2:
+            continue  # monomorphic — skip
+        if not check_all and len(allele_list) != 2:
             continue
         pos_to_idx[int(p)] = i
 
@@ -98,7 +135,8 @@ def _check_genotypes(input_store, output_ts, ploidy=1):
             continue
         i = pos_to_idx.pop(pos)
 
-        expected = np.asarray(input_alleles[i])[input_gt[i].reshape(-1)]
+        gt_flat = input_gt[i].reshape(-1)
+        expected = np.asarray(input_alleles[i])[gt_flat]
         observed = np.array(variant.alleles)[variant.genotypes[sample_node_ids]]
 
         np.testing.assert_array_equal(
@@ -132,7 +170,7 @@ def _simulate(
 
 
 # ---------------------------------------------------------------------------
-# Tests
+# Tests — inference sites only (no augment)
 # ---------------------------------------------------------------------------
 
 
@@ -284,3 +322,174 @@ class TestGenotypeRoundtrip:
         store = ts_to_sample_vcz(sim_ts)
         ts = _run_pipeline(store)
         _check_genotypes(store, ts, ploidy=1)
+
+
+# ---------------------------------------------------------------------------
+# Tests — with augment_sites (singletons, multi-allelic)
+# ---------------------------------------------------------------------------
+
+
+class TestAugmentedRoundtrip:
+    def test_singleton_roundtrip(self):
+        """Singleton sites are recovered via augment_sites."""
+        # 3 haploid samples: 2 inference sites + 1 singleton
+        genotypes = np.array(
+            [
+                [[0], [1], [1]],  # non-singleton (AC=2)
+                [[0], [0], [1]],  # singleton (AC=1) — dropped by inference
+                [[1], [0], [1]],  # non-singleton (AC=2)
+            ],
+            dtype=np.int8,
+        )
+        positions = np.array([100, 200, 300], dtype=np.int32)
+        alleles = np.array([["A", "T"], ["C", "G"], ["A", "T"]])
+        ancestral = np.array(["A", "C", "A"])
+
+        store = make_sample_vcz(
+            genotypes=genotypes,
+            positions=positions,
+            alleles=alleles,
+            ancestral_state=ancestral,
+            sequence_length=1000,
+        )
+        ts = _run_pipeline_with_augment(store)
+
+        # All 3 sites should be in the output
+        output_positions = set(ts.sites_position)
+        assert 100.0 in output_positions
+        assert 200.0 in output_positions
+        assert 300.0 in output_positions
+
+        _check_genotypes(store, ts, ploidy=1, check_all=True)
+
+    def test_multiallelic_roundtrip(self):
+        """Multi-allelic sites are recovered via augment_sites."""
+        # 3 haploid samples: 2 biallelic inference sites + 1 tri-allelic
+        genotypes = np.array(
+            [
+                [[0], [1], [1]],  # biallelic
+                [[0], [1], [2]],  # tri-allelic — dropped by inference
+                [[1], [0], [1]],  # biallelic
+            ],
+            dtype=np.int8,
+        )
+        positions = np.array([100, 200, 300], dtype=np.int32)
+        alleles = np.array([["A", "T", ""], ["C", "G", "T"], ["A", "T", ""]])
+        ancestral = np.array(["A", "C", "A"])
+
+        store = make_sample_vcz(
+            genotypes=genotypes,
+            positions=positions,
+            alleles=alleles,
+            ancestral_state=ancestral,
+            sequence_length=1000,
+        )
+        ts = _run_pipeline_with_augment(store)
+
+        # All 3 sites should be in the output
+        output_positions = set(ts.sites_position)
+        assert 100.0 in output_positions
+        assert 200.0 in output_positions
+        assert 300.0 in output_positions
+
+        _check_genotypes(store, ts, ploidy=1, check_all=True)
+
+    def test_singleton_and_multiallelic_together(self):
+        """Both singletons and multi-allelic sites recovered in one pass."""
+        # 4 haploid samples
+        genotypes = np.array(
+            [
+                [[0], [1], [1], [0]],  # biallelic non-singleton
+                [[0], [0], [0], [1]],  # singleton
+                [[0], [1], [2], [0]],  # tri-allelic
+                [[1], [0], [0], [1]],  # biallelic non-singleton
+            ],
+            dtype=np.int8,
+        )
+        positions = np.array([100, 200, 300, 400], dtype=np.int32)
+        alleles = np.array(
+            [["A", "T", ""], ["C", "G", ""], ["A", "T", "G"], ["C", "G", ""]]
+        )
+        ancestral = np.array(["A", "C", "A", "C"])
+
+        store = make_sample_vcz(
+            genotypes=genotypes,
+            positions=positions,
+            alleles=alleles,
+            ancestral_state=ancestral,
+            sequence_length=1000,
+        )
+        ts = _run_pipeline_with_augment(store)
+
+        output_positions = set(ts.sites_position)
+        for p in [100, 200, 300, 400]:
+            assert float(p) in output_positions
+
+        _check_genotypes(store, ts, ploidy=1, check_all=True)
+
+    def test_simulated_with_singletons(self):
+        """Simulated data roundtrips correctly with augment_sites."""
+        sim_ts = _simulate(
+            num_samples=6,
+            ploidy=1,
+            mutation_rate=1e-7,
+            random_seed=100,
+        )
+        assert sim_ts.num_sites > 0, "Simulation produced no sites"
+        store = ts_to_sample_vcz(sim_ts)
+        ts = _run_pipeline_with_augment(store)
+        # Augmented output should have at least as many sites
+        assert ts.num_sites >= 1
+        _check_genotypes(store, ts, ploidy=1, check_all=True)
+
+    def test_simulated_diploid_with_singletons(self):
+        """Diploid simulated data with singletons via augment_sites."""
+        sim_ts = _simulate(
+            num_samples=4,
+            ploidy=2,
+            mutation_rate=1e-7,
+            random_seed=101,
+        )
+        assert sim_ts.num_sites > 0, "Simulation produced no sites"
+        store = ts_to_sample_vcz(sim_ts)
+
+        ts = _run_pipeline_with_augment(store)
+        _check_genotypes(store, ts, ploidy=2, check_all=True)
+
+    @pytest.mark.parametrize("seed", [60, 70, 80, 90])
+    def test_augmented_multiple_seeds(self, seed):
+        """Augmented roundtrip across multiple seeds."""
+        sim_ts = _simulate(
+            num_samples=8,
+            ploidy=1,
+            mutation_rate=1e-7,
+            random_seed=seed,
+        )
+        if sim_ts.num_sites == 0:
+            pytest.skip("Simulation produced no sites with this seed")
+        store = ts_to_sample_vcz(sim_ts)
+        ts = _run_pipeline_with_augment(store)
+        _check_genotypes(store, ts, ploidy=1, check_all=True)
+
+    def test_all_sites_present_after_augment(self):
+        """Every polymorphic input site appears in augmented output."""
+        sim_ts = _simulate(
+            num_samples=6,
+            ploidy=1,
+            mutation_rate=1e-7,
+            random_seed=102,
+        )
+        assert sim_ts.num_sites > 0, "Simulation produced no sites"
+        store = ts_to_sample_vcz(sim_ts)
+        ts = _run_pipeline_with_augment(store)
+
+        gt = store["call_genotype"][:]
+        input_positions = set()
+        for i, p in enumerate(store["variant_position"][:]):
+            gt_flat = gt[i].reshape(-1)
+            non_missing = gt_flat[gt_flat >= 0]
+            if len(non_missing) > 0 and len(np.unique(non_missing)) >= 2:
+                input_positions.add(int(p))
+
+        output_positions = {int(s.position) for s in ts.sites()}
+        assert input_positions == output_positions
