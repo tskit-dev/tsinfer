@@ -192,6 +192,10 @@ name = "second_half"
 path = "{_toml_path(sample_vcz)}"
 samples = "s4,s5,s6,s7"
 
+[ancestral_state]
+path = "{_toml_path(sample_vcz)}"
+field = "variant_ancestral_allele"
+
 [[ancestors]]
 name = "ancestors"
 path = "{ancestor_vcz}"
@@ -228,6 +232,10 @@ samples = "s0,s2,s4,s6"
 name = "odd_samples"
 path = "{_toml_path(sample_vcz)}"
 samples = "s1,s3,s5,s7"
+
+[ancestral_state]
+path = "{_toml_path(sample_vcz)}"
+field = "variant_ancestral_allele"
 
 [[ancestors]]
 name = "ancestors"
@@ -270,6 +278,10 @@ name = "high_sites"
 path = "{_toml_path(sample_vcz)}"
 include = "POS > 500"
 
+[ancestral_state]
+path = "{_toml_path(sample_vcz)}"
+field = "variant_ancestral_allele"
+
 [[ancestors]]
 name = "ancestors"
 path = "{ancestor_vcz}"
@@ -309,6 +321,10 @@ include = "POS=100 | POS=300 | POS=500 | POS=700 | POS=900"
 name = "odd_pos"
 path = "{_toml_path(sample_vcz)}"
 include = "POS=200 | POS=400 | POS=600 | POS=800 | POS=1000"
+
+[ancestral_state]
+path = "{_toml_path(sample_vcz)}"
+field = "variant_ancestral_allele"
 
 [[ancestors]]
 name = "ancestors"
@@ -387,6 +403,10 @@ path = "{_toml_path(haploid_vcz)}"
 name = "diploid"
 path = "{_toml_path(diploid_vcz)}"
 
+[ancestral_state]
+path = "{_toml_path(haploid_vcz)}"
+field = "variant_ancestral_allele"
+
 [[ancestors]]
 name = "ancestors"
 path = "{ancestor_vcz}"
@@ -423,6 +443,10 @@ path = "{_toml_path(haploid_vcz)}"
 name = "diploid"
 path = "{_toml_path(diploid_vcz)}"
 
+[ancestral_state]
+path = "{_toml_path(haploid_vcz)}"
+field = "variant_ancestral_allele"
+
 [[ancestors]]
 name = "ancestors"
 path = "{ancestor_vcz}"
@@ -458,6 +482,10 @@ path = "{_toml_path(haploid_vcz)}"
 [[source]]
 name = "diploid"
 path = "{_toml_path(diploid_vcz)}"
+
+[ancestral_state]
+path = "{_toml_path(haploid_vcz)}"
+field = "variant_ancestral_allele"
 
 [[ancestors]]
 name = "ancestors"
@@ -565,6 +593,10 @@ path = "{_toml_path(path_a)}"
 name = "src_b"
 path = "{_toml_path(path_b)}"
 
+[ancestral_state]
+path = "{_toml_path(path_a)}"
+field = "variant_ancestral_allele"
+
 [[ancestors]]
 name = "ancestors"
 path = "{ancestor_vcz}"
@@ -608,6 +640,10 @@ path = "{_toml_path(path_a)}"
 [[source]]
 name = "src_b"
 path = "{_toml_path(path_b)}"
+
+[ancestral_state]
+path = "{_toml_path(path_a)}"
+field = "variant_ancestral_allele"
 
 [[ancestors]]
 name = "ancestors"
@@ -666,6 +702,10 @@ path = "{_toml_path(path_a)}"
 [[source]]
 name = "src_b"
 path = "{_toml_path(path_b)}"
+
+[ancestral_state]
+path = "{_toml_path(path_a)}"
+field = "variant_ancestral_allele"
 
 [[ancestors]]
 name = "ancestors"

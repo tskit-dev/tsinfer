@@ -42,6 +42,7 @@ from helpers import make_ancestor_vcz, ts_to_sample_vcz
 
 from tsinfer.config import (
     AncestorsConfig,
+    AncestralState,
     Config,
     MatchConfig,
     MatchSourceConfig,
@@ -268,6 +269,10 @@ def build_perfect_ancestors(ts):
 # ---------------------------------------------------------------------------
 
 
+def _anc_state(store):
+    return AncestralState(path=store, field="variant_ancestral_allele")
+
+
 def _make_config(
     sample_store,
     ancestor_store,
@@ -288,6 +293,7 @@ def _make_config(
             output="output.trees",
             path_compression=path_compression,
         ),
+        ancestral_state=_anc_state(sample_store),
     )
 
 

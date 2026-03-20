@@ -1483,8 +1483,7 @@ class VCZHaplotypeReader:
         )
 
         # Build ancestral allele index for polarisation using the
-        # authoritative ancestral alleles from the ancestor store, not
-        # the local store's variant_ancestral_allele field.
+        # authoritative ancestral alleles from the ancestor store.
         num_src_sites = len(src_positions)
 
         # Map ref-site ancestral alleles to a position-keyed lookup

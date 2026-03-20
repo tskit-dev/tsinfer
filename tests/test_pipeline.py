@@ -32,6 +32,7 @@ from helpers import make_sample_vcz, ts_to_sample_vcz
 from tsinfer.ancestors import infer_ancestors
 from tsinfer.config import (
     AncestorsConfig,
+    AncestralState,
     AugmentSitesConfig,
     Config,
     IndividualMetadataConfig,
@@ -68,6 +69,11 @@ def _simulate(
     return ts
 
 
+def _anc_state(store):
+    """Return an AncestralState pointing at the store's own ancestral allele field."""
+    return AncestralState(path=store, field="variant_ancestral_allele")
+
+
 def _make_config(sample_store, ancestor_store):
     """Build a Config suitable for match() from in-memory stores."""
     src = Source(path=sample_store, name="test")
@@ -84,6 +90,7 @@ def _make_config(sample_store, ancestor_store):
             },
             output="output.trees",
         ),
+        ancestral_state=_anc_state(sample_store),
     )
 
 
@@ -101,6 +108,7 @@ def _make_config_for_run(sample_store):
             },
             output="output.trees",
         ),
+        ancestral_state=_anc_state(sample_store),
     )
 
 
@@ -108,7 +116,9 @@ def _infer_and_match(sim_ts):
     """Helper: simulate → sample VCZ → infer ancestors → match → return output ts."""
     sample_store = ts_to_sample_vcz(sim_ts)
     anc_cfg = AncestorsConfig(name="ancestors", path=None, sources=["test"])
-    ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
+    ancestor_store = infer_ancestors(
+        Source(path=sample_store, name="test"), anc_cfg, _anc_state(sample_store)
+    )
     cfg = _make_config(sample_store, ancestor_store)
     return match(cfg)
 
@@ -163,7 +173,9 @@ class TestMatch:
             sequence_length=1000,
         )
         anc_cfg = AncestorsConfig(name="ancestors", path=None, sources=["test"])
-        ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
+        ancestor_store = infer_ancestors(
+            Source(path=sample_store, name="test"), anc_cfg, _anc_state(sample_store)
+        )
         cfg = _make_config(sample_store, ancestor_store)
         out_ts = match(cfg)
         assert out_ts.num_nodes > 0
@@ -197,6 +209,9 @@ class TestPostProcess:
                 output="out.trees",
             ),
             post_process=PostProcessConfig(split_ultimate=False, erase_flanks=False),
+            ancestral_state=AncestralState(
+                path="dummy", field="variant_ancestral_allele"
+            ),
         )
         pp_ts = post_process(matched_ts, cfg)
         # Simplify should remove unused nodes
@@ -223,6 +238,9 @@ class TestPostProcess:
                 output="out.trees",
             ),
             post_process=None,
+            ancestral_state=AncestralState(
+                path="dummy", field="variant_ancestral_allele"
+            ),
         )
         pp_ts = post_process(matched_ts, cfg)
         assert pp_ts.num_nodes == matched_ts.num_nodes
@@ -248,6 +266,9 @@ class TestPostProcess:
                 output="out.trees",
             ),
             post_process=PostProcessConfig(split_ultimate=False, erase_flanks=True),
+            ancestral_state=AncestralState(
+                path="dummy", field="variant_ancestral_allele"
+            ),
         )
         pp_ts = post_process(matched_ts, cfg)
         assert pp_ts.num_nodes > 0
@@ -293,6 +314,7 @@ class TestRun:
                 output="output.trees",
             ),
             post_process=PostProcessConfig(split_ultimate=False, erase_flanks=True),
+            ancestral_state=_anc_state(sample_store),
         )
         out_ts = run(cfg)
         assert out_ts.num_nodes > 0
@@ -410,6 +432,7 @@ class TestIndividualMetadata:
             individual_metadata=IndividualMetadataConfig(
                 fields={"sample_id": "sample_id"},
             ),
+            ancestral_state=_anc_state(sample_store),
         )
         out_ts = run(cfg)
         assert out_ts.num_individuals > 0
@@ -444,6 +467,7 @@ class TestIndividualMetadata:
             individual_metadata=IndividualMetadataConfig(
                 population="sample_population",
             ),
+            ancestral_state=_anc_state(sample_store),
         )
         out_ts = run(cfg)
         assert out_ts.num_populations > 0
@@ -493,7 +517,9 @@ class TestPipelineLogging:
         sim_ts = _simulate(num_samples=4, random_seed=31)
         sample_store = ts_to_sample_vcz(sim_ts)
         anc_cfg = AncestorsConfig(name="ancestors", path=None, sources=["test"])
-        ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
+        ancestor_store = infer_ancestors(
+            Source(path=sample_store, name="test"), anc_cfg, _anc_state(sample_store)
+        )
         cfg = _make_config(sample_store, ancestor_store)
         with caplog.at_level(logging.INFO, logger="tsinfer.pipeline"):
             match(cfg)
@@ -515,7 +541,9 @@ class TestPipelineProgress:
         sim_ts = _simulate(num_samples=4, random_seed=33)
         sample_store = ts_to_sample_vcz(sim_ts)
         anc_cfg = AncestorsConfig(name="ancestors", path=None, sources=["test"])
-        ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
+        ancestor_store = infer_ancestors(
+            Source(path=sample_store, name="test"), anc_cfg, _anc_state(sample_store)
+        )
         cfg = _make_config(sample_store, ancestor_store)
         out_ts = match(cfg, progress=True)
         assert out_ts.num_nodes > 0
@@ -534,7 +562,9 @@ class TestComputeGroupsJson:
         sim_ts = _simulate(num_samples=4, random_seed=40)
         sample_store = ts_to_sample_vcz(sim_ts)
         anc_cfg = AncestorsConfig(name="ancestors", path=None, sources=["test"])
-        ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
+        ancestor_store = infer_ancestors(
+            Source(path=sample_store, name="test"), anc_cfg, _anc_state(sample_store)
+        )
         cfg = _make_config(sample_store, ancestor_store)
         records = json.loads(compute_groups_json(cfg))
         assert isinstance(records, list)
@@ -547,7 +577,9 @@ class TestComputeGroupsJson:
         sim_ts = _simulate(num_samples=4, random_seed=41)
         sample_store = ts_to_sample_vcz(sim_ts)
         anc_cfg = AncestorsConfig(name="ancestors", path=None, sources=["test"])
-        ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
+        ancestor_store = infer_ancestors(
+            Source(path=sample_store, name="test"), anc_cfg, _anc_state(sample_store)
+        )
         cfg = _make_config(sample_store, ancestor_store)
         records = json.loads(compute_groups_json(cfg))
         rec0 = records[0]
@@ -563,7 +595,9 @@ class TestComputeGroupsJson:
         sim_ts = _simulate(num_samples=6, random_seed=42)
         sample_store = ts_to_sample_vcz(sim_ts)
         anc_cfg = AncestorsConfig(name="ancestors", path=None, sources=["test"])
-        ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
+        ancestor_store = infer_ancestors(
+            Source(path=sample_store, name="test"), anc_cfg, _anc_state(sample_store)
+        )
         cfg = _make_config(sample_store, ancestor_store)
         records = json.loads(compute_groups_json(cfg))
         all_indices = {r["haplotype_index"] for r in records}
@@ -581,7 +615,9 @@ class TestComputeGroupsJson:
             sequence_length=1000,
         )
         anc_cfg = AncestorsConfig(name="ancestors", path=None, sources=["test"])
-        ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
+        ancestor_store = infer_ancestors(
+            Source(path=sample_store, name="test"), anc_cfg, _anc_state(sample_store)
+        )
         cfg = _make_config(sample_store, ancestor_store)
         records = json.loads(compute_groups_json(cfg))
         assert len(records) > 0
@@ -613,7 +649,9 @@ class TestComputeGroupsJson:
         sim_ts = _simulate(num_samples=4, random_seed=45)
         sample_store = ts_to_sample_vcz(sim_ts)
         anc_cfg = AncestorsConfig(name="ancestors", path=None, sources=["test"])
-        ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
+        ancestor_store = infer_ancestors(
+            Source(path=sample_store, name="test"), anc_cfg, _anc_state(sample_store)
+        )
         cfg = _make_config(sample_store, ancestor_store)
         json_str = compute_groups_json(cfg)
         df = pd.read_json(io.StringIO(json_str))
@@ -644,7 +682,9 @@ class TestWorkdir:
         sim_ts = _simulate(num_samples=4, random_seed=random_seed)
         sample_store = ts_to_sample_vcz(sim_ts)
         anc_cfg = AncestorsConfig(name="ancestors", path=None, sources=["test"])
-        ancestor_store = infer_ancestors(Source(path=sample_store, name="test"), anc_cfg)
+        ancestor_store = infer_ancestors(
+            Source(path=sample_store, name="test"), anc_cfg, _anc_state(sample_store)
+        )
         cfg = _make_config(sample_store, ancestor_store)
         return cfg
 
@@ -881,6 +921,9 @@ class TestWorkdir:
                     output="out.trees",
                     keep_intermediates=True,
                 ),
+                ancestral_state=AncestralState(
+                    path="dummy", field="variant_ancestral_allele"
+                ),
             )
 
 
@@ -904,6 +947,7 @@ def _run_pipeline_no_augment(sample_store):
             output="output.trees",
         ),
         post_process=PostProcessConfig(split_ultimate=False, erase_flanks=True),
+        ancestral_state=_anc_state(sample_store),
     )
     return run(cfg), cfg
 
@@ -999,6 +1043,7 @@ class TestAugmentSites:
                 output="output.trees",
             ),
             augment_sites=AugmentSitesConfig(sources=["singletons"]),
+            ancestral_state=_anc_state(main_store),
         )
         aug_ts = augment_sites(ts, cfg)
         assert aug_ts.num_sites > original_num_sites
@@ -1031,6 +1076,7 @@ class TestAugmentSites:
                 output="output.trees",
             ),
             augment_sites=AugmentSitesConfig(sources=["same"]),
+            ancestral_state=_anc_state(main_store),
         )
         aug_ts = augment_sites(ts, cfg)
         # No new sites should be added
@@ -1069,6 +1115,7 @@ class TestAugmentSites:
                 output="output.trees",
             ),
             augment_sites=AugmentSitesConfig(sources=["far"]),
+            ancestral_state=_anc_state(main_store),
         )
         aug_ts = augment_sites(ts, cfg)
         # The far site should be outside intervals, so no new sites
@@ -1097,6 +1144,7 @@ class TestAugmentSites:
                 output="output.trees",
             ),
             augment_sites=AugmentSitesConfig(sources=[]),
+            ancestral_state=_anc_state(main_store),
         )
         aug_ts = augment_sites(ts, cfg)
         assert aug_ts.num_sites == ts.num_sites
@@ -1144,6 +1192,7 @@ class TestAugmentSites:
                 output="output.trees",
             ),
             augment_sites=AugmentSitesConfig(sources=["extra"]),
+            ancestral_state=_anc_state(main_store),
         )
 
         aug_ts = augment_sites(ts, cfg)
@@ -1189,6 +1238,7 @@ class TestAugmentSites:
                 output="output.trees",
             ),
             augment_sites=AugmentSitesConfig(sources=["multi"]),
+            ancestral_state=_anc_state(main_store),
         )
         aug_ts = augment_sites(ts, cfg)
         assert aug_ts.num_sites > ts.num_sites
@@ -1229,6 +1279,7 @@ class TestAugmentSites:
             ),
             post_process=PostProcessConfig(split_ultimate=False, erase_flanks=True),
             augment_sites=AugmentSitesConfig(sources=["extra"]),
+            ancestral_state=_anc_state(main_store),
         )
         out_ts = run(cfg)
         assert out_ts.num_nodes > 0
