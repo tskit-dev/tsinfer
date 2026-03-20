@@ -1104,25 +1104,30 @@ class TestAugmentSites:
 
     def test_sample_mapping_diploid(self):
         """Correct mapping for diploid data."""
-        sim_ts = _simulate(num_samples=3, ploidy=2, random_seed=101)
-        sample_store = ts_to_sample_vcz(sim_ts)
-
-        # Create a singleton-like extra site store with same samples
-        # Use 3 diploid samples (6 haplotypes)
+        # 2 non-singleton sites for inference, 3 diploid samples
+        main_store = make_sample_vcz(
+            genotypes=np.array(
+                [[[0, 0], [1, 0], [1, 1]], [[1, 1], [0, 0], [1, 0]]], dtype=np.int8
+            ),
+            positions=np.array([100, 300], dtype=np.int32),
+            alleles=np.array([["A", "T"], ["C", "G"]]),
+            ancestral_state=np.array(["A", "C"]),
+            sequence_length=1000,
+        )
+        # Extra site at position 200, same 3 diploid samples
         extra_store = make_sample_vcz(
             genotypes=np.array([[[0, 0], [0, 0], [1, 0]]], dtype=np.int8),
-            positions=np.array([50], dtype=np.int32),
+            positions=np.array([200], dtype=np.int32),
             alleles=np.array([["A", "T"]]),
             ancestral_state=np.array(["A"]),
-            sequence_length=int(sim_ts.sequence_length),
-            sample_ids=np.array(["tsk_0", "tsk_1", "tsk_2"]),
+            sequence_length=1000,
         )
 
-        ts, _ = _run_pipeline_no_augment(sample_store)
+        ts, _ = _run_pipeline_no_augment(main_store)
 
         cfg = Config(
             sources={
-                "test": Source(path=sample_store, name="test"),
+                "test": Source(path=main_store, name="test"),
                 "extra": Source(path=extra_store, name="extra"),
                 "ancestors": Source(
                     path=None, name="ancestors", sample_time="sample_time"
@@ -1141,24 +1146,9 @@ class TestAugmentSites:
             augment_sites=AugmentSitesConfig(sources=["extra"]),
         )
 
-        # Check that position 50 is in the sequence intervals
-        meta = ts.metadata if ts.metadata is not None else {}
-        intervals = meta.get("sequence_intervals")
-        if intervals is not None:
-            in_interval = False
-            for s, e in intervals:
-                if 50 >= s and 50 < e:
-                    in_interval = True
-                    break
-            if not in_interval:
-                # Skip if position 50 is outside intervals
-                return
-
         aug_ts = augment_sites(ts, cfg)
-        # If position 50 was added, verify it has mutations
-        if aug_ts.num_sites > ts.num_sites:
-            new_positions = set(aug_ts.sites_position) - set(ts.sites_position)
-            assert 50.0 in new_positions
+        assert aug_ts.num_sites > ts.num_sites
+        assert 200.0 in set(aug_ts.sites_position)
 
     def test_multiallelic(self):
         """Multi-allelic sites are placed correctly."""
