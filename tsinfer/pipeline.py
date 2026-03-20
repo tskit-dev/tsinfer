@@ -40,7 +40,7 @@ from .grouping import (
     MatchJob,
     assign_groups,
 )
-from .matching import Matcher, extend_ts, make_root_ts, relabel_alleles
+from .matching import Matcher, extend_ts, make_root_ts
 
 logger = logging.getLogger(__name__)
 
@@ -407,6 +407,7 @@ def match(
         ancestral_alleles,
         cache_size_mb=cache_size,
     )
+    allele_mapper = reader.allele_mapper
 
     # 4. Build initial root TS (or resume from workdir checkpoint)
     anc_times = np.asarray(anc_store["sample_time"][:], dtype=np.float64)
@@ -421,6 +422,7 @@ def match(
             max_time=max_anc_time,
             individuals=individual_metadata_rows if individual_metadata_rows else None,
             populations=population_metadata_rows if population_metadata_rows else None,
+            allele_mapper=allele_mapper,
         )
 
     logger.info(
@@ -469,6 +471,7 @@ def match(
             positions,
             path_compression=path_compression,
             num_alleles=reader.get_num_alleles(),
+            allele_mapper=allele_mapper,
         )
         job_list = [job for _, job in group_jobs]
         match_iter = matcher.match(job_list, reader, num_threads=num_threads)
@@ -495,6 +498,7 @@ def match(
         ts = extend_ts(
             ts,
             paired_results=paired_results,
+            allele_mapper=allele_mapper,
         )
 
         # Write checkpoint to workdir if configured
@@ -509,9 +513,6 @@ def match(
                 if prev_path.exists():
                     prev_path.unlink()
             prev_written_group = group_idx
-
-    # 8. Relabel integer-string alleles to real allele strings
-    ts = relabel_alleles(ts, reader.get_site_alleles())
 
     logger.info(
         "Match complete: %d nodes, %d individuals",
