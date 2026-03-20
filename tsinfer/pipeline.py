@@ -792,6 +792,11 @@ def augment_sites(
                     if val >= 0:
                         genotypes[ts_sample_idx] = val
 
+        # Skip monomorphic sites (all non-missing genotypes identical)
+        non_missing = genotypes[genotypes >= 0]
+        if len(non_missing) == 0 or len(np.unique(non_missing)) < 2:
+            continue
+
         alleles = list(site_alleles[ui])
         anc_allele = site_ancestral[ui]
         pos = float(sorted_positions[ui])
@@ -818,10 +823,12 @@ def augment_sites(
     tables.sort()
     tables.build_index()
     result = tables.tree_sequence()
+    n_added = result.num_sites - ts.num_sites
     logger.info(
-        "augment_sites complete: %d sites total (%d new)",
+        "augment_sites complete: %d sites total (%d added, %d skipped)",
         result.num_sites,
-        n_sites,
+        n_added,
+        n_sites - n_added,
     )
     return result
 
