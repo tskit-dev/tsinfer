@@ -1202,12 +1202,8 @@ class TestAugmentSites:
         )
         aug_ts = augment_sites(ts, cfg)
         assert aug_ts.num_sites > ts.num_sites
-        # Find the new site
-        for site in aug_ts.sites():
-            if site.position == 200.0:
-                # Should have mutations
-                assert len(site.mutations) > 0
-                break
+        site = aug_ts.site(position=200.0)
+        assert len(site.mutations) > 0
 
     def test_run_integration(self):
         """Full run() with augment_sites configured end-to-end."""
