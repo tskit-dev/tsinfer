@@ -595,6 +595,12 @@ def augment_sites(
     For each source listed in ``cfg.augment_sites.sources``, iterates over
     variants not already present in *ts* (and within its sequence_intervals),
     then uses ``tree.map_mutations`` to place them parsimoniously.
+
+    Sites that appear at duplicate positions within a single source are
+    excluded (same behaviour as ``infer_ancestors``).  The ancestral allele
+    is read from ``variant_ancestral_allele`` (or the ``[ancestral_state]``
+    config section) and passed to ``map_mutations`` so that the output
+    always uses the specified ancestral state.
     """
     aug_cfg = cfg.augment_sites
     if aug_cfg is None or len(aug_cfg.sources) == 0:
@@ -625,15 +631,36 @@ def augment_sites(
             int(k): str(v) for k, v in zip(ann_positions.tolist(), ann_values.tolist())
         }
 
-    # --- Pass 1: collect new positions from each source ---
-    # Each entry: (position, alleles_tuple, ancestral_allele_str, source_index)
-    pos_to_info: dict[int, tuple] = {}
+    # --- Detect duplicate positions per source ---
+    # Positions that appear more than once in a single source are excluded,
+    # matching the behaviour of infer_ancestors.
     source_names = aug_cfg.sources
     source_configs = []
-    for src_idx, src_name in enumerate(source_names):
+    per_source_dup_positions: list[set[int]] = []
+    for src_name in source_names:
         source = cfg.sources[src_name]
         source_configs.append(source)
         store = vcz_mod.open_store(source.path)
+        all_pos = np.asarray(store["variant_position"][:], dtype=np.int32)
+        unique, counts = np.unique(all_pos, return_counts=True)
+        dup_mask = counts > 1
+        dup_set = set(unique[dup_mask].tolist()) if np.any(dup_mask) else set()
+        if dup_set:
+            logger.info(
+                "augment_sites: source '%s' has %d duplicate position(s); "
+                "these will be excluded",
+                src_name,
+                len(dup_set),
+            )
+        per_source_dup_positions.append(dup_set)
+
+    # --- Pass 1: collect new positions from each source ---
+    # Each entry: (position, alleles_tuple, ancestral_allele_str, source_index)
+    pos_to_info: dict[int, tuple] = {}
+    for src_idx, _src_name in enumerate(source_names):
+        source = source_configs[src_idx]
+        store = vcz_mod.open_store(source.path)
+        dup_positions = per_source_dup_positions[src_idx]
         fields = ["variant_position", "variant_allele"]
         if ann_lookup is None:
             fields.append("variant_ancestral_allele")
@@ -646,6 +673,8 @@ def augment_sites(
             targets=source.targets,
         ):
             pos = int(var["variant_position"])
+            if pos in dup_positions:
+                continue
             if pos in existing:
                 continue
             if not _position_in_intervals(pos, iv_starts, iv_ends):

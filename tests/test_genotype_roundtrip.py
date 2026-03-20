@@ -491,6 +491,61 @@ class TestAugmentedRoundtrip:
 
         _check_genotypes(store, ts, ploidy=1, check_all=True)
 
+    def test_duplicate_positions_excluded(self):
+        """Sites at duplicate positions within a source are excluded."""
+        # 2 inference sites + 2 sites at the same position (200)
+        # in the augment source — both should be skipped.
+        main_store = make_sample_vcz(
+            genotypes=np.array([[[0], [1], [1]], [[1], [0], [1]]], dtype=np.int8),
+            positions=np.array([100, 300], dtype=np.int32),
+            alleles=np.array([["A", "T"], ["C", "G"]]),
+            ancestral_state=np.array(["A", "C"]),
+            sequence_length=1000,
+        )
+        # Augment source has a duplicate position at 200
+        aug_store = make_sample_vcz(
+            genotypes=np.array([[[0], [1], [0]], [[1], [0], [1]]], dtype=np.int8),
+            positions=np.array([200, 200], dtype=np.int32),
+            alleles=np.array([["A", "T"], ["C", "G"]]),
+            ancestral_state=np.array(["A", "C"]),
+            sequence_length=1000,
+        )
+        ts = _run_pipeline_with_augment(main_store, augment_store=aug_store)
+
+        output_positions = set(ts.sites_position)
+        # Position 200 should NOT appear — it's duplicated in the source
+        assert 200.0 not in output_positions
+
+    def test_duplicate_positions_other_sites_kept(self):
+        """Non-duplicate sites from a source with some duplicates are kept."""
+        main_store = make_sample_vcz(
+            genotypes=np.array([[[0], [1], [1]], [[1], [0], [1]]], dtype=np.int8),
+            positions=np.array([100, 400], dtype=np.int32),
+            alleles=np.array([["A", "T"], ["C", "G"]]),
+            ancestral_state=np.array(["A", "C"]),
+            sequence_length=1000,
+        )
+        # Augment source: position 200 is duplicated, but 300 is unique
+        aug_store = make_sample_vcz(
+            genotypes=np.array(
+                [
+                    [[0], [1], [0]],
+                    [[1], [0], [1]],
+                    [[0], [0], [1]],
+                ],
+                dtype=np.int8,
+            ),
+            positions=np.array([200, 200, 300], dtype=np.int32),
+            alleles=np.array([["A", "T"], ["C", "G"], ["A", "G"]]),
+            ancestral_state=np.array(["A", "C", "A"]),
+            sequence_length=1000,
+        )
+        ts = _run_pipeline_with_augment(main_store, augment_store=aug_store)
+
+        output_positions = set(ts.sites_position)
+        assert 200.0 not in output_positions  # duplicate — excluded
+        assert 300.0 in output_positions  # unique — kept
+
     def test_ancestral_state_overrides_parsimony(self):
         """Specified ancestral state is used even when parsimony would differ.
 
