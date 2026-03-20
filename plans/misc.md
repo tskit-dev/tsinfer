@@ -28,3 +28,4 @@ directly on the sequence intervals from the metadata.
 - Add top-level sequence_length key which should be the length of the reference sequence
 for the contig in question.
 
+- Always use the ancestral state config - don't use variant_ancestral_allele
