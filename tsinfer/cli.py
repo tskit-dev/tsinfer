@@ -280,7 +280,7 @@ def show_match_jobs_cmd(json_file):
         variance = sum((x - mean) ** 2 for x in intervals) / count
         bar_len = round(count / max_count * max_bar) if max_count > 0 else 0
         bar = "#" * bar_len
-        click.echo(f"{group_idx:>6}  {count:>6}  {mean:>8.1f}  {variance:>8.1f}  {bar}")
+        click.echo(f"{group_idx:>6}  {count:>6}  {mean:>8.1f}  {variance:>8.3g}  {bar}")
 
     click.echo(f"\n{len(records)} jobs in {len(group_intervals)} groups")
 
