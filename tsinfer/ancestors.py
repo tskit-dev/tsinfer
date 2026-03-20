@@ -231,7 +231,7 @@ def _find_duplicate_positions(store) -> set[int]:
 
 def compute_inference_sites(
     store: zarr.Group,
-    ancestral_state: AncestralState | None,
+    ancestral_state: AncestralState,
     *,
     include: str | None = None,
     exclude: str | None = None,
@@ -248,20 +248,16 @@ def compute_inference_sites(
     # Detect duplicate positions upfront so we can skip them
     dup_positions = _find_duplicate_positions(store)
 
-    # Build external ancestral state lookup if configured
-    ann_lookup = None
-    if ancestral_state is not None:
-        ann_store = vcz_mod.open_store(ancestral_state.path)
-        ann_positions = np.asarray(ann_store["variant_position"][:])
-        ann_values = np.asarray(ann_store[ancestral_state.field][:])
-        ann_lookup = {
-            int(k): str(v) for k, v in zip(ann_positions.tolist(), ann_values.tolist())
-        }
+    # Build ancestral state lookup
+    ann_store = vcz_mod.open_store(ancestral_state.path)
+    ann_positions = np.asarray(ann_store["variant_position"][:])
+    ann_values = np.asarray(ann_store[ancestral_state.field][:])
+    ann_lookup = {
+        int(k): str(v) for k, v in zip(ann_positions.tolist(), ann_values.tolist())
+    }
 
     # Iterate variants that pass vcztools filters, collecting metadata
     fields = ["variant_position", "variant_allele"]
-    if ancestral_state is None:
-        fields.append("variant_ancestral_allele")
 
     pos_list = []
     allele_list = []
@@ -287,10 +283,7 @@ def compute_inference_sites(
 
         site_alleles = variant["variant_allele"]
 
-        if ann_lookup is not None:
-            anc_str = ann_lookup.get(pos, "")
-        else:
-            anc_str = str(variant["variant_ancestral_allele"])
+        anc_str = ann_lookup.get(pos, "")
 
         # Find ancestral allele index
         anc_idx = -1
@@ -611,7 +604,7 @@ def _process_interval(
 def infer_ancestors(
     sources: list[Source] | Source,
     cfg: AncestorsConfig,
-    ancestral_state: AncestralState | None = None,
+    ancestral_state: AncestralState,
     progress: bool = False,
     num_threads: int = 0,
 ) -> zarr.Group:

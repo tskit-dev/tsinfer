@@ -358,7 +358,7 @@ class TestAncestorVczToVcf:
         import subprocess
 
         from tsinfer.ancestors import infer_ancestors
-        from tsinfer.config import AncestorsConfig, Source
+        from tsinfer.config import AncestorsConfig, AncestralState, Source
 
         n_sites = 20
         n_samples = 6
@@ -381,7 +381,11 @@ class TestAncestorVczToVcf:
             variants_chunk_size=5,
             samples_chunk_size=3,
         )
-        infer_ancestors(Source(path=store, name="test"), cfg)
+        infer_ancestors(
+            Source(path=store, name="test"),
+            cfg,
+            AncestralState(path=store, field="variant_ancestral_allele"),
+        )
 
         result = subprocess.run(
             [sys.executable, "-m", "vcztools", "view", str(anc_path)],

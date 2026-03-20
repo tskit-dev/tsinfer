@@ -26,8 +26,6 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import zarr
-
 # ---------------------------------------------------------------------------
 # Field specification type
 # ---------------------------------------------------------------------------
@@ -179,7 +177,7 @@ class Config:
     sources: dict[str, Source]
     ancestors: list[AncestorsConfig]
     match: MatchConfig
-    ancestral_state: AncestralState | None = None
+    ancestral_state: AncestralState
     individual_metadata: IndividualMetadataConfig | None = None
     post_process: PostProcessConfig | None = None
     augment_sites: AugmentSitesConfig | None = None
@@ -216,11 +214,10 @@ class Config:
                 lines.append(f"  sample_time = {src.sample_time}")
             lines.append("")
 
-        if self.ancestral_state is not None:
-            lines.append("[ancestral_state]")
-            lines.append(f"  path = {self.ancestral_state.path}")
-            lines.append(f"  field = {self.ancestral_state.field}")
-            lines.append("")
+        lines.append("[ancestral_state]")
+        lines.append(f"  path = {self.ancestral_state.path}")
+        lines.append(f"  field = {self.ancestral_state.field}")
+        lines.append("")
 
         for anc in self.ancestors:
             lines.append(f"[[ancestors]] (name={anc.name})")
@@ -288,31 +285,13 @@ class Config:
                     )
 
         # ancestors.path is an output — don't check for existence.
-        # But check that ancestral state info is available.
         for anc in self.ancestors:
-            if self.ancestral_state is None:
-                for src_name in anc.sources:
-                    src = self.sources.get(src_name)
-                    if src is None:
-                        errors.append(
-                            f"Ancestors '{anc.name}' references unknown "
-                            f"source: '{src_name}'"
-                        )
-                        continue
-                    if src.path is None:
-                        continue
-                    p = Path(str(src.path))
-                    if p.exists():
-                        try:
-                            store = zarr.open(str(p), mode="r")
-                            if "variant_ancestral_allele" not in store:
-                                errors.append(
-                                    f"Source '{src_name}' has no "
-                                    f"'variant_ancestral_allele' array and no "
-                                    f"[ancestral_state] section is configured"
-                                )
-                        except Exception:
-                            pass  # path existence errors reported above
+            for src_name in anc.sources:
+                src = self.sources.get(src_name)
+                if src is None:
+                    errors.append(
+                        f"Ancestors '{anc.name}' references unknown source: '{src_name}'"
+                    )
 
         if self.match.reference_ts is not None:
             p = Path(str(self.match.reference_ts))
@@ -321,12 +300,11 @@ class Config:
                     f"Match reference_ts path does not exist: {self.match.reference_ts}"
                 )
 
-        if self.ancestral_state is not None:
-            p = Path(str(self.ancestral_state.path))
-            if not p.exists():
-                errors.append(
-                    f"Ancestral state path does not exist: {self.ancestral_state.path}"
-                )
+        p = Path(str(self.ancestral_state.path))
+        if not p.exists():
+            errors.append(
+                f"Ancestral state path does not exist: {self.ancestral_state.path}"
+            )
 
         return errors
 
@@ -434,10 +412,10 @@ def _parse_sources(raw: dict) -> dict[str, Source]:
     return sources
 
 
-def _parse_ancestral_state(raw: dict) -> AncestralState | None:
+def _parse_ancestral_state(raw: dict) -> AncestralState:
     entry = raw.get("ancestral_state")
     if entry is None:
-        return None
+        raise ValueError("Config must contain an [ancestral_state] section")
     _check_unknown_keys("ancestral_state", entry, _KNOWN_ANCESTRAL_STATE_KEYS)
     try:
         return AncestralState(

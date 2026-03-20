@@ -34,6 +34,7 @@ from helpers import make_sample_vcz, ts_to_sample_vcz
 
 from tsinfer.config import (
     AncestorsConfig,
+    AncestralState,
     AugmentSitesConfig,
     Config,
     MatchConfig,
@@ -46,6 +47,10 @@ from tsinfer.pipeline import run
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _anc_state(store):
+    return AncestralState(path=store, field="variant_ancestral_allele")
 
 
 def _run_pipeline(sample_store):
@@ -63,6 +68,7 @@ def _run_pipeline(sample_store):
             output="output.trees",
         ),
         post_process=PostProcessConfig(),
+        ancestral_state=_anc_state(sample_store),
     )
     return run(cfg)
 
@@ -91,6 +97,7 @@ def _run_pipeline_with_augment(sample_store, augment_store=None):
         ),
         post_process=PostProcessConfig(),
         augment_sites=AugmentSitesConfig(sources=["augment"]),
+        ancestral_state=_anc_state(sample_store),
     )
     return run(cfg)
 

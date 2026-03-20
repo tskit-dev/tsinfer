@@ -598,9 +598,9 @@ def augment_sites(
 
     Sites that appear at duplicate positions within a single source are
     excluded (same behaviour as ``infer_ancestors``).  The ancestral allele
-    is read from ``variant_ancestral_allele`` (or the ``[ancestral_state]``
-    config section) and passed to ``map_mutations`` so that the output
-    always uses the specified ancestral state.
+    is read from the ``[ancestral_state]`` config section and passed to
+    ``map_mutations`` so that the output always uses the specified ancestral
+    state.
     """
     aug_cfg = cfg.augment_sites
     if aug_cfg is None or len(aug_cfg.sources) == 0:
@@ -621,15 +621,13 @@ def augment_sites(
 
     existing = set(ts.sites_position)
 
-    # --- Build ancestral state lookup (same logic as _compute_inference_sites) ---
-    ann_lookup = None
-    if cfg.ancestral_state is not None:
-        ann_store = vcz_mod.open_store(cfg.ancestral_state.path)
-        ann_positions = np.asarray(ann_store["variant_position"][:])
-        ann_values = np.asarray(ann_store[cfg.ancestral_state.field][:])
-        ann_lookup = {
-            int(k): str(v) for k, v in zip(ann_positions.tolist(), ann_values.tolist())
-        }
+    # --- Build ancestral state lookup ---
+    ann_store = vcz_mod.open_store(cfg.ancestral_state.path)
+    ann_positions = np.asarray(ann_store["variant_position"][:])
+    ann_values = np.asarray(ann_store[cfg.ancestral_state.field][:])
+    ann_lookup = {
+        int(k): str(v) for k, v in zip(ann_positions.tolist(), ann_values.tolist())
+    }
 
     # --- Detect duplicate positions per source ---
     # Positions that appear more than once in a single source are excluded,
@@ -662,8 +660,6 @@ def augment_sites(
         store = vcz_mod.open_store(source.path)
         dup_positions = per_source_dup_positions[src_idx]
         fields = ["variant_position", "variant_allele"]
-        if ann_lookup is None:
-            fields.append("variant_ancestral_allele")
         for var in vcz_mod.iter_variants(
             store,
             fields=fields,
@@ -682,10 +678,7 @@ def augment_sites(
             if pos not in pos_to_info:
                 alleles_raw = var["variant_allele"]
                 alleles = tuple(str(a) for a in alleles_raw if str(a) != "")
-                if ann_lookup is not None:
-                    anc_str = ann_lookup.get(pos, "")
-                else:
-                    anc_str = str(var["variant_ancestral_allele"])
+                anc_str = ann_lookup.get(pos, "")
                 pos_to_info[pos] = (alleles, anc_str, src_idx)
 
     if len(pos_to_info) == 0:
