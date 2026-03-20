@@ -33,6 +33,7 @@ Commands:
 
 from __future__ import annotations
 
+import collections
 import json
 import logging
 import sys
@@ -259,11 +260,11 @@ def show_match_jobs_cmd(json_file):
     """Show a histogram of match-jobs group sizes."""
     records = json.loads(Path(json_file).read_text())
 
-    group_intervals: dict[int, list[float]] = {}
+    group_intervals: dict[int, list[float]] = collections.defaultdict(list)
     for rec in records:
         g = rec["group"]
         interval_kb = (rec["end_position"] - rec["start_position"]) / 1000
-        group_intervals.setdefault(g, []).append(interval_kb)
+        group_intervals[g].append(interval_kb)
 
     if not group_intervals:
         click.echo("No match jobs.")
