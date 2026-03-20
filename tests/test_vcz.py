@@ -1184,13 +1184,13 @@ class TestAlleleMapper:
         site_ids = np.array([0, 0, 1, 1], dtype=np.int32)
         codes = np.array([0, 1, 1, 2], dtype=np.int8)
         result = m.decode_mutations(site_ids, codes)
-        assert result == ["A", "T", "G", "T"]
+        np.testing.assert_array_equal(result, ["A", "T", "G", "T"])
 
     def test_encode_mutations(self):
         """encode_mutations maps strings to correct codes."""
         m = AlleleMapper(2, [["A", "T"], ["C", "G", "T"]])
         site_ids = np.array([0, 0, 1, 1], dtype=np.int32)
-        alleles = ["A", "T", "G", "T"]
+        alleles = np.array(["A", "T", "G", "T"])
         result = m.encode_mutations(site_ids, alleles)
         np.testing.assert_array_equal(result, [0, 1, 1, 2])
 

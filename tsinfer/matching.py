@@ -111,7 +111,7 @@ def _tsb_from_ts(
     if ts.num_mutations > 0:
         t0 = time_.monotonic()
         mutations_state = allele_mapper.encode_mutations(
-            ts.mutations_site, list(ts.mutations_derived_state)
+            ts.mutations_site, ts.mutations_derived_state
         )
         t_build_mutations = time_.monotonic() - t0
         t0 = time_.monotonic()

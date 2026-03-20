@@ -1367,7 +1367,7 @@ class AlleleMapper:
         """(num_sites,) array of ancestral allele strings (code 0)."""
         return self._forward[:, 0]
 
-    def decode_mutations(self, site_ids: np.ndarray, codes: np.ndarray) -> list[str]:
+    def decode_mutations(self, site_ids: np.ndarray, codes: np.ndarray) -> np.ndarray:
         """Convert integer allele codes to real allele strings (bulk).
 
         Parameters
@@ -1377,28 +1377,30 @@ class AlleleMapper:
 
         Returns
         -------
-        list of N allele strings
+        (N,) object array of allele strings
         """
-        return [str(self._forward[s, c]) for s, c in zip(site_ids, codes)]
+        return self._forward[site_ids, codes]
 
     def encode_mutations(
-        self, site_ids: np.ndarray, allele_strings: list[str]
+        self, site_ids: np.ndarray, allele_strings: np.ndarray
     ) -> np.ndarray:
         """Convert real allele strings to integer codes (bulk).
 
         Parameters
         ----------
         site_ids : (N,) int array
-        allele_strings : list of N strings
+        allele_strings : (N,) array of strings
 
         Returns
         -------
         (N,) int8 array of codes
         """
-        return np.array(
-            [self._reverse[(int(s), ds)] for s, ds in zip(site_ids, allele_strings)],
-            dtype=np.int8,
-        )
+        allele_strings = np.asarray(allele_strings)
+        result = np.full(len(site_ids), -1, dtype=np.int8)
+        for c in range(self._forward.shape[1]):
+            match = self._forward[site_ids, c] == allele_strings
+            result[match] = c
+        return result
 
 
 class VCZHaplotypeReader:
