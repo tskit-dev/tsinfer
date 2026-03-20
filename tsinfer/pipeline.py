@@ -584,6 +584,228 @@ def _split_ultimate(ts: tskit.TreeSequence) -> tskit.TreeSequence:
     return ts
 
 
+def augment_sites(
+    ts: tskit.TreeSequence,
+    cfg: Config,
+    progress: bool = False,
+) -> tskit.TreeSequence:
+    """
+    Place additional sites onto an inferred tree sequence using parsimony.
+
+    For each source listed in ``cfg.augment_sites.sources``, iterates over
+    variants not already present in *ts* (and within its sequence_intervals),
+    then uses ``tree.map_mutations`` to place them parsimoniously.
+    """
+    aug_cfg = cfg.augment_sites
+    if aug_cfg is None or len(aug_cfg.sources) == 0:
+        return ts
+
+    logger.info("augment_sites: %d source(s)", len(aug_cfg.sources))
+
+    # --- sequence_intervals membership ---
+    meta = ts.metadata if ts.metadata is not None else {}
+    intervals = meta.get("sequence_intervals")
+    if intervals is not None:
+        iv_arr = np.array(intervals, dtype=np.float64)
+        iv_starts = iv_arr[:, 0]
+        iv_ends = iv_arr[:, 1]
+    else:
+        iv_starts = np.array([0.0])
+        iv_ends = np.array([ts.sequence_length])
+
+    existing = set(ts.sites_position)
+
+    # --- Pass 1: collect new positions from each source ---
+    # Each entry: (position, alleles_tuple, source_index)
+    pos_to_info: dict[int, tuple] = {}
+    source_names = aug_cfg.sources
+    source_configs = []
+    for src_idx, src_name in enumerate(source_names):
+        source = cfg.sources[src_name]
+        source_configs.append(source)
+        store = vcz_mod.open_store(source.path)
+        for var in vcz_mod.iter_variants(
+            store,
+            fields=["variant_position", "variant_allele"],
+            include=source.include,
+            exclude=source.exclude,
+            regions=source.regions,
+            targets=source.targets,
+        ):
+            pos = int(var["variant_position"])
+            if pos in existing:
+                continue
+            if not _position_in_intervals(pos, iv_starts, iv_ends):
+                continue
+            if pos not in pos_to_info:
+                alleles_raw = var["variant_allele"]
+                alleles = tuple(str(a) for a in alleles_raw if str(a) != "")
+                pos_to_info[pos] = (alleles, src_idx)
+
+    if len(pos_to_info) == 0:
+        logger.info("augment_sites: no new sites to add")
+        return ts
+
+    # Build sorted unified position list and per-source masks
+    sorted_positions = sorted(pos_to_info.keys())
+    n_sites = len(sorted_positions)
+    n_sources = len(source_names)
+
+    site_alleles = []  # alleles tuple per unified site
+    source_has_site = np.zeros((n_sites, n_sources), dtype=bool)
+    # Track which sources have each position
+    # Re-scan all sources to build the full source_has_site mask
+    source_positions_set: list[set[int]] = [set() for _ in range(n_sources)]
+    for src_idx, src_name in enumerate(source_names):
+        source = cfg.sources[src_name]
+        store = vcz_mod.open_store(source.path)
+        for var in vcz_mod.iter_variants(
+            store,
+            fields=["variant_position"],
+            include=source.include,
+            exclude=source.exclude,
+            regions=source.regions,
+            targets=source.targets,
+        ):
+            pos = int(var["variant_position"])
+            if pos in pos_to_info:
+                source_positions_set[src_idx].add(pos)
+
+    for ui, pos in enumerate(sorted_positions):
+        site_alleles.append(pos_to_info[pos][0])
+        for src_idx in range(n_sources):
+            source_has_site[ui, src_idx] = pos in source_positions_set[src_idx]
+
+    positions_arr = np.array(sorted_positions, dtype=np.int32)
+    logger.info("augment_sites: %d new sites to place", n_sites)
+
+    # --- Build sample node map ---
+    # Map (sample_id, ploidy_index) -> ts sample array index
+    sample_nodes = ts.samples()
+    node_to_sample_idx = {int(n): i for i, n in enumerate(sample_nodes)}
+
+    # Build lookup: (sample_id, ploidy_index) -> ts_sample_idx
+    sid_ploidy_to_ts_idx: dict[tuple[str, int], int] = {}
+    for node_id in sample_nodes:
+        md = ts.node(node_id).metadata
+        if md and "sample_id" in md and "ploidy_index" in md:
+            key = (md["sample_id"], md["ploidy_index"])
+            sid_ploidy_to_ts_idx[key] = node_to_sample_idx[int(node_id)]
+
+    # Per-source: list of (vcz_flat_col, ts_sample_idx) pairs
+    per_source_col_map: list[list[tuple[int, int]]] = []
+    per_source_num_haps: list[int] = []
+    per_source_sample_include: list[np.ndarray | None] = []
+    for _src_idx, src_name in enumerate(source_names):
+        source = cfg.sources[src_name]
+        store = vcz_mod.open_store(source.path)
+        gt_shape = store["call_genotype"].shape
+        num_vcz_samples = gt_shape[1]
+        ploidy = gt_shape[2]
+
+        samples_selection = vcz_mod.resolve_samples_selection(store, source.samples)
+        if samples_selection is not None:
+            selected_samples = len(samples_selection)
+            sample_include = np.zeros(num_vcz_samples, dtype=bool)
+            sample_include[samples_selection] = True
+        else:
+            selected_samples = num_vcz_samples
+            sample_include = None
+
+        raw_ids = store["sample_id"][:]
+        if samples_selection is not None:
+            raw_ids = raw_ids[samples_selection]
+
+        col_map = []
+        for i in range(selected_samples):
+            sid = str(raw_ids[i])
+            for p in range(ploidy):
+                flat_col = i * ploidy + p
+                key = (sid, p)
+                if key in sid_ploidy_to_ts_idx:
+                    col_map.append((flat_col, sid_ploidy_to_ts_idx[key]))
+
+        per_source_col_map.append(col_map)
+        per_source_num_haps.append(selected_samples * ploidy)
+        per_source_sample_include.append(sample_include)
+
+    num_ts_samples = len(sample_nodes)
+
+    # --- Pass 2: stream genotypes and place via map_mutations ---
+    # Build per-source genotype iterators
+    source_iters = []
+    for src_idx, src_name in enumerate(source_names):
+        source = cfg.sources[src_name]
+        store = vcz_mod.open_store(source.path)
+        mask = source_has_site[:, src_idx]
+        src_positions = positions_arr[mask]
+        if len(src_positions) > 0:
+            it = iter(
+                vcz_mod.iter_raw_genotypes(
+                    store,
+                    src_positions,
+                    per_source_sample_include[src_idx],
+                )
+            )
+        else:
+            it = iter([])
+        source_iters.append(it)
+
+    tables = ts.dump_tables()
+    tree = ts.first()
+
+    site_iter = range(n_sites)
+    if progress:
+        site_iter = tqdm.tqdm(
+            site_iter, total=n_sites, desc="augment_sites", unit="sites"
+        )
+
+    for ui in site_iter:
+        # Merge genotypes from all sources
+        genotypes = np.full(num_ts_samples, tskit.MISSING_DATA, dtype=np.int32)
+        for src_idx in range(n_sources):
+            if source_has_site[ui, src_idx]:
+                raw_row = next(source_iters[src_idx])
+                col_map = per_source_col_map[src_idx]
+                for flat_col, ts_sample_idx in col_map:
+                    val = int(raw_row[flat_col])
+                    if val >= 0:
+                        genotypes[ts_sample_idx] = val
+
+        alleles = list(site_alleles[ui])
+        pos = float(sorted_positions[ui])
+        tree.seek(pos)
+        ancestral_state, mutations = tree.map_mutations(genotypes, alleles)
+        site_id = tables.sites.add_row(position=pos, ancestral_state=ancestral_state)
+        mut_id_map = {tskit.NULL: tskit.NULL}
+        for list_id, mut in enumerate(mutations):
+            new_id = tables.mutations.add_row(
+                site=site_id,
+                node=mut.node,
+                derived_state=mut.derived_state,
+                parent=mut_id_map[mut.parent],
+            )
+            mut_id_map[list_id] = new_id
+
+    tables.sort()
+    tables.build_index()
+    result = tables.tree_sequence()
+    logger.info(
+        "augment_sites complete: %d sites total (%d new)",
+        result.num_sites,
+        n_sites,
+    )
+    return result
+
+
+def _position_in_intervals(position, starts, ends):
+    """Check if position falls within any [start, end) interval."""
+    idx = np.searchsorted(starts, position, side="right") - 1
+    if idx < 0:
+        return False
+    return position < ends[idx]
+
+
 def run(
     cfg: Config,
     progress: bool = False,
@@ -592,7 +814,7 @@ def run(
     **kwargs,
 ) -> tskit.TreeSequence:
     """
-    Run the full pipeline: infer_ancestors, match, post_process.
+    Run the full pipeline: infer_ancestors, match, post_process, augment_sites.
     """
     logger.info("Starting full pipeline")
     anc_cfg = cfg.ancestors[0]
@@ -622,6 +844,8 @@ def run(
             **kwargs,
         )
         ts = post_process(ts, cfg, **kwargs)
+        if cfg.augment_sites is not None:
+            ts = augment_sites(ts, cfg, progress=progress)
     finally:
         anc_cfg.path = original_path
 

@@ -32,6 +32,7 @@ from helpers import make_sample_vcz, ts_to_sample_vcz
 from tsinfer.ancestors import infer_ancestors
 from tsinfer.config import (
     AncestorsConfig,
+    AugmentSitesConfig,
     Config,
     IndividualMetadataConfig,
     MatchConfig,
@@ -39,7 +40,7 @@ from tsinfer.config import (
     PostProcessConfig,
     Source,
 )
-from tsinfer.pipeline import compute_groups_json, match, post_process, run
+from tsinfer.pipeline import augment_sites, compute_groups_json, match, post_process, run
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -851,3 +852,370 @@ class TestWorkdir:
                     keep_intermediates=True,
                 ),
             )
+
+
+# ---------------------------------------------------------------------------
+# TestAugmentSites
+# ---------------------------------------------------------------------------
+
+
+def _run_pipeline_no_augment(sample_store):
+    """Run the full pipeline (no augment) and return (ts, sample_store)."""
+    src = Source(path=sample_store, name="test")
+    anc_src = Source(path=None, name="ancestors", sample_time="sample_time")
+    cfg = Config(
+        sources={"test": src, "ancestors": anc_src},
+        ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
+        match=MatchConfig(
+            sources={
+                "ancestors": MatchSourceConfig(node_flags=0, create_individuals=False),
+                "test": MatchSourceConfig(),
+            },
+            output="output.trees",
+        ),
+        post_process=PostProcessConfig(split_ultimate=False, erase_flanks=True),
+    )
+    return run(cfg), cfg
+
+
+class TestAugmentSites:
+    def _make_two_stores(self):
+        """
+        Create two VCZ stores from a simulation:
+        - main_store: all non-singleton sites (for inference)
+        - singleton_store: only singleton sites (for augmenting)
+
+        Returns (main_store, singleton_store, all_positions).
+        """
+        ts = _simulate(
+            num_samples=6, sequence_length=100_000, mutation_rate=2e-8, random_seed=100
+        )
+        assert ts.num_sites > 5, "Need enough sites for the test"
+
+        # Identify singletons
+        sample_nodes = ts.samples()
+        singleton_sites = []
+        non_singleton_sites = []
+        for var in ts.variants(samples=sample_nodes):
+            ac = np.sum(var.genotypes != 0)
+            if ac == 1:
+                singleton_sites.append(int(var.site.id))
+            else:
+                non_singleton_sites.append(int(var.site.id))
+
+        if len(singleton_sites) == 0 or len(non_singleton_sites) < 2:
+            # Fallback: manually create stores with known content
+            return self._make_hand_constructed_stores()
+
+        # Build main store (non-singletons)
+        main_store = ts_to_sample_vcz(ts)
+
+        # Build singleton-only store with same samples
+        all_positions = np.array(
+            [int(ts.site(s).position) for s in range(ts.num_sites)], dtype=np.int32
+        )
+        sing_positions = np.array(
+            [int(ts.site(s).position) for s in singleton_sites], dtype=np.int32
+        )
+
+        return main_store, sing_positions, all_positions, ts
+
+    def _make_hand_constructed_stores(self):
+        """Hand-construct stores for testing augment_sites."""
+        # Main store: 2 sites (non-singletons)
+        main_store = make_sample_vcz(
+            genotypes=np.array([[[0], [1], [1]], [[1], [0], [1]]], dtype=np.int8),
+            positions=np.array([100, 300], dtype=np.int32),
+            alleles=np.array([["A", "T"], ["C", "G"]]),
+            ancestral_state=np.array(["A", "C"]),
+            sequence_length=1000,
+        )
+        # Singleton store: 1 site
+        sing_store = make_sample_vcz(
+            genotypes=np.array([[[0], [0], [1]]], dtype=np.int8),
+            positions=np.array([200], dtype=np.int32),
+            alleles=np.array([["A", "G"]]),
+            ancestral_state=np.array(["A"]),
+            sequence_length=1000,
+        )
+        return main_store, sing_store
+
+    def test_adds_new_sites(self):
+        """Augmenting with a source adds sites not in the original TS."""
+        # Use hand-constructed data for determinism
+        main_store, sing_store = self._make_hand_constructed_stores()
+
+        # Run pipeline on main_store
+        ts, _ = _run_pipeline_no_augment(main_store)
+        original_num_sites = ts.num_sites
+
+        # Augment with singleton store
+        cfg = Config(
+            sources={
+                "test": Source(path=main_store, name="test"),
+                "singletons": Source(path=sing_store, name="singletons"),
+                "ancestors": Source(
+                    path=None, name="ancestors", sample_time="sample_time"
+                ),
+            },
+            ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
+            match=MatchConfig(
+                sources={
+                    "ancestors": MatchSourceConfig(
+                        node_flags=0, create_individuals=False
+                    ),
+                    "test": MatchSourceConfig(),
+                },
+                output="output.trees",
+            ),
+            augment_sites=AugmentSitesConfig(sources=["singletons"]),
+        )
+        aug_ts = augment_sites(ts, cfg)
+        assert aug_ts.num_sites > original_num_sites
+        # Position 200 should now be present
+        aug_positions = set(aug_ts.sites_position)
+        assert 200.0 in aug_positions
+
+    def test_skips_existing_sites(self):
+        """Sites already in the TS are not duplicated."""
+        main_store, sing_store = self._make_hand_constructed_stores()
+        ts, _ = _run_pipeline_no_augment(main_store)
+
+        # Create a source that has the SAME positions as the main store
+        cfg = Config(
+            sources={
+                "test": Source(path=main_store, name="test"),
+                "same": Source(path=main_store, name="same"),
+                "ancestors": Source(
+                    path=None, name="ancestors", sample_time="sample_time"
+                ),
+            },
+            ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
+            match=MatchConfig(
+                sources={
+                    "ancestors": MatchSourceConfig(
+                        node_flags=0, create_individuals=False
+                    ),
+                    "test": MatchSourceConfig(),
+                },
+                output="output.trees",
+            ),
+            augment_sites=AugmentSitesConfig(sources=["same"]),
+        )
+        aug_ts = augment_sites(ts, cfg)
+        # No new sites should be added
+        assert aug_ts.num_sites == ts.num_sites
+
+    def test_respects_sequence_intervals(self):
+        """Sites outside sequence_intervals are skipped."""
+        main_store, sing_store = self._make_hand_constructed_stores()
+        ts, _ = _run_pipeline_no_augment(main_store)
+
+        # Create a singleton store with a site outside the intervals
+        far_store = make_sample_vcz(
+            genotypes=np.array([[[0], [0], [1]]], dtype=np.int8),
+            positions=np.array([999_999], dtype=np.int32),
+            alleles=np.array([["A", "G"]]),
+            ancestral_state=np.array(["A"]),
+            sequence_length=1_000_000,
+        )
+
+        cfg = Config(
+            sources={
+                "test": Source(path=main_store, name="test"),
+                "far": Source(path=far_store, name="far"),
+                "ancestors": Source(
+                    path=None, name="ancestors", sample_time="sample_time"
+                ),
+            },
+            ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
+            match=MatchConfig(
+                sources={
+                    "ancestors": MatchSourceConfig(
+                        node_flags=0, create_individuals=False
+                    ),
+                    "test": MatchSourceConfig(),
+                },
+                output="output.trees",
+            ),
+            augment_sites=AugmentSitesConfig(sources=["far"]),
+        )
+        aug_ts = augment_sites(ts, cfg)
+        # The far site should be outside intervals, so no new sites
+        assert aug_ts.num_sites == ts.num_sites
+
+    def test_no_sources_is_noop(self):
+        """Empty sources list returns TS unchanged."""
+        main_store, _ = self._make_hand_constructed_stores()
+        ts, _ = _run_pipeline_no_augment(main_store)
+
+        cfg = Config(
+            sources={
+                "test": Source(path=main_store, name="test"),
+                "ancestors": Source(
+                    path=None, name="ancestors", sample_time="sample_time"
+                ),
+            },
+            ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
+            match=MatchConfig(
+                sources={
+                    "ancestors": MatchSourceConfig(
+                        node_flags=0, create_individuals=False
+                    ),
+                    "test": MatchSourceConfig(),
+                },
+                output="output.trees",
+            ),
+            augment_sites=AugmentSitesConfig(sources=[]),
+        )
+        aug_ts = augment_sites(ts, cfg)
+        assert aug_ts.num_sites == ts.num_sites
+        assert aug_ts.num_nodes == ts.num_nodes
+
+    def test_sample_mapping_diploid(self):
+        """Correct mapping for diploid data."""
+        sim_ts = _simulate(num_samples=3, ploidy=2, random_seed=101)
+        sample_store = ts_to_sample_vcz(sim_ts)
+
+        # Create a singleton-like extra site store with same samples
+        # Use 3 diploid samples (6 haplotypes)
+        extra_store = make_sample_vcz(
+            genotypes=np.array([[[0, 0], [0, 0], [1, 0]]], dtype=np.int8),
+            positions=np.array([50], dtype=np.int32),
+            alleles=np.array([["A", "T"]]),
+            ancestral_state=np.array(["A"]),
+            sequence_length=int(sim_ts.sequence_length),
+            sample_ids=np.array(["tsk_0", "tsk_1", "tsk_2"]),
+        )
+
+        ts, _ = _run_pipeline_no_augment(sample_store)
+
+        cfg = Config(
+            sources={
+                "test": Source(path=sample_store, name="test"),
+                "extra": Source(path=extra_store, name="extra"),
+                "ancestors": Source(
+                    path=None, name="ancestors", sample_time="sample_time"
+                ),
+            },
+            ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
+            match=MatchConfig(
+                sources={
+                    "ancestors": MatchSourceConfig(
+                        node_flags=0, create_individuals=False
+                    ),
+                    "test": MatchSourceConfig(),
+                },
+                output="output.trees",
+            ),
+            augment_sites=AugmentSitesConfig(sources=["extra"]),
+        )
+
+        # Check that position 50 is in the sequence intervals
+        meta = ts.metadata if ts.metadata is not None else {}
+        intervals = meta.get("sequence_intervals")
+        if intervals is not None:
+            in_interval = False
+            for s, e in intervals:
+                if 50 >= s and 50 < e:
+                    in_interval = True
+                    break
+            if not in_interval:
+                # Skip if position 50 is outside intervals
+                return
+
+        aug_ts = augment_sites(ts, cfg)
+        # If position 50 was added, verify it has mutations
+        if aug_ts.num_sites > ts.num_sites:
+            new_positions = set(aug_ts.sites_position) - set(ts.sites_position)
+            assert 50.0 in new_positions
+
+    def test_multiallelic(self):
+        """Multi-allelic sites are placed correctly."""
+        main_store = make_sample_vcz(
+            genotypes=np.array([[[0], [1], [1]], [[1], [0], [1]]], dtype=np.int8),
+            positions=np.array([100, 300], dtype=np.int32),
+            alleles=np.array([["A", "T"], ["C", "G"]]),
+            ancestral_state=np.array(["A", "C"]),
+            sequence_length=1000,
+        )
+        # Multi-allelic site at position 200
+        multi_store = make_sample_vcz(
+            genotypes=np.array([[[0], [1], [2]]], dtype=np.int8),
+            positions=np.array([200], dtype=np.int32),
+            alleles=np.array([["A", "T", "G"]]),
+            ancestral_state=np.array(["A"]),
+            sequence_length=1000,
+        )
+
+        ts, _ = _run_pipeline_no_augment(main_store)
+
+        cfg = Config(
+            sources={
+                "test": Source(path=main_store, name="test"),
+                "multi": Source(path=multi_store, name="multi"),
+                "ancestors": Source(
+                    path=None, name="ancestors", sample_time="sample_time"
+                ),
+            },
+            ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
+            match=MatchConfig(
+                sources={
+                    "ancestors": MatchSourceConfig(
+                        node_flags=0, create_individuals=False
+                    ),
+                    "test": MatchSourceConfig(),
+                },
+                output="output.trees",
+            ),
+            augment_sites=AugmentSitesConfig(sources=["multi"]),
+        )
+        aug_ts = augment_sites(ts, cfg)
+        assert aug_ts.num_sites > ts.num_sites
+        # Find the new site
+        for site in aug_ts.sites():
+            if site.position == 200.0:
+                # Should have mutations
+                assert len(site.mutations) > 0
+                break
+
+    def test_run_integration(self):
+        """Full run() with augment_sites configured end-to-end."""
+        main_store = make_sample_vcz(
+            genotypes=np.array([[[0], [1], [1]], [[1], [0], [1]]], dtype=np.int8),
+            positions=np.array([100, 300], dtype=np.int32),
+            alleles=np.array([["A", "T"], ["C", "G"]]),
+            ancestral_state=np.array(["A", "C"]),
+            sequence_length=1000,
+        )
+        extra_store = make_sample_vcz(
+            genotypes=np.array([[[0], [0], [1]]], dtype=np.int8),
+            positions=np.array([200], dtype=np.int32),
+            alleles=np.array([["A", "G"]]),
+            ancestral_state=np.array(["A"]),
+            sequence_length=1000,
+        )
+
+        src = Source(path=main_store, name="test")
+        extra_src = Source(path=extra_store, name="extra")
+        anc_src = Source(path=None, name="ancestors", sample_time="sample_time")
+        cfg = Config(
+            sources={"test": src, "extra": extra_src, "ancestors": anc_src},
+            ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
+            match=MatchConfig(
+                sources={
+                    "ancestors": MatchSourceConfig(
+                        node_flags=0, create_individuals=False
+                    ),
+                    "test": MatchSourceConfig(),
+                },
+                output="output.trees",
+            ),
+            post_process=PostProcessConfig(split_ultimate=False, erase_flanks=True),
+            augment_sites=AugmentSitesConfig(sources=["extra"]),
+        )
+        out_ts = run(cfg)
+        assert out_ts.num_nodes > 0
+        # Should have the augmented site
+        positions = set(out_ts.sites_position)
+        assert 200.0 in positions

@@ -328,6 +328,66 @@ def iter_genotypes(store, positions, ancestral_allele_index, sample_include=None
             i += 1
 
 
+def iter_raw_genotypes(store, positions, sample_include=None):
+    """
+    Yield ``(num_haplotypes,)`` int8 raw allele-index rows for the requested
+    positions, one row per position in the order given.
+
+    Unlike ``iter_genotypes``, no ancestral-allele polarisation is applied.
+    Values are raw allele indices into ``variant_allele``; -1 means missing.
+
+    Parameters
+    ----------
+    store : zarr.Group
+        VCZ store containing ``call_genotype`` and ``variant_position``.
+    positions : array-like of int
+        Genomic positions to retrieve (must be non-decreasing and present
+        in ``variant_position``).
+    sample_include : array-like of bool or None
+        Boolean mask (length ``num_samples``) where True means keep this
+        sample.  ``None`` keeps all samples.
+
+    Yields
+    ------
+    np.ndarray
+        ``(num_haplotypes,)`` int8 array of raw allele indices.
+    """
+    positions = np.asarray(positions, dtype=np.int32)
+
+    if len(positions) == 0:
+        return
+
+    all_positions = np.asarray(store["variant_position"][:], dtype=np.int32)
+    site_indices = np.searchsorted(all_positions, positions).astype(np.int64)
+
+    if sample_include is not None:
+        sample_include = np.asarray(sample_include, dtype=bool)
+
+    call_gt = store["call_genotype"]
+    chunk_size = call_gt.chunks[0]
+
+    n = len(site_indices)
+    i = 0
+    cached_chunk_id = -1
+    cached_flat = None
+
+    while i < n:
+        cid = int(site_indices[i]) // chunk_size
+
+        if cid != cached_chunk_id:
+            chunk_data = call_gt.blocks[cid]
+            if sample_include is not None:
+                chunk_data = chunk_data[:, sample_include, :]
+            cached_flat = chunk_data.reshape(chunk_data.shape[0], -1)
+            cached_chunk_id = cid
+
+        chunk_start = cid * chunk_size
+        while i < n and int(site_indices[i]) // chunk_size == cid:
+            local = int(site_indices[i]) - chunk_start
+            yield cached_flat[local].astype(np.int8)
+            i += 1
+
+
 def sequence_length(store: zarr.Group) -> int:
     """Return the sequence length (first contig length) from a VCZ store."""
     return int(store["contig_length"][0])

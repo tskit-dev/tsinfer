@@ -149,6 +149,13 @@ class PostProcessConfig:
 
 
 @dataclass
+class AugmentSitesConfig:
+    """Configuration for the augment_sites step."""
+
+    sources: list[str]
+
+
+@dataclass
 class IndividualMetadataConfig:
     """
     Declares how to populate tskit individual metadata from VCZ arrays.
@@ -175,6 +182,7 @@ class Config:
     ancestral_state: AncestralState | None = None
     individual_metadata: IndividualMetadataConfig | None = None
     post_process: PostProcessConfig | None = None
+    augment_sites: AugmentSitesConfig | None = None
 
     def __post_init__(self):
         if len(self.ancestors) == 0 and self.match.reference_ts is None:
@@ -249,6 +257,11 @@ class Config:
             lines.append(f"  fields = {self.individual_metadata.fields}")
             if self.individual_metadata.population is not None:
                 lines.append(f"  population = {self.individual_metadata.population}")
+            lines.append("")
+
+        if self.augment_sites is not None:
+            lines.append("[augment_sites]")
+            lines.append(f"  sources = {self.augment_sites.sources}")
             lines.append("")
 
         return "\n".join(lines)
@@ -338,6 +351,7 @@ _KNOWN_TOP_LEVEL_KEYS = {
     "match",
     "individual_metadata",
     "post_process",
+    "augment_sites",
 }
 
 _KNOWN_SOURCE_KEYS = {
@@ -379,6 +393,8 @@ _KNOWN_MATCH_SOURCE_KEYS = {"node_flags", "create_individuals"}
 _KNOWN_INDIVIDUAL_METADATA_KEYS = {"fields", "population"}
 
 _KNOWN_POST_PROCESS_KEYS = {"split_ultimate", "erase_flanks"}
+
+_KNOWN_AUGMENT_SITES_KEYS = {"sources"}
 
 
 def _check_unknown_keys(section_name, entry, known):
@@ -532,6 +548,19 @@ def _parse_post_process(raw: dict) -> PostProcessConfig | None:
     )
 
 
+def _parse_augment_sites(raw: dict) -> AugmentSitesConfig | None:
+    entry = raw.get("augment_sites")
+    if entry is None:
+        return None
+    _check_unknown_keys("augment_sites", entry, _KNOWN_AUGMENT_SITES_KEYS)
+    sources = entry.get("sources")
+    if sources is None:
+        raise ValueError("[augment_sites] missing required key: 'sources'")
+    if not isinstance(sources, list):
+        raise ValueError("[augment_sites] sources must be a list of source names")
+    return AugmentSitesConfig(sources=list(sources))
+
+
 def _parse_config(raw: dict) -> Config:
     _check_unknown_keys("top-level", raw, _KNOWN_TOP_LEVEL_KEYS)
     sources = _parse_sources(raw)
@@ -557,4 +586,5 @@ def _parse_config(raw: dict) -> Config:
         ancestral_state=_parse_ancestral_state(raw),
         individual_metadata=_parse_individual_metadata(raw),
         post_process=_parse_post_process(raw),
+        augment_sites=_parse_augment_sites(raw),
     )
