@@ -466,5 +466,7 @@ class TestShowMatchJobs:
             result = runner.invoke(main, ["show-match-jobs", json_path])
             assert result.exit_code == 0, result.output
             assert "Group" in result.output
+            assert "Mean kb" in result.output
+            assert "Var kb" in result.output
             assert "#" in result.output
             assert "jobs in" in result.output

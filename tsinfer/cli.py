@@ -259,26 +259,30 @@ def show_match_jobs_cmd(json_file):
     """Show a histogram of match-jobs group sizes."""
     records = json.loads(Path(json_file).read_text())
 
-    group_counts: dict[int, int] = {}
+    group_intervals: dict[int, list[float]] = {}
     for rec in records:
         g = rec["group"]
-        group_counts[g] = group_counts.get(g, 0) + 1
+        interval_kb = (rec["end_position"] - rec["start_position"]) / 1000
+        group_intervals.setdefault(g, []).append(interval_kb)
 
-    if not group_counts:
+    if not group_intervals:
         click.echo("No match jobs.")
         return
 
-    sorted_groups = sorted(group_counts.items())
-    max_count = max(group_counts.values())
-    max_bar = 100
+    sorted_groups = sorted(group_intervals.items())
+    max_count = max(len(v) for v in group_intervals.values())
+    max_bar = 60
 
-    click.echo(f"{'Group':>6}  {'Count':>6}")
-    for group_idx, count in sorted_groups:
+    click.echo(f"{'Group':>6}  {'Count':>6}  {'Mean kb':>8}  {'Var kb':>8}  ")
+    for group_idx, intervals in sorted_groups:
+        count = len(intervals)
+        mean = sum(intervals) / count
+        variance = sum((x - mean) ** 2 for x in intervals) / count
         bar_len = round(count / max_count * max_bar) if max_count > 0 else 0
         bar = "#" * bar_len
-        click.echo(f"{group_idx:>6}  {count:>6}  {bar}")
+        click.echo(f"{group_idx:>6}  {count:>6}  {mean:>8.1f}  {variance:>8.1f}  {bar}")
 
-    click.echo(f"\n{len(records)} jobs in {len(group_counts)} groups")
+    click.echo(f"\n{len(records)} jobs in {len(group_intervals)} groups")
 
 
 # ---------------------------------------------------------------------------
