@@ -621,112 +621,38 @@ def augment_sites(
 
     existing = set(ts.sites_position)
 
-    # --- Build ancestral state lookup ---
-    ann_store = vcz_mod.open_store(cfg.ancestral_state.path)
-    ann_positions = np.asarray(ann_store["variant_position"][:])
-    ann_values = np.asarray(ann_store[cfg.ancestral_state.field][:])
-    ann_lookup = {
-        int(k): str(v) for k, v in zip(ann_positions.tolist(), ann_values.tolist())
-    }
+    # --- Build MultiSourceView ---
+    source_configs = [cfg.sources[name] for name in aug_cfg.sources]
+    view = vcz_mod.MultiSourceView(
+        source_configs,
+        cfg.ancestral_state,
+        require_ancestral_match=False,
+    )
 
-    # --- Detect duplicate positions per source ---
-    # Positions that appear more than once in a single source are excluded,
-    # matching the behaviour of infer_ancestors.
-    source_names = aug_cfg.sources
-    source_configs = []
-    per_source_dup_positions: list[set[int]] = []
-    for src_name in source_names:
-        source = cfg.sources[src_name]
-        source_configs.append(source)
-        store = vcz_mod.open_store(source.path)
-        all_pos = np.asarray(store["variant_position"][:], dtype=np.int32)
-        unique, counts = np.unique(all_pos, return_counts=True)
-        dup_mask = counts > 1
-        dup_set = set(unique[dup_mask].tolist()) if np.any(dup_mask) else set()
-        if dup_set:
-            logger.info(
-                "augment_sites: source '%s' has %d duplicate position(s); "
-                "these will be excluded",
-                src_name,
-                len(dup_set),
-            )
-        per_source_dup_positions.append(dup_set)
+    # --- Post-filter positions ---
+    mask = np.array(
+        [
+            int(pos) not in existing and _position_in_intervals(pos, iv_starts, iv_ends)
+            for pos in view.positions
+        ],
+        dtype=bool,
+    )
+    filtered_positions = view.positions[mask]
+    filtered_alleles = view.alleles[mask]
+    filtered_source_has_site = view.source_has_site[mask]
 
-    # --- Pass 1: collect new positions from each source ---
-    # Each entry: (position, alleles_tuple, ancestral_allele_str, source_index)
-    pos_to_info: dict[int, tuple] = {}
-    for src_idx, _src_name in enumerate(source_names):
-        source = source_configs[src_idx]
-        store = vcz_mod.open_store(source.path)
-        dup_positions = per_source_dup_positions[src_idx]
-        fields = ["variant_position", "variant_allele"]
-        for var in vcz_mod.iter_variants(
-            store,
-            fields=fields,
-            include=source.include,
-            exclude=source.exclude,
-            regions=source.regions,
-            targets=source.targets,
-        ):
-            pos = int(var["variant_position"])
-            if pos in dup_positions:
-                continue
-            if pos in existing:
-                continue
-            if not _position_in_intervals(pos, iv_starts, iv_ends):
-                continue
-            if pos not in pos_to_info:
-                alleles_raw = var["variant_allele"]
-                alleles = tuple(str(a) for a in alleles_raw if str(a) != "")
-                anc_str = ann_lookup.get(pos, "")
-                pos_to_info[pos] = (alleles, anc_str, src_idx)
-
-    if len(pos_to_info) == 0:
+    n_sites = len(filtered_positions)
+    if n_sites == 0:
         logger.info("augment_sites: no new sites to add")
         return ts
 
-    # Build sorted unified position list and per-source masks
-    sorted_positions = sorted(pos_to_info.keys())
-    n_sites = len(sorted_positions)
-    n_sources = len(source_names)
-
-    site_alleles = []  # alleles tuple per unified site
-    site_ancestral = []  # ancestral allele string per unified site
-    source_has_site = np.zeros((n_sites, n_sources), dtype=bool)
-    # Track which sources have each position
-    # Re-scan all sources to build the full source_has_site mask
-    source_positions_set: list[set[int]] = [set() for _ in range(n_sources)]
-    for src_idx, src_name in enumerate(source_names):
-        source = cfg.sources[src_name]
-        store = vcz_mod.open_store(source.path)
-        for var in vcz_mod.iter_variants(
-            store,
-            fields=["variant_position"],
-            include=source.include,
-            exclude=source.exclude,
-            regions=source.regions,
-            targets=source.targets,
-        ):
-            pos = int(var["variant_position"])
-            if pos in pos_to_info:
-                source_positions_set[src_idx].add(pos)
-
-    for ui, pos in enumerate(sorted_positions):
-        info = pos_to_info[pos]
-        site_alleles.append(info[0])
-        site_ancestral.append(info[1])
-        for src_idx in range(n_sources):
-            source_has_site[ui, src_idx] = pos in source_positions_set[src_idx]
-
-    positions_arr = np.array(sorted_positions, dtype=np.int32)
     logger.info("augment_sites: %d new sites to place", n_sites)
+    n_sources = view.num_sources
 
     # --- Build sample node map ---
-    # Map (sample_id, ploidy_index) -> ts sample array index
     sample_nodes = ts.samples()
     node_to_sample_idx = {int(n): i for i, n in enumerate(sample_nodes)}
 
-    # Build lookup: (sample_id, ploidy_index) -> ts_sample_idx
     sid_ploidy_to_ts_idx: dict[tuple[str, int], int] = {}
     for node_id in sample_nodes:
         md = ts.node(node_id).metadata
@@ -736,101 +662,83 @@ def augment_sites(
 
     # Per-source: list of (vcz_flat_col, ts_sample_idx) pairs
     per_source_col_map: list[list[tuple[int, int]]] = []
-    per_source_num_haps: list[int] = []
-    per_source_sample_include: list[np.ndarray | None] = []
-    for _src_idx, src_name in enumerate(source_names):
-        source = cfg.sources[src_name]
-        store = vcz_mod.open_store(source.path)
-        gt_shape = store["call_genotype"].shape
-        num_vcz_samples = gt_shape[1]
-        ploidy = gt_shape[2]
-
-        samples_selection = vcz_mod.resolve_samples_selection(store, source.samples)
-        if samples_selection is not None:
-            selected_samples = len(samples_selection)
-            sample_include = np.zeros(num_vcz_samples, dtype=bool)
-            sample_include[samples_selection] = True
-        else:
-            selected_samples = num_vcz_samples
-            sample_include = None
-
-        raw_ids = store["sample_id"][:]
-        if samples_selection is not None:
-            raw_ids = raw_ids[samples_selection]
-
+    for src_idx in range(n_sources):
+        ploidy = view.source_ploidy(src_idx)
+        sample_ids = view.source_sample_ids(src_idx)
         col_map = []
-        for i in range(selected_samples):
-            sid = str(raw_ids[i])
+        for i, sid in enumerate(sample_ids):
             for p in range(ploidy):
                 flat_col = i * ploidy + p
                 key = (sid, p)
                 if key in sid_ploidy_to_ts_idx:
                     col_map.append((flat_col, sid_ploidy_to_ts_idx[key]))
-
         per_source_col_map.append(col_map)
-        per_source_num_haps.append(selected_samples * ploidy)
-        per_source_sample_include.append(sample_include)
 
     num_ts_samples = len(sample_nodes)
 
-    # --- Pass 2: stream genotypes and place via map_mutations ---
-    # Build per-source genotype iterators
-    source_iters = []
-    for src_idx, src_name in enumerate(source_names):
-        source = cfg.sources[src_name]
-        store = vcz_mod.open_store(source.path)
-        mask = source_has_site[:, src_idx]
-        src_positions = positions_arr[mask]
-        if len(src_positions) > 0:
-            it = iter(
-                vcz_mod.iter_raw_genotypes(
-                    store,
-                    src_positions,
-                    per_source_sample_include[src_idx],
-                )
-            )
-        else:
-            it = iter([])
-        source_iters.append(it)
-
+    # --- Stream genotypes and place via map_mutations ---
     tables = ts.dump_tables()
     tree = ts.first()
 
-    site_iter = range(n_sites)
+    site_iter = enumerate(view.iter_genotypes(filtered_positions))
     if progress:
         site_iter = tqdm.tqdm(
             site_iter, total=n_sites, desc="augment_sites", unit="sites"
         )
 
-    for ui in site_iter:
-        # Merge genotypes from all sources
+    for ui, canonical_row in site_iter:
+        # Map canonical codes to per-ts-sample genotypes
         genotypes = np.full(num_ts_samples, tskit.MISSING_DATA, dtype=np.int32)
+        # Distribute canonical codes to ts sample slots
+        offset = 0
         for src_idx in range(n_sources):
-            if source_has_site[ui, src_idx]:
-                raw_row = next(source_iters[src_idx])
+            num_haps = view.source_num_haplotypes(src_idx)
+            if filtered_source_has_site[ui, src_idx]:
+                src_row = canonical_row[offset : offset + num_haps]
                 col_map = per_source_col_map[src_idx]
                 for flat_col, ts_sample_idx in col_map:
-                    val = int(raw_row[flat_col])
+                    val = int(src_row[flat_col])
                     if val >= 0:
                         genotypes[ts_sample_idx] = val
+            offset += num_haps
 
-        # Skip all-missing sites (no genotype data at all)
+        # Skip all-missing sites
         non_missing = genotypes[genotypes >= 0]
         if len(non_missing) == 0:
             continue
 
-        alleles = list(site_alleles[ui])
-        anc_allele = site_ancestral[ui]
-        pos = float(sorted_positions[ui])
+        # Get alleles from canonical encoding (code -> allele string)
+        # Canonical codes are indices into this allele list
+        site_allele_row = filtered_alleles[ui]
+        alleles = [str(a) if a is not None else "" for a in site_allele_row]
+        # Trim trailing empty alleles
+        while alleles and alleles[-1] == "":
+            alleles.pop()
+        # Canonical code 0 = ancestral allele
+        anc_allele = alleles[0] if alleles else ""
+        pos = float(filtered_positions[ui])
         tree.seek(pos)
-        # Use specified ancestral state if it matches a known allele;
-        # otherwise let parsimony choose.
-        if anc_allele in alleles:
+        if anc_allele and anc_allele != "":
             ancestral_state, mutations = tree.map_mutations(
                 genotypes, alleles, ancestral_state=anc_allele
             )
         else:
-            ancestral_state, mutations = tree.map_mutations(genotypes, alleles)
+            # No ancestral allele known; let parsimony choose
+            # Strip the leading empty string and remap genotypes
+            real_alleles = [a for a in alleles if a != ""]
+            # Remap genotypes: canonical code N -> real_alleles index
+            # Build mapping from canonical code -> real allele index
+            code_to_real = {}
+            for c, a in enumerate(alleles):
+                if a != "":
+                    code_to_real[c] = real_alleles.index(a)
+            remapped = np.full_like(genotypes, tskit.MISSING_DATA)
+            for i in range(len(genotypes)):
+                if genotypes[i] >= 0 and genotypes[i] in code_to_real:
+                    remapped[i] = code_to_real[genotypes[i]]
+            ancestral_state, mutations = tree.map_mutations(remapped, real_alleles)
+            alleles = real_alleles
+            genotypes = remapped
         site_id = tables.sites.add_row(position=pos, ancestral_state=ancestral_state)
         mut_id_map = {tskit.NULL: tskit.NULL}
         for list_id, mut in enumerate(mutations):

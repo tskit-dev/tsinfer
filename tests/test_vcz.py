@@ -1354,3 +1354,261 @@ class TestGetSiteAlleles:
         # Site 1: A (ancestral), G (from both sources — same code)
         assert alleles[1, 0] == "A"
         assert alleles[1, 1] == "G"
+
+
+# ---------------------------------------------------------------------------
+# MultiSourceView
+# ---------------------------------------------------------------------------
+
+
+class TestMultiSourceView:
+    def _anc_state(self, store):
+        from tsinfer.config import AncestralState
+
+        return AncestralState(path=store, field="variant_ancestral_allele")
+
+    def test_single_source_positions_and_alleles(self):
+        from tsinfer.config import Source
+        from tsinfer.vcz import MultiSourceView
+
+        store = make_sample_vcz(
+            genotypes=np.array([[[0, 1]], [[1, 0]]], dtype=np.int8),
+            positions=np.array([100, 200], dtype=np.int32),
+            alleles=np.array([["A", "T"], ["C", "G"]]),
+            ancestral_state=np.array(["A", "C"]),
+            sequence_length=1000,
+        )
+        src = Source(path=store, name="s1")
+        view = MultiSourceView(src, self._anc_state(store))
+
+        assert view.num_sources == 1
+        assert view.num_sites == 2
+        np.testing.assert_array_equal(view.positions, [100, 200])
+        # Allele 0 = ancestral
+        assert view.alleles[0, 0] == "A"
+        assert view.alleles[0, 1] == "T"
+        assert view.alleles[1, 0] == "C"
+        assert view.alleles[1, 1] == "G"
+
+    def test_multiple_sources_unified_positions(self):
+        from tsinfer.config import Source
+        from tsinfer.vcz import MultiSourceView
+
+        store_a = make_sample_vcz(
+            genotypes=np.array([[[1]], [[0]]], dtype=np.int8),
+            positions=np.array([100, 300], dtype=np.int32),
+            alleles=np.array([["A", "T"], ["C", "G"]]),
+            ancestral_state=np.array(["A", "C"]),
+            sequence_length=1000,
+            sample_ids=np.array(["s0"]),
+        )
+        store_b = make_sample_vcz(
+            genotypes=np.array([[[0]], [[1]]], dtype=np.int8),
+            positions=np.array([200, 300], dtype=np.int32),
+            alleles=np.array([["A", "G"], ["C", "G"]]),
+            ancestral_state=np.array(["A", "C"]),
+            sequence_length=1000,
+            sample_ids=np.array(["s1"]),
+        )
+        # Use store_a as ancestral state source (has pos 100, 300)
+        # Also need pos 200 from store_b's ancestral state
+        # Build combined annotation
+        ann_store = make_sample_vcz(
+            genotypes=np.zeros((3, 1, 1), dtype=np.int8),
+            positions=np.array([100, 200, 300], dtype=np.int32),
+            alleles=np.array([["A", "T"], ["A", "G"], ["C", "G"]]),
+            ancestral_state=np.array(["A", "A", "C"]),
+            sequence_length=1000,
+        )
+        from tsinfer.config import AncestralState
+
+        anc = AncestralState(path=ann_store, field="variant_ancestral_allele")
+        view = MultiSourceView(
+            [
+                Source(path=store_a, name="a"),
+                Source(path=store_b, name="b"),
+            ],
+            anc,
+        )
+
+        assert view.num_sources == 2
+        assert view.num_sites == 3
+        np.testing.assert_array_equal(view.positions, [100, 200, 300])
+        # source_has_site: source a has 100,300; source b has 200,300
+        assert view.source_has_site[0, 0] is np.True_  # pos 100, src a
+        assert view.source_has_site[0, 1] is np.False_  # pos 100, src b
+        assert view.source_has_site[1, 0] is np.False_  # pos 200, src a
+        assert view.source_has_site[1, 1] is np.True_  # pos 200, src b
+        assert view.source_has_site[2, 0] is np.True_  # pos 300, src a
+        assert view.source_has_site[2, 1] is np.True_  # pos 300, src b
+
+    def test_duplicate_positions_excluded(self):
+        from tsinfer.config import Source
+        from tsinfer.vcz import MultiSourceView
+
+        # Position 100 appears twice — should be excluded
+        store = make_sample_vcz(
+            genotypes=np.array([[[0]], [[1]], [[0]]], dtype=np.int8),
+            positions=np.array([100, 100, 200], dtype=np.int32),
+            alleles=np.array([["A", "T"], ["A", "T"], ["C", "G"]]),
+            ancestral_state=np.array(["A", "A", "C"]),
+            sequence_length=1000,
+        )
+        src = Source(path=store, name="s1")
+        view = MultiSourceView(src, self._anc_state(store))
+
+        assert view.num_sites == 1
+        np.testing.assert_array_equal(view.positions, [200])
+
+    def test_haplotypes_enumeration(self):
+        from tsinfer.config import Source
+        from tsinfer.vcz import MultiSourceView
+
+        store = make_sample_vcz(
+            genotypes=np.array([[[0, 1], [1, 0]]], dtype=np.int8),
+            positions=np.array([100], dtype=np.int32),
+            alleles=np.array([["A", "T"]]),
+            ancestral_state=np.array(["A"]),
+            sequence_length=1000,
+            sample_ids=np.array(["s0", "s1"]),
+        )
+        src = Source(path=store, name="s1")
+        view = MultiSourceView(src, self._anc_state(store))
+
+        haps = view.haplotypes()
+        assert len(haps) == 4  # 2 samples * 2 ploidy
+        assert haps[0] == ("s0", 0, 0)
+        assert haps[1] == ("s0", 1, 0)
+        assert haps[2] == ("s1", 0, 0)
+        assert haps[3] == ("s1", 1, 0)
+        assert view.num_haplotypes == 4
+
+    def test_iter_genotypes_single_source(self):
+        from tsinfer.config import Source
+        from tsinfer.vcz import MultiSourceView
+
+        # 2 sites, 2 haploid samples
+        store = make_sample_vcz(
+            genotypes=np.array([[[0], [1]], [[1], [0]]], dtype=np.int8),
+            positions=np.array([100, 200], dtype=np.int32),
+            alleles=np.array([["A", "T"], ["C", "G"]]),
+            ancestral_state=np.array(["A", "C"]),
+            sequence_length=1000,
+            sample_ids=np.array(["s0", "s1"]),
+        )
+        src = Source(path=store, name="s1")
+        view = MultiSourceView(src, self._anc_state(store))
+
+        rows = list(view.iter_genotypes())
+        assert len(rows) == 2
+        # Site 0: s0=ref(A)=0, s1=alt(T)=1
+        np.testing.assert_array_equal(rows[0], [0, 1])
+        # Site 1: s0=alt(G)=1, s1=ref(C)=0
+        np.testing.assert_array_equal(rows[1], [1, 0])
+
+    def test_iter_genotypes_subset_positions(self):
+        from tsinfer.config import Source
+        from tsinfer.vcz import MultiSourceView
+
+        store = make_sample_vcz(
+            genotypes=np.array([[[0], [1]], [[1], [0]], [[0], [0]]], dtype=np.int8),
+            positions=np.array([100, 200, 300], dtype=np.int32),
+            alleles=np.array([["A", "T"], ["C", "G"], ["A", "T"]]),
+            ancestral_state=np.array(["A", "C", "A"]),
+            sequence_length=1000,
+            sample_ids=np.array(["s0", "s1"]),
+        )
+        src = Source(path=store, name="s1")
+        view = MultiSourceView(src, self._anc_state(store))
+
+        # Only request positions 100 and 300
+        rows = list(view.iter_genotypes(np.array([100, 300], dtype=np.int32)))
+        assert len(rows) == 2
+        np.testing.assert_array_equal(rows[0], [0, 1])  # site 100
+        np.testing.assert_array_equal(rows[1], [0, 0])  # site 300
+
+    def test_iter_genotypes_missing_source(self):
+        """Sources missing a site contribute -1 arrays."""
+        from tsinfer.config import AncestralState, Source
+        from tsinfer.vcz import MultiSourceView
+
+        store_a = make_sample_vcz(
+            genotypes=np.array([[[1]]], dtype=np.int8),
+            positions=np.array([100], dtype=np.int32),
+            alleles=np.array([["A", "T"]]),
+            ancestral_state=np.array(["A"]),
+            sequence_length=1000,
+            sample_ids=np.array(["s0"]),
+        )
+        store_b = make_sample_vcz(
+            genotypes=np.array([[[1]]], dtype=np.int8),
+            positions=np.array([200], dtype=np.int32),
+            alleles=np.array([["C", "G"]]),
+            ancestral_state=np.array(["C"]),
+            sequence_length=1000,
+            sample_ids=np.array(["s1"]),
+        )
+        ann_store = make_sample_vcz(
+            genotypes=np.zeros((2, 1, 1), dtype=np.int8),
+            positions=np.array([100, 200], dtype=np.int32),
+            alleles=np.array([["A", "T"], ["C", "G"]]),
+            ancestral_state=np.array(["A", "C"]),
+            sequence_length=1000,
+        )
+        anc = AncestralState(path=ann_store, field="variant_ancestral_allele")
+        view = MultiSourceView(
+            [
+                Source(path=store_a, name="a"),
+                Source(path=store_b, name="b"),
+            ],
+            anc,
+        )
+
+        rows = list(view.iter_genotypes())
+        assert len(rows) == 2
+        # Site 100: src_a has it (1 hap), src_b missing (-1)
+        np.testing.assert_array_equal(rows[0], [1, -1])
+        # Site 200: src_a missing (-1), src_b has it (1 hap)
+        np.testing.assert_array_equal(rows[1], [-1, 1])
+
+    def test_sample_selection_respected(self):
+        from tsinfer.config import Source
+        from tsinfer.vcz import MultiSourceView
+
+        store = make_sample_vcz(
+            genotypes=np.array([[[0], [1], [1]]], dtype=np.int8),
+            positions=np.array([100], dtype=np.int32),
+            alleles=np.array([["A", "T"]]),
+            ancestral_state=np.array(["A"]),
+            sequence_length=1000,
+            sample_ids=np.array(["s0", "s1", "s2"]),
+        )
+        # Select only s0 and s2
+        src = Source(path=store, name="s1", samples="s0,s2")
+        view = MultiSourceView(src, self._anc_state(store))
+
+        assert view.num_haplotypes == 2
+        assert view.source_sample_ids(0) == ["s0", "s2"]
+        rows = list(view.iter_genotypes())
+        assert len(rows) == 1
+        np.testing.assert_array_equal(rows[0], [0, 1])
+
+    def test_source_accessors(self):
+        from tsinfer.config import Source
+        from tsinfer.vcz import MultiSourceView
+
+        store = make_sample_vcz(
+            genotypes=np.array([[[0, 1]]], dtype=np.int8),
+            positions=np.array([100], dtype=np.int32),
+            alleles=np.array([["A", "T"]]),
+            ancestral_state=np.array(["A"]),
+            sequence_length=1000,
+            sample_ids=np.array(["s0"]),
+        )
+        src = Source(path=store, name="s1")
+        view = MultiSourceView(src, self._anc_state(store))
+
+        assert view.source_num_haplotypes(0) == 2
+        assert view.source_sample_ids(0) == ["s0"]
+        assert view.source_ploidy(0) == 2
+        assert view.source_store(0) is not None
