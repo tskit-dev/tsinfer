@@ -201,14 +201,15 @@ def _resolve_joined_field(
 def resolve_samples_selection(
     store: zarr.Group,
     samples: str | None,
-) -> np.ndarray | None:
+) -> np.ndarray:
     """
     Convert a bcftools-style samples string to a selection index array.
 
-    Returns None if samples is None (keep all samples).
+    Returns the full index array if samples is None (keep all samples).
     """
     if samples is None:
-        return None
+        num_samples = store["sample_id"].shape[0]
+        return np.arange(num_samples)
     _, selection = parse_samples(samples, store["sample_id"][:])
     return selection
 
@@ -1320,10 +1321,9 @@ class ChunkCache:
         return self._current_bytes
 
 
-def _find_duplicate_positions(store) -> set[int]:
+def _find_duplicate_positions(positions: np.ndarray) -> set[int]:
     """Return the set of genomic positions that appear more than once."""
-    all_positions = np.asarray(store["variant_position"][:], dtype=np.int32)
-    unique, counts = np.unique(all_positions, return_counts=True)
+    unique, counts = np.unique(positions, return_counts=True)
     dup_mask = counts > 1
     if not np.any(dup_mask):
         return set()
@@ -2051,18 +2051,20 @@ class MultiSourceView:
     """
     Unified view over one or more VCZ sample stores for variant iteration.
 
-    Eagerly resolves sample selection, duplicate positions, ancestral state
-    matching, and allele encoding on construction.  Provides a single
-    ``iter_genotypes`` method that yields canonical allele codes
-    (0 = ancestral, 1+ = derived, -1 = missing) concatenated across sources.
+    Construction is cheap: it opens stores, reads positions/alleles, removes
+    duplicates, checks for duplicate sample IDs across sources, builds the
+    ancestral-state lookup, and computes the unified set of potential sites.
+
+    Heavy work (AlleleMapper construction, remap-table precomputation) is
+    deferred to ``prepare(positions)``, which must be called before
+    ``iter_genotypes``.  If ``iter_genotypes`` is called without a prior
+    ``prepare``, it calls ``prepare`` automatically with all positions.
     """
 
     def __init__(
         self,
         sources,
         ancestral_state,
-        *,
-        require_ancestral_match=True,
     ):
         from .config import Source
 
@@ -2091,20 +2093,13 @@ class MultiSourceView:
             ploidy = gt_shape[2]
             self._ploidies.append(ploidy)
 
-            if samples_selection is not None:
-                sample_include = np.zeros(num_samples, dtype=bool)
-                sample_include[samples_selection] = True
-                num_samples_used = len(samples_selection)
-            else:
-                sample_include = None
-                num_samples_used = num_samples
+            sample_include = np.zeros(num_samples, dtype=bool)
+            sample_include[samples_selection] = True
             self._sample_includes.append(sample_include)
-            self._num_haplotypes_per_source.append(num_samples_used * ploidy)
+            self._num_haplotypes_per_source.append(len(samples_selection) * ploidy)
 
             # Sample IDs (filtered by selection)
-            raw_ids = store["sample_id"][:]
-            if samples_selection is not None:
-                raw_ids = raw_ids[samples_selection]
+            raw_ids = store["sample_id"][:][samples_selection]
             self._sample_ids_per_source.append([str(x) for x in raw_ids.tolist()])
 
             # Positions and alleles (bulk reads)
@@ -2114,8 +2109,20 @@ class MultiSourceView:
             self._alleles_per_source.append(src_alleles)
 
             # Find duplicate positions
-            dup_positions = _find_duplicate_positions(store)
+            dup_positions = _find_duplicate_positions(src_positions)
             self._dup_positions_per_source.append(dup_positions)
+
+        # --- Check for duplicate sample IDs across sources ---
+        all_ids: set[str] = set()
+        for _src_idx, ids in enumerate(self._sample_ids_per_source):
+            src_set = set(ids)
+            overlap = all_ids & src_set
+            if overlap:
+                logger.warning(
+                    "Duplicate sample ID(s) across sources: %s",
+                    overlap,
+                )
+            all_ids |= src_set
 
         # --- Ancestral state lookup ---
         ann_store = open_store(ancestral_state.path)
@@ -2127,91 +2134,64 @@ class MultiSourceView:
 
         # --- Unified site set ---
         # Collect non-duplicate positions with valid ancestral allele
-        # Also apply variant filters (include/exclude/regions/targets)
+        # Variant filters (include/exclude/regions/targets) are deferred
+        # to iter_genotypes
         per_source_pos_sets = []
         for src_idx in range(n_sources):
-            source = sources[src_idx]
             src_positions = self._positions_per_source[src_idx]
             dup_positions = self._dup_positions_per_source[src_idx]
-
-            # If source has variant filters, use iter_variants to
-            # find positions that pass
-            has_filters = (
-                source.include is not None
-                or source.exclude is not None
-                or source.regions is not None
-                or source.targets is not None
-            )
-            if has_filters:
-                filtered_positions = set()
-                for var in iter_variants(
-                    self._stores[src_idx],
-                    fields=["variant_position"],
-                    include=source.include,
-                    exclude=source.exclude,
-                    regions=source.regions,
-                    targets=source.targets,
-                ):
-                    filtered_positions.add(int(var["variant_position"]))
-            else:
-                filtered_positions = None
 
             valid = set()
             for p in src_positions.tolist():
                 p_int = int(p)
                 if p_int in dup_positions:
                     continue
-                if require_ancestral_match and p_int not in self._ann_lookup:
-                    continue
-                if filtered_positions is not None and p_int not in filtered_positions:
+                if p_int not in self._ann_lookup:
                     continue
                 valid.add(p_int)
             per_source_pos_sets.append(valid)
         self._per_source_pos_sets = per_source_pos_sets
 
         # Merge all positions
-        all_pos_set = set()
+        all_pos_set: set[int] = set()
         for s in per_source_pos_sets:
             all_pos_set |= s
 
         # Filter: ancestral allele must match at least one source's
         # allele list at that position
-        if require_ancestral_match:
-            valid_positions = set()
-            num_no_ancestral = 0
-            for pos in all_pos_set:
-                anc_str = self._ann_lookup.get(pos, "")
-                found = False
-                for src_idx in range(n_sources):
-                    if pos not in per_source_pos_sets[src_idx]:
-                        continue
-                    src_positions = self._positions_per_source[src_idx]
-                    idx = int(np.searchsorted(src_positions, pos))
-                    if idx < len(src_positions) and int(src_positions[idx]) == pos:
-                        site_alleles = self._alleles_per_source[src_idx][idx]
-                        allele_list = (
-                            site_alleles.tolist()
-                            if hasattr(site_alleles, "tolist")
-                            else site_alleles
-                        )
-                        for a in allele_list:
-                            if a is not None and str(a) != "" and str(a) == anc_str:
-                                found = True
-                                break
-                    if found:
-                        break
+        valid_positions: set[int] = set()
+        num_no_ancestral = 0
+        for pos in all_pos_set:
+            anc_str = self._ann_lookup.get(pos, "")
+            found = False
+            for src_idx in range(n_sources):
+                if pos not in per_source_pos_sets[src_idx]:
+                    continue
+                src_positions = self._positions_per_source[src_idx]
+                idx = int(np.searchsorted(src_positions, pos))
+                if idx < len(src_positions) and int(src_positions[idx]) == pos:
+                    site_alleles = self._alleles_per_source[src_idx][idx]
+                    allele_list = (
+                        site_alleles.tolist()
+                        if hasattr(site_alleles, "tolist")
+                        else site_alleles
+                    )
+                    for a in allele_list:
+                        if a is not None and str(a) != "" and str(a) == anc_str:
+                            found = True
+                            break
                 if found:
-                    valid_positions.add(pos)
-                else:
-                    num_no_ancestral += 1
+                    break
+            if found:
+                valid_positions.add(pos)
+            else:
+                num_no_ancestral += 1
 
-            if num_no_ancestral > 0:
-                logger.info(
-                    "Excluded %d position(s) with no ancestral allele match",
-                    num_no_ancestral,
-                )
-        else:
-            valid_positions = all_pos_set
+        if num_no_ancestral > 0:
+            logger.info(
+                "Excluded %d position(s) with no ancestral allele match",
+                num_no_ancestral,
+            )
 
         sorted_positions = sorted(valid_positions)
         self._positions = np.array(sorted_positions, dtype=np.int32)
@@ -2226,11 +2206,67 @@ class MultiSourceView:
                     self._source_has_site[pos_to_unified_idx[p], src_idx] = True
 
         # --- Ancestral alleles for unified positions ---
-        ancestral_alleles_arr = np.array(
+        self._ancestral_alleles = np.array(
             [self._ann_lookup.get(int(p), "") for p in sorted_positions],
             dtype=object,
         )
-        self._ancestral_alleles = ancestral_alleles_arr
+
+        # --- Deferred state (built by prepare()) ---
+        self._allele_mapper = None
+        self._remap_tables = None
+        self._prepared_positions = None
+
+        # --- Per-source variant filter caches (lazy) ---
+        self._filtered_positions_cache: list[set[int] | None] = [None] * n_sources
+
+    def _source_has_filters(self, src_idx: int) -> bool:
+        source = self._sources[src_idx]
+        return (
+            source.include is not None
+            or source.exclude is not None
+            or source.regions is not None
+            or source.targets is not None
+        )
+
+    def _resolve_filtered_positions(self, src_idx: int) -> set[int]:
+        """Lazily compute and cache filtered positions for a source."""
+        if self._filtered_positions_cache[src_idx] is not None:
+            return self._filtered_positions_cache[src_idx]
+        source = self._sources[src_idx]
+        filtered = set()
+        for var in iter_variants(
+            self._stores[src_idx],
+            fields=["variant_position"],
+            include=source.include,
+            exclude=source.exclude,
+            regions=source.regions,
+            targets=source.targets,
+        ):
+            filtered.add(int(var["variant_position"]))
+        self._filtered_positions_cache[src_idx] = filtered
+        return filtered
+
+    def prepare(self, positions: np.ndarray) -> None:
+        """
+        Build AlleleMapper and remap tables for the given position subset.
+
+        Must be called before ``iter_genotypes``.  The *positions* array
+        must be a subset of ``self.positions``.
+        """
+        positions = np.asarray(positions, dtype=np.int32)
+        self._prepared_positions = positions
+        n_sources = len(self._sources)
+
+        # Compute source_has_site for prepared positions
+        pos_set = set(positions.tolist())
+        unified_mask = np.array(
+            [int(p) in pos_set for p in self._positions.tolist()],
+            dtype=bool,
+        )
+        prepared_source_has_site = self._source_has_site[unified_mask]
+
+        # Ancestral alleles for prepared positions
+        prepared_anc = self._ancestral_alleles[unified_mask]
 
         # --- AlleleMapper ---
         per_source_allele_pairs = []
@@ -2243,15 +2279,15 @@ class MultiSourceView:
             )
 
         self._allele_mapper = build_allele_mapper(
-            self._positions,
-            ancestral_alleles_arr,
+            positions,
+            prepared_anc,
             per_source_allele_pairs,
         )
 
         # --- Precompute per-source allele remap tables ---
         self._remap_tables = []
         for src_idx in range(n_sources):
-            mask = self._source_has_site[:, src_idx]
+            mask = prepared_source_has_site[:, src_idx]
             unified_indices = np.where(mask)[0]
             src_positions = self._positions_per_source[src_idx]
             src_alleles = self._alleles_per_source[src_idx]
@@ -2261,7 +2297,7 @@ class MultiSourceView:
             max_a = src_alleles.shape[1] if src_alleles.ndim > 1 else 1
             remap = np.full((len(unified_indices), max_a), -1, dtype=np.int8)
             for row, ui in enumerate(unified_indices):
-                pos = int(self._positions[ui])
+                pos = int(positions[ui])
                 src_row = int(np.searchsorted(src_positions, pos))
                 for j in range(max_a):
                     a = str(src_alleles[src_row, j])
@@ -2287,10 +2323,14 @@ class MultiSourceView:
 
     @property
     def alleles(self) -> np.ndarray:
+        if self._allele_mapper is None:
+            raise RuntimeError("prepare() must be called before alleles")
         return self._allele_mapper.forward_map()
 
     @property
     def allele_mapper(self) -> AlleleMapper:
+        if self._allele_mapper is None:
+            raise RuntimeError("prepare() must be called before allele_mapper")
         return self._allele_mapper
 
     @property
@@ -2330,21 +2370,44 @@ class MultiSourceView:
         Yield (total_haplotypes,) int8 rows with canonical allele
         codes (0=ancestral, 1+=derived, -1=missing), concatenated
         across sources. Sources missing a site contribute -1 arrays.
+
+        If ``prepare()`` has not been called, it is called automatically
+        with the requested positions (or all positions if *positions*
+        is None).
+
+        Sources with variant filters (include/exclude/regions/targets)
+        contribute -1 for positions that don't pass the filter.
         """
         if positions is None:
             positions = self._positions
-            source_has_site = self._source_has_site
         else:
             positions = np.asarray(positions, dtype=np.int32)
-            # Compute source_has_site for the requested positions
-            pos_set = set(positions.tolist())
-            unified_mask = np.array(
-                [int(p) in pos_set for p in self._positions.tolist()],
-                dtype=bool,
-            )
-            source_has_site = self._source_has_site[unified_mask]
 
+        # Auto-prepare if needed or if positions differ
+        if self._allele_mapper is None or not np.array_equal(
+            positions, self._prepared_positions
+        ):
+            self.prepare(positions)
+
+        # Compute source_has_site for the requested positions,
+        # taking variant filters into account
+        pos_set = set(positions.tolist())
+        unified_mask = np.array(
+            [int(p) in pos_set for p in self._positions.tolist()],
+            dtype=bool,
+        )
+        source_has_site = self._source_has_site[unified_mask].copy()
+
+        # Apply variant filters: sources with filters that exclude
+        # a position contribute -1 (missing) values
         n_sources = len(self._sources)
+        for src_idx in range(n_sources):
+            if self._source_has_filters(src_idx):
+                filtered = self._resolve_filtered_positions(src_idx)
+                for site_idx in range(len(positions)):
+                    if source_has_site[site_idx, src_idx]:
+                        if int(positions[site_idx]) not in filtered:
+                            source_has_site[site_idx, src_idx] = False
 
         # Build per-source iterators and remap-row iterators
         source_iters = []
@@ -2364,20 +2427,27 @@ class MultiSourceView:
                 it = iter([])
             source_iters.append(it)
 
-            # Build remap row iterator
+            # Build remap row iterator — maps from iter position
+            # to the remap table row index
             if len(src_positions) > 0:
-                full_mask = self._source_has_site[:, src_idx]
-                full_indices = np.where(full_mask)[0]
-                unified_to_remap = {
-                    int(idx): row for row, idx in enumerate(full_indices)
-                }
-                pos_to_unified = {
-                    int(p): i for i, p in enumerate(self._positions.tolist())
+                # Map positions back to prepared indices
+                prep_pos_list = self._prepared_positions.tolist()
+                prep_pos_to_idx = {int(p): i for i, p in enumerate(prep_pos_list)}
+                # The remap table was built for prepared positions
+                # with source_has_site mask applied. We need to find
+                # which remap table row corresponds to each position.
+                prep_shs = self._source_has_site[unified_mask][:, src_idx]
+                prep_remap_indices = np.where(prep_shs)[0]
+                prep_idx_to_remap_row = {
+                    int(idx): row for row, idx in enumerate(prep_remap_indices)
                 }
                 remap_rows = []
                 for p in src_positions.tolist():
-                    ui = pos_to_unified[int(p)]
-                    remap_rows.append(unified_to_remap[ui])
+                    pi = prep_pos_to_idx.get(int(p))
+                    if pi is not None and pi in prep_idx_to_remap_row:
+                        remap_rows.append(prep_idx_to_remap_row[pi])
+                    else:
+                        remap_rows.append(0)
                 source_remap_iters.append(iter(remap_rows))
             else:
                 source_remap_iters.append(iter([]))

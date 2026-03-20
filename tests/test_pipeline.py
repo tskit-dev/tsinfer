@@ -979,7 +979,8 @@ class TestAugmentSites:
 
         if len(singleton_sites) == 0 or len(non_singleton_sites) < 2:
             # Fallback: manually create stores with known content
-            return self._make_hand_constructed_stores()
+            main_store, sing_store, _ = self._make_hand_constructed_stores()
+            return main_store, sing_store
 
         # Build main store (non-singletons)
         main_store = ts_to_sample_vcz(ts)
@@ -1012,12 +1013,20 @@ class TestAugmentSites:
             ancestral_state=np.array(["A"]),
             sequence_length=1000,
         )
-        return main_store, sing_store
+        # Combined annotation store covering all positions
+        ann_store = make_sample_vcz(
+            genotypes=np.zeros((3, 1, 1), dtype=np.int8),
+            positions=np.array([100, 200, 300], dtype=np.int32),
+            alleles=np.array([["A", "T"], ["A", "G"], ["C", "G"]]),
+            ancestral_state=np.array(["A", "A", "C"]),
+            sequence_length=1000,
+        )
+        return main_store, sing_store, ann_store
 
     def test_adds_new_sites(self):
         """Augmenting with a source adds sites not in the original TS."""
         # Use hand-constructed data for determinism
-        main_store, sing_store = self._make_hand_constructed_stores()
+        main_store, sing_store, ann_store = self._make_hand_constructed_stores()
 
         # Run pipeline on main_store
         ts, _ = _run_pipeline_no_augment(main_store)
@@ -1043,7 +1052,7 @@ class TestAugmentSites:
                 output="output.trees",
             ),
             augment_sites=AugmentSitesConfig(sources=["singletons"]),
-            ancestral_state=_anc_state(main_store),
+            ancestral_state=_anc_state(ann_store),
         )
         aug_ts = augment_sites(ts, cfg)
         assert aug_ts.num_sites > original_num_sites
@@ -1053,7 +1062,7 @@ class TestAugmentSites:
 
     def test_skips_existing_sites(self):
         """Sites already in the TS are not duplicated."""
-        main_store, sing_store = self._make_hand_constructed_stores()
+        main_store, sing_store, ann_store = self._make_hand_constructed_stores()
         ts, _ = _run_pipeline_no_augment(main_store)
 
         # Create a source that has the SAME positions as the main store
@@ -1076,7 +1085,7 @@ class TestAugmentSites:
                 output="output.trees",
             ),
             augment_sites=AugmentSitesConfig(sources=["same"]),
-            ancestral_state=_anc_state(main_store),
+            ancestral_state=_anc_state(ann_store),
         )
         aug_ts = augment_sites(ts, cfg)
         # No new sites should be added
@@ -1084,7 +1093,7 @@ class TestAugmentSites:
 
     def test_respects_sequence_intervals(self):
         """Sites outside sequence_intervals are skipped."""
-        main_store, sing_store = self._make_hand_constructed_stores()
+        main_store, sing_store, ann_store = self._make_hand_constructed_stores()
         ts, _ = _run_pipeline_no_augment(main_store)
 
         # Create a singleton store with a site outside the intervals
@@ -1123,7 +1132,7 @@ class TestAugmentSites:
 
     def test_no_sources_is_noop(self):
         """Empty sources list returns TS unchanged."""
-        main_store, _ = self._make_hand_constructed_stores()
+        main_store, _, _ = self._make_hand_constructed_stores()
         ts, _ = _run_pipeline_no_augment(main_store)
 
         cfg = Config(
@@ -1170,6 +1179,14 @@ class TestAugmentSites:
             ancestral_state=np.array(["A"]),
             sequence_length=1000,
         )
+        # Combined annotation store
+        ann_store = make_sample_vcz(
+            genotypes=np.zeros((3, 1, 1), dtype=np.int8),
+            positions=np.array([100, 200, 300], dtype=np.int32),
+            alleles=np.array([["A", "T"], ["A", "T"], ["C", "G"]]),
+            ancestral_state=np.array(["A", "A", "C"]),
+            sequence_length=1000,
+        )
 
         ts, _ = _run_pipeline_no_augment(main_store)
 
@@ -1192,7 +1209,7 @@ class TestAugmentSites:
                 output="output.trees",
             ),
             augment_sites=AugmentSitesConfig(sources=["extra"]),
-            ancestral_state=_anc_state(main_store),
+            ancestral_state=_anc_state(ann_store),
         )
 
         aug_ts = augment_sites(ts, cfg)
@@ -1214,6 +1231,14 @@ class TestAugmentSites:
             positions=np.array([200], dtype=np.int32),
             alleles=np.array([["A", "T", "G"]]),
             ancestral_state=np.array(["A"]),
+            sequence_length=1000,
+        )
+        # Combined annotation store
+        ann_store = make_sample_vcz(
+            genotypes=np.zeros((3, 1, 1), dtype=np.int8),
+            positions=np.array([100, 200, 300], dtype=np.int32),
+            alleles=np.array([["A", "T"], ["A", "T"], ["C", "G"]]),
+            ancestral_state=np.array(["A", "A", "C"]),
             sequence_length=1000,
         )
 
@@ -1238,7 +1263,7 @@ class TestAugmentSites:
                 output="output.trees",
             ),
             augment_sites=AugmentSitesConfig(sources=["multi"]),
-            ancestral_state=_anc_state(main_store),
+            ancestral_state=_anc_state(ann_store),
         )
         aug_ts = augment_sites(ts, cfg)
         assert aug_ts.num_sites > ts.num_sites
@@ -1261,12 +1286,24 @@ class TestAugmentSites:
             ancestral_state=np.array(["A"]),
             sequence_length=1000,
         )
+        # Combined annotation store
+        ann_store = make_sample_vcz(
+            genotypes=np.zeros((3, 1, 1), dtype=np.int8),
+            positions=np.array([100, 200, 300], dtype=np.int32),
+            alleles=np.array([["A", "T"], ["A", "G"], ["C", "G"]]),
+            ancestral_state=np.array(["A", "A", "C"]),
+            sequence_length=1000,
+        )
 
         src = Source(path=main_store, name="test")
         extra_src = Source(path=extra_store, name="extra")
         anc_src = Source(path=None, name="ancestors", sample_time="sample_time")
         cfg = Config(
-            sources={"test": src, "extra": extra_src, "ancestors": anc_src},
+            sources={
+                "test": src,
+                "extra": extra_src,
+                "ancestors": anc_src,
+            },
             ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
             match=MatchConfig(
                 sources={
@@ -1279,7 +1316,7 @@ class TestAugmentSites:
             ),
             post_process=PostProcessConfig(split_ultimate=False, erase_flanks=True),
             augment_sites=AugmentSitesConfig(sources=["extra"]),
-            ancestral_state=_anc_state(main_store),
+            ancestral_state=_anc_state(ann_store),
         )
         out_ts = run(cfg)
         assert out_ts.num_nodes > 0

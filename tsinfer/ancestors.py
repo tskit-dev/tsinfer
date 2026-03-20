@@ -132,7 +132,8 @@ def compute_inference_sites(
     vcztools via ``iter_variants``.
     """
     # Detect duplicate positions upfront so we can skip them
-    dup_positions = vcz_mod._find_duplicate_positions(store)
+    positions = np.asarray(store["variant_position"][:], dtype=np.int32)
+    dup_positions = vcz_mod._find_duplicate_positions(positions)
 
     # Build ancestral state lookup
     ann_store = vcz_mod.open_store(ancestral_state.path)
@@ -488,6 +489,9 @@ def infer_ancestors(
         view.num_sites,
         total_haplotypes,
     )
+
+    # Prepare the view for all positions (pass 1 needs alleles + genotypes)
+    view.prepare(view.positions)
 
     # Build InferenceSites-compatible arrays from the view
     unified_positions = view.positions
