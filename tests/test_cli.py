@@ -82,6 +82,10 @@ node_flags = 0
 create_individuals = false
 
 [match.sources.test]
+
+[ancestral_state]
+path = "{sample_path}"
+field = "variant_ancestral_allele"
 """
     config_path = os.path.join(tmp_dir, "config.toml")
     with open(config_path, "w") as f:
@@ -112,6 +116,10 @@ node_flags = 0
 create_individuals = false
 
 [match.sources.test]
+
+[ancestral_state]
+path = "{sample_path}"
+field = "variant_ancestral_allele"
 """
     config_path = os.path.join(tmp_dir, "config.toml")
     with open(config_path, "w") as f:
@@ -200,6 +208,10 @@ node_flags = 0
 create_individuals = false
 
 [match.sources.test]
+
+[ancestral_state]
+path = "/nonexistent/path.vcz"
+field = "variant_ancestral_allele"
 """
             config_path = os.path.join(tmp_dir, "config.toml")
             with open(config_path, "w") as f:
@@ -217,54 +229,6 @@ create_individuals = false
             # ancestors.vcz does not exist on disk — should still pass
             result = runner.invoke(main, ["config", "check", config_path])
             assert result.exit_code == 0, result.output
-
-    def test_check_missing_ancestral_state(self):
-        """Error when source lacks variant_ancestral_allele and no [ancestral_state]."""
-        runner = CliRunner()
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            # Create a VCZ without variant_ancestral_allele
-            store = make_sample_vcz(
-                genotypes=np.array([[[0], [1]], [[1], [0]]], dtype=np.int8),
-                positions=np.array([100, 200], dtype=np.int32),
-                alleles=np.array([["A", "T"], ["A", "T"]]),
-                ancestral_state=np.array(["A", "A"]),
-                sequence_length=1000,
-            )
-            vcz_path = os.path.join(tmp_dir, "no_anc.vcz")
-            zarr.save(vcz_path, **{k: store[k][:] for k in store})
-            # Remove the ancestral allele array
-            on_disk = zarr.open(vcz_path, mode="r+")
-            del on_disk["variant_ancestral_allele"]
-
-            sample_path = _toml_path(vcz_path)
-            anc_path = _toml_path(os.path.join(tmp_dir, "ancestors.vcz"))
-            out_path = _toml_path(os.path.join(tmp_dir, "out.trees"))
-            config_content = f"""\
-[[source]]
-name = "test"
-path = "{sample_path}"
-
-[[ancestors]]
-name = "ancestors"
-path = "{anc_path}"
-sources = ["test"]
-
-[match]
-output = "{out_path}"
-
-[match.sources.ancestors]
-node_flags = 0
-create_individuals = false
-
-[match.sources.test]
-"""
-            config_path = os.path.join(tmp_dir, "config.toml")
-            with open(config_path, "w") as f:
-                f.write(config_content)
-            result = runner.invoke(main, ["config", "check", config_path])
-            assert result.exit_code != 0
-            assert "variant_ancestral_allele" in result.output
-            assert "ancestral_state" in result.output
 
     def test_check_unknown_ancestor_source(self):
         """Error when ancestors.sources references a name not in [[source]]."""
@@ -292,6 +256,10 @@ node_flags = 0
 create_individuals = false
 
 [match.sources.test]
+
+[ancestral_state]
+path = "{sample_path_toml}"
+field = "variant_ancestral_allele"
 """
             config_path = os.path.join(tmp_dir, "config.toml")
             with open(config_path, "w") as f:
@@ -403,6 +371,174 @@ class TestPostProcess:
         runner = CliRunner()
         result = runner.invoke(main, ["post-process", "--help"])
         assert result.exit_code == 0
+
+
+# ---------------------------------------------------------------------------
+# TestAugmentSites
+# ---------------------------------------------------------------------------
+
+
+class TestAugmentSites:
+    def test_help(self):
+        runner = CliRunner()
+        result = runner.invoke(main, ["augment-sites", "--help"])
+        assert result.exit_code == 0
+        assert "--input" in result.output
+        assert "--output" in result.output
+
+    def test_augment_sites_adds_sites(self):
+        """augment-sites places new sites from the configured source."""
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            # Create sample VCZ with 2 inference sites + 1 singleton
+            store = make_sample_vcz(
+                genotypes=np.array(
+                    [[[0], [1], [1]], [[0], [0], [1]], [[1], [0], [1]]],
+                    dtype=np.int8,
+                ),
+                positions=np.array([100, 200, 300], dtype=np.int32),
+                alleles=np.array([["A", "T"], ["C", "G"], ["A", "T"]]),
+                ancestral_state=np.array(["A", "C", "A"]),
+                sequence_length=1000,
+            )
+            vcz_path = os.path.join(tmp_dir, "samples.vcz")
+            zarr.save(vcz_path, **{k: store[k][:] for k in store})
+
+            # Write config with augment_sites pointing at the same source
+            output_path = _toml_path(os.path.join(tmp_dir, "out.trees"))
+            ancestors_path = _toml_path(os.path.join(tmp_dir, "ancestors.vcz"))
+            vcz_toml = _toml_path(vcz_path)
+            augmented_path = _toml_path(os.path.join(tmp_dir, "augmented.trees"))
+            config_content = f"""\
+[[source]]
+name = "test"
+path = "{vcz_toml}"
+
+[[source]]
+name = "augment"
+path = "{vcz_toml}"
+
+[[ancestors]]
+name = "ancestors"
+path = "{ancestors_path}"
+sources = ["test"]
+
+[match]
+output = "{output_path}"
+
+[match.sources.ancestors]
+node_flags = 0
+create_individuals = false
+
+[match.sources.test]
+
+[ancestral_state]
+path = "{vcz_toml}"
+field = "variant_ancestral_allele"
+
+[augment_sites]
+sources = ["augment"]
+"""
+            config_path = os.path.join(tmp_dir, "config.toml")
+            with open(config_path, "w") as f:
+                f.write(config_content)
+
+            # Run infer-ancestors + match to produce the input TS
+            result = runner.invoke(main, ["infer-ancestors", config_path])
+            assert result.exit_code == 0, result.output
+            result = runner.invoke(main, ["match", config_path])
+            assert result.exit_code == 0, result.output
+
+            # Run augment-sites
+            result = runner.invoke(
+                main,
+                [
+                    "augment-sites",
+                    config_path,
+                    "--input",
+                    output_path,
+                    "--output",
+                    augmented_path,
+                ],
+            )
+            assert result.exit_code == 0, result.output
+            assert Path(augmented_path).exists()
+
+            import tskit
+
+            original = tskit.load(output_path)
+            augmented = tskit.load(augmented_path)
+            assert augmented.num_sites >= original.num_sites
+
+    def test_augment_sites_force(self):
+        """augment-sites --force overwrites existing output."""
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sample_path = _write_sample_vcz_to_disk(tmp_dir)
+            output_path = _toml_path(os.path.join(tmp_dir, "out.trees"))
+            ancestors_path = _toml_path(os.path.join(tmp_dir, "ancestors.vcz"))
+            sample_toml = _toml_path(sample_path)
+            augmented_path = _toml_path(os.path.join(tmp_dir, "augmented.trees"))
+            config_content = f"""\
+[[source]]
+name = "test"
+path = "{sample_toml}"
+
+[[source]]
+name = "augment"
+path = "{sample_toml}"
+
+[[ancestors]]
+name = "ancestors"
+path = "{ancestors_path}"
+sources = ["test"]
+
+[match]
+output = "{output_path}"
+
+[match.sources.ancestors]
+node_flags = 0
+create_individuals = false
+
+[match.sources.test]
+
+[ancestral_state]
+path = "{sample_toml}"
+field = "variant_ancestral_allele"
+
+[augment_sites]
+sources = ["augment"]
+"""
+            config_path = os.path.join(tmp_dir, "config.toml")
+            with open(config_path, "w") as f:
+                f.write(config_content)
+
+            # Produce the input TS
+            result = runner.invoke(main, ["infer-ancestors", config_path])
+            assert result.exit_code == 0, result.output
+            result = runner.invoke(main, ["match", config_path])
+            assert result.exit_code == 0, result.output
+
+            args = [
+                "augment-sites",
+                config_path,
+                "--input",
+                output_path,
+                "--output",
+                augmented_path,
+            ]
+            # First run
+            result = runner.invoke(main, args)
+            assert result.exit_code == 0, result.output
+
+            # Second run without --force should fail
+            result = runner.invoke(main, args)
+            assert result.exit_code != 0
+            assert "already exists" in result.output
+
+            # With --force should succeed
+            result = runner.invoke(main, args + ["--force"])
+            assert result.exit_code == 0, result.output
 
 
 # ---------------------------------------------------------------------------
