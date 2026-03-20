@@ -25,7 +25,17 @@ It would be better to pass the actual alleles through in the mutations.
 - It would be better to deal with all the individual metadata at once, and add it
 to the match job rather than derive it after the fact.
 
-- Consider how pedigree data may be associated with individuals, and how this could be 
+- Consider how pedigree data may be associated with individuals, and how this could be
 passed through to the tree sequence.
 
 - Rename groups.json to match_jobs.json
+
+- Enforce that sample IDs are unique across input sources for main inference and
+augment sites. You can't used the same sample twice.
+
+- Switch the ``_erase_flanks`` call to use the ``delete_intervals`` function in tskit
+directly on the sequence intervals from the metadata.
+
+- Add top-level sequence_length key which should be the length of the reference sequence
+for the contig in question.
+
