@@ -132,7 +132,7 @@ def _check_genotypes(input_vcz_path, output_ts):
     pos_to_idx = {}
     for i, p in enumerate(input_pos):
         allele_list = [str(a) for a in input_alleles[i] if str(a) != ""]
-        if len(allele_list) != 2:
+        if len(allele_list) < 2:
             continue
         if len(np.unique(input_gt[i])) < 2:
             continue
@@ -479,3 +479,211 @@ create_individuals = false
         ts = run(cfg)
         _check_genotypes(haploid_vcz, ts)
         _check_genotypes(diploid_vcz, ts)
+
+
+# ---------------------------------------------------------------------------
+# Multi-allelic cross-source tests
+# ---------------------------------------------------------------------------
+
+# 6 sites, 4 haploid samples per source
+_TRI_POSITIONS = np.array([100, 200, 300, 400, 500, 600], dtype=np.int32)
+_TRI_SEQ_LEN = 1000
+
+# Source A: site 0 has alleles A/T; others A/T biallelic
+_TRI_GT_A = np.array(
+    [
+        [[0], [1], [0], [1]],  # site 0: A/T
+        [[0], [1], [0], [1]],  # site 1
+        [[0], [1], [1], [0]],  # site 2
+        [[0], [1], [1], [0]],  # site 3
+        [[1], [0], [0], [1]],  # site 4
+        [[1], [0], [1], [0]],  # site 5
+    ],
+    dtype=np.int8,
+)
+_TRI_ALLELES_A = np.array([["A", "T"]] * 6)
+_TRI_ANCESTRAL_A = np.array(["A"] * 6)
+_TRI_SAMPLE_IDS_A = np.array([f"a{i}" for i in range(4)])
+
+# Source B: site 0 has alleles A/G (different derived); others A/T biallelic
+_TRI_GT_B = np.array(
+    [
+        [[0], [1], [0], [1]],  # site 0: A/G
+        [[0], [1], [1], [0]],  # site 1
+        [[0], [1], [0], [1]],  # site 2
+        [[1], [0], [0], [1]],  # site 3
+        [[0], [1], [1], [0]],  # site 4
+        [[1], [0], [0], [1]],  # site 5
+    ],
+    dtype=np.int8,
+)
+_TRI_ALLELES_B = np.array([["A", "G"]] + [["A", "T"]] * 5)
+_TRI_ANCESTRAL_B = np.array(["A"] * 6)
+_TRI_SAMPLE_IDS_B = np.array([f"b{i}" for i in range(4)])
+
+
+def _write_triallelic_vcz(tmp_path):
+    """Write source A and source B VCZ stores, return (path_a, path_b)."""
+    store_a = make_sample_vcz(
+        genotypes=_TRI_GT_A,
+        positions=_TRI_POSITIONS,
+        alleles=_TRI_ALLELES_A,
+        ancestral_state=_TRI_ANCESTRAL_A,
+        sequence_length=_TRI_SEQ_LEN,
+        sample_ids=_TRI_SAMPLE_IDS_A,
+    )
+    path_a = tmp_path / "source_a.vcz"
+    zarr.save(path_a, **{k: store_a[k][:] for k in store_a})
+
+    store_b = make_sample_vcz(
+        genotypes=_TRI_GT_B,
+        positions=_TRI_POSITIONS,
+        alleles=_TRI_ALLELES_B,
+        ancestral_state=_TRI_ANCESTRAL_B,
+        sequence_length=_TRI_SEQ_LEN,
+        sample_ids=_TRI_SAMPLE_IDS_B,
+    )
+    path_b = tmp_path / "source_b.vcz"
+    zarr.save(path_b, **{k: store_b[k][:] for k in store_b})
+
+    return path_a, path_b
+
+
+class TestMultiAllelicCrossSource:
+    def test_triallelic_site_from_two_sources(self, tmp_path):
+        """Both sources contribute ancestors; site 0 is triallelic (A/T/G)."""
+        path_a, path_b = _write_triallelic_vcz(tmp_path)
+        ancestor_vcz = _toml_path(tmp_path / "ancestors.vcz")
+        output_trees = _toml_path(tmp_path / "output.trees")
+
+        toml_content = f"""\
+[[source]]
+name = "src_a"
+path = "{_toml_path(path_a)}"
+
+[[source]]
+name = "src_b"
+path = "{_toml_path(path_b)}"
+
+[[ancestors]]
+name = "ancestors"
+path = "{ancestor_vcz}"
+sources = ["src_a", "src_b"]
+
+[match]
+output = "{output_trees}"
+
+[match.sources.ancestors]
+node_flags = 0
+create_individuals = false
+
+[match.sources.src_a]
+[match.sources.src_b]
+"""
+        config_path = _write_toml(tmp_path, toml_content)
+        cfg = Config.from_toml(config_path)
+        ts = run(cfg)
+
+        # Verify site 0 has 3 alleles
+        site0 = ts.site(0)
+        all_alleles = {site0.ancestral_state}
+        for mut in site0.mutations:
+            all_alleles.add(mut.derived_state)
+        assert len(all_alleles) >= 3, f"Expected triallelic, got {all_alleles}"
+
+        _check_genotypes(path_a, ts)
+        _check_genotypes(path_b, ts)
+
+    def test_triallelic_ancestors_from_one_source(self, tmp_path):
+        """Ancestors from source A only; source B matched against them."""
+        path_a, path_b = _write_triallelic_vcz(tmp_path)
+        ancestor_vcz = _toml_path(tmp_path / "ancestors.vcz")
+        output_trees = _toml_path(tmp_path / "output.trees")
+
+        toml_content = f"""\
+[[source]]
+name = "src_a"
+path = "{_toml_path(path_a)}"
+
+[[source]]
+name = "src_b"
+path = "{_toml_path(path_b)}"
+
+[[ancestors]]
+name = "ancestors"
+path = "{ancestor_vcz}"
+sources = ["src_a"]
+
+[match]
+output = "{output_trees}"
+
+[match.sources.ancestors]
+node_flags = 0
+create_individuals = false
+
+[match.sources.src_a]
+[match.sources.src_b]
+"""
+        config_path = _write_toml(tmp_path, toml_content)
+        cfg = Config.from_toml(config_path)
+        ts = run(cfg)
+        _check_genotypes(path_a, ts)
+        _check_genotypes(path_b, ts)
+
+    def test_all_sites_same_alleles_across_sources(self, tmp_path):
+        """Control: both sources have identical alleles (all biallelic)."""
+        # Source B uses same alleles as A (A/T everywhere)
+        store_a = make_sample_vcz(
+            genotypes=_TRI_GT_A,
+            positions=_TRI_POSITIONS,
+            alleles=_TRI_ALLELES_A,
+            ancestral_state=_TRI_ANCESTRAL_A,
+            sequence_length=_TRI_SEQ_LEN,
+            sample_ids=_TRI_SAMPLE_IDS_A,
+        )
+        path_a = tmp_path / "source_a.vcz"
+        zarr.save(path_a, **{k: store_a[k][:] for k in store_a})
+
+        store_b = make_sample_vcz(
+            genotypes=_TRI_GT_B,
+            positions=_TRI_POSITIONS,
+            alleles=np.array([["A", "T"]] * 6),
+            ancestral_state=_TRI_ANCESTRAL_B,
+            sequence_length=_TRI_SEQ_LEN,
+            sample_ids=_TRI_SAMPLE_IDS_B,
+        )
+        path_b = tmp_path / "source_b_same.vcz"
+        zarr.save(path_b, **{k: store_b[k][:] for k in store_b})
+
+        ancestor_vcz = _toml_path(tmp_path / "ancestors.vcz")
+        output_trees = _toml_path(tmp_path / "output.trees")
+
+        toml_content = f"""\
+[[source]]
+name = "src_a"
+path = "{_toml_path(path_a)}"
+
+[[source]]
+name = "src_b"
+path = "{_toml_path(path_b)}"
+
+[[ancestors]]
+name = "ancestors"
+path = "{ancestor_vcz}"
+sources = ["src_a", "src_b"]
+
+[match]
+output = "{output_trees}"
+
+[match.sources.ancestors]
+node_flags = 0
+create_individuals = false
+
+[match.sources.src_a]
+[match.sources.src_b]
+"""
+        config_path = _write_toml(tmp_path, toml_content)
+        cfg = Config.from_toml(config_path)
+        ts = run(cfg)
+        _check_genotypes(path_a, ts)
+        _check_genotypes(path_b, ts)

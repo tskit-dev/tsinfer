@@ -32,10 +32,10 @@ from helpers import make_sample_vcz
 
 from tsinfer.grouping import MatchJob
 from tsinfer.vcz import (
+    AlleleMapper,
     ChunkCache,
     HaplotypeReader,
     VCZHaplotypeReader,
-    _AlleleMap,
     num_contigs,
     open_store,
     resolve_field,
@@ -1129,14 +1129,14 @@ class TestChunkCache:
 
 
 # ---------------------------------------------------------------------------
-# _AlleleMap
+# AlleleMapper
 # ---------------------------------------------------------------------------
 
 
-class TestAlleleMap:
+class TestAlleleMapper:
     def test_basic(self):
         """Ancestral allele is always code 0, first derived is 1."""
-        m = _AlleleMap(2, [["A", "T"], ["C"]])
+        m = AlleleMapper(2, [["A", "T"], ["C"]])
         assert m.lookup(0, "A") == 0
         assert m.lookup(0, "T") == 1
         # Idempotent
@@ -1148,14 +1148,14 @@ class TestAlleleMap:
 
     def test_cross_source_distinct_codes(self):
         """Different derived alleles at the same site get distinct codes."""
-        m = _AlleleMap(1, [["A", "T", "G", "C"]])
+        m = AlleleMapper(1, [["A", "T", "G", "C"]])
         assert m.lookup(0, "T") == 1
         assert m.lookup(0, "G") == 2
         assert m.lookup(0, "C") == 3
         assert m.num_alleles(0) == 4
 
     def test_site_alleles_array(self):
-        m = _AlleleMap(2, [["A", "T"], ["C", "G", "T"]])
+        m = AlleleMapper(2, [["A", "T"], ["C", "G", "T"]])
         arr = m.site_alleles_array()
         assert arr.shape[0] == 2
         assert arr.shape[1] >= 3  # site 1 has 3 alleles
@@ -1164,6 +1164,44 @@ class TestAlleleMap:
         assert arr[1, 0] == "C"
         assert arr[1, 1] == "G"
         assert arr[1, 2] == "T"
+
+    def test_ancestral_alleles(self):
+        """ancestral_alleles returns column 0 of forward map."""
+        m = AlleleMapper(3, [["A", "T"], ["C", "G"], ["G"]])
+        anc = m.ancestral_alleles()
+        assert list(anc) == ["A", "C", "G"]
+
+    def test_forward_map_same_as_site_alleles_array(self):
+        """forward_map returns the same data as site_alleles_array."""
+        m = AlleleMapper(2, [["A", "T"], ["C", "G", "T"]])
+        fm = m.forward_map()
+        sa = m.site_alleles_array()
+        np.testing.assert_array_equal(fm, sa)
+
+    def test_decode_mutations(self):
+        """decode_mutations maps codes to correct strings."""
+        m = AlleleMapper(2, [["A", "T"], ["C", "G", "T"]])
+        site_ids = np.array([0, 0, 1, 1], dtype=np.int32)
+        codes = np.array([0, 1, 1, 2], dtype=np.int8)
+        result = m.decode_mutations(site_ids, codes)
+        assert result == ["A", "T", "G", "T"]
+
+    def test_encode_mutations(self):
+        """encode_mutations maps strings to correct codes."""
+        m = AlleleMapper(2, [["A", "T"], ["C", "G", "T"]])
+        site_ids = np.array([0, 0, 1, 1], dtype=np.int32)
+        alleles = ["A", "T", "G", "T"]
+        result = m.encode_mutations(site_ids, alleles)
+        np.testing.assert_array_equal(result, [0, 1, 1, 2])
+
+    def test_encode_decode_roundtrip(self):
+        """encode_mutations round-trips with decode_mutations."""
+        m = AlleleMapper(2, [["A", "T"], ["C", "G", "T"]])
+        site_ids = np.array([0, 1, 1, 0], dtype=np.int32)
+        codes = np.array([1, 0, 2, 0], dtype=np.int8)
+        alleles = m.decode_mutations(site_ids, codes)
+        encoded = m.encode_mutations(site_ids, alleles)
+        np.testing.assert_array_equal(encoded, codes)
 
 
 # ---------------------------------------------------------------------------
