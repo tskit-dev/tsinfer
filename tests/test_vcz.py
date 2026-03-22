@@ -1478,10 +1478,10 @@ class TestMultiSourceView:
 
         haps = view.haplotypes()
         assert len(haps) == 4  # 2 samples * 2 ploidy
-        assert haps[0] == ("s0", 0, 0)
-        assert haps[1] == ("s0", 1, 0)
-        assert haps[2] == ("s1", 0, 0)
-        assert haps[3] == ("s1", 1, 0)
+        assert haps[0] == ("s1", "s0", 0)
+        assert haps[1] == ("s1", "s0", 1)
+        assert haps[2] == ("s1", "s1", 0)
+        assert haps[3] == ("s1", "s1", 1)
         assert view.num_haplotypes == 4
 
     def test_iter_genotypes_single_source(self):
@@ -1500,7 +1500,7 @@ class TestMultiSourceView:
         src = Source(path=store, name="s1")
         view = MultiSourceView(src, self._anc_state(store))
 
-        rows = list(view.iter_genotypes())
+        rows = [v.genotypes for v in view.iter_genotypes()]
         assert len(rows) == 2
         # Site 0: s0=ref(A)=0, s1=alt(T)=1
         np.testing.assert_array_equal(rows[0], [0, 1])
@@ -1523,7 +1523,8 @@ class TestMultiSourceView:
         view = MultiSourceView(src, self._anc_state(store))
 
         # Only request positions 100 and 300
-        rows = list(view.iter_genotypes(np.array([100, 300], dtype=np.int32)))
+        subset = np.array([100, 300], dtype=np.int32)
+        rows = [v.genotypes for v in view.iter_genotypes(subset)]
         assert len(rows) == 2
         np.testing.assert_array_equal(rows[0], [0, 1])  # site 100
         np.testing.assert_array_equal(rows[1], [0, 0])  # site 300
@@ -1565,7 +1566,7 @@ class TestMultiSourceView:
             anc,
         )
 
-        rows = list(view.iter_genotypes())
+        rows = [v.genotypes for v in view.iter_genotypes()]
         assert len(rows) == 2
         # Site 100: src_a has it (1 hap), src_b missing (-1)
         np.testing.assert_array_equal(rows[0], [1, -1])
@@ -1590,7 +1591,7 @@ class TestMultiSourceView:
 
         assert view.num_haplotypes == 2
         assert view.source_sample_ids(0) == ["s0", "s2"]
-        rows = list(view.iter_genotypes())
+        rows = [v.genotypes for v in view.iter_genotypes()]
         assert len(rows) == 1
         np.testing.assert_array_equal(rows[0], [0, 1])
 
@@ -1677,7 +1678,7 @@ class TestMultiSourceView:
         subset = np.array([100, 300], dtype=np.int32)
         view.prepare(subset)
         assert view.alleles.shape[0] == 2
-        rows = list(view.iter_genotypes(subset))
+        rows = [v.genotypes for v in view.iter_genotypes(subset)]
         assert len(rows) == 2
         np.testing.assert_array_equal(rows[0], [0, 1])  # site 100
         np.testing.assert_array_equal(rows[1], [0, 0])  # site 300
@@ -1699,3 +1700,145 @@ class TestMultiSourceView:
 
         with pytest.raises(RuntimeError, match="prepare"):
             _ = view.alleles
+
+    def test_positions_in_intervals(self):
+        from tsinfer.config import Source
+        from tsinfer.vcz import MultiSourceView
+
+        store = make_sample_vcz(
+            genotypes=np.array([[[0], [1]], [[1], [0]], [[0], [1]]], dtype=np.int8),
+            positions=np.array([100, 200, 300], dtype=np.int32),
+            alleles=np.array([["A", "T"], ["C", "G"], ["A", "T"]]),
+            ancestral_state=np.array(["A", "C", "A"]),
+            sequence_length=1000,
+            sample_ids=np.array(["s0", "s1"]),
+        )
+        src = Source(path=store, name="s1")
+        view = MultiSourceView(src, self._anc_state(store))
+
+        # Only positions in [150, 350)
+        pos = view.positions_in_intervals([[150, 350]])
+        np.testing.assert_array_equal(pos, [200, 300])
+        variants = list(view.iter_genotypes(pos))
+        assert len(variants) == 2
+        assert variants[0].position == 200.0
+        assert variants[1].position == 300.0
+        np.testing.assert_array_equal(variants[0].genotypes, [1, 0])
+        np.testing.assert_array_equal(variants[1].genotypes, [0, 1])
+
+    def test_filter_positions(self):
+        from tsinfer.config import Source
+        from tsinfer.vcz import MultiSourceView
+
+        store = make_sample_vcz(
+            genotypes=np.array([[[0], [1]], [[1], [0]], [[0], [1]]], dtype=np.int8),
+            positions=np.array([100, 200, 300], dtype=np.int32),
+            alleles=np.array([["A", "T"], ["C", "G"], ["A", "T"]]),
+            ancestral_state=np.array(["A", "C", "A"]),
+            sequence_length=1000,
+            sample_ids=np.array(["s0", "s1"]),
+        )
+        src = Source(path=store, name="s1")
+        view = MultiSourceView(src, self._anc_state(store))
+
+        # Exclude position 200
+        pos = view.filter_positions(np.array([200]))
+        np.testing.assert_array_equal(pos, [100, 300])
+        variants = list(view.iter_genotypes(pos))
+        assert len(variants) == 2
+        assert variants[0].position == 100.0
+        assert variants[1].position == 300.0
+
+    def test_iter_genotypes_sample_identifiers(self):
+        from tsinfer.config import AncestralState, Source
+        from tsinfer.vcz import MultiSourceView
+
+        store_a = make_sample_vcz(
+            genotypes=np.array([[[0], [1]]], dtype=np.int8),
+            positions=np.array([100], dtype=np.int32),
+            alleles=np.array([["A", "T"]]),
+            ancestral_state=np.array(["A"]),
+            sequence_length=1000,
+            sample_ids=np.array(["s0", "s1"]),
+        )
+        ann_store = store_a
+        anc = AncestralState(path=ann_store, field="variant_ancestral_allele")
+        view = MultiSourceView(
+            [Source(path=store_a, name="src_a")],
+            anc,
+        )
+
+        # Reverse order: s1 first, then s0
+        identifiers = [("src_a", "s1", 0), ("src_a", "s0", 0)]
+        variants = list(view.iter_genotypes(sample_identifiers=identifiers))
+        assert len(variants) == 1
+        # Natural order: s0=0, s1=1 → reversed: s1=1, s0=0
+        np.testing.assert_array_equal(variants[0].genotypes, [1, 0])
+
+    def test_iter_genotypes_sample_identifiers_missing(self):
+        """Unmatched identifiers get -1."""
+        from tsinfer.config import Source
+        from tsinfer.vcz import MultiSourceView
+
+        store = make_sample_vcz(
+            genotypes=np.array([[[0], [1]]], dtype=np.int8),
+            positions=np.array([100], dtype=np.int32),
+            alleles=np.array([["A", "T"]]),
+            ancestral_state=np.array(["A"]),
+            sequence_length=1000,
+            sample_ids=np.array(["s0", "s1"]),
+        )
+        src = Source(path=store, name="s1")
+        view = MultiSourceView(src, self._anc_state(store))
+
+        # Request s0 and a nonexistent sample
+        identifiers = [("s1", "s0", 0), ("s1", "nonexistent", 0)]
+        variants = list(view.iter_genotypes(sample_identifiers=identifiers))
+        assert len(variants) == 1
+        np.testing.assert_array_equal(variants[0].genotypes, [0, -1])
+
+    def test_iter_genotypes_variant_alleles(self):
+        """Variant.alleles tuple is correct."""
+        from tsinfer.config import Source
+        from tsinfer.vcz import MultiSourceView
+
+        store = make_sample_vcz(
+            genotypes=np.array([[[0], [1]]], dtype=np.int8),
+            positions=np.array([100], dtype=np.int32),
+            alleles=np.array([["A", "T"]]),
+            ancestral_state=np.array(["A"]),
+            sequence_length=1000,
+            sample_ids=np.array(["s0", "s1"]),
+        )
+        src = Source(path=store, name="s1")
+        view = MultiSourceView(src, self._anc_state(store))
+
+        variants = list(view.iter_genotypes())
+        assert len(variants) == 1
+        assert variants[0].alleles == ("A", "T")
+        assert variants[0].position == 100.0
+
+    def test_positions_in_intervals_and_filter(self):
+        """positions_in_intervals and filter_positions compose."""
+        from tsinfer.config import Source
+        from tsinfer.vcz import MultiSourceView
+
+        store = make_sample_vcz(
+            genotypes=np.array([[[0]], [[1]], [[0]], [[1]]], dtype=np.int8),
+            positions=np.array([100, 200, 300, 400], dtype=np.int32),
+            alleles=np.array([["A", "T"], ["C", "G"], ["A", "T"], ["C", "G"]]),
+            ancestral_state=np.array(["A", "C", "A", "C"]),
+            sequence_length=1000,
+            sample_ids=np.array(["s0"]),
+        )
+        src = Source(path=store, name="s1")
+        view = MultiSourceView(src, self._anc_state(store))
+
+        # Interval [150, 450), then exclude 300
+        pos = view.positions_in_intervals([[150, 450]])
+        pos = view.filter_positions(np.array([300]), pos)
+        np.testing.assert_array_equal(pos, [200, 400])
+        variants = list(view.iter_genotypes(pos))
+        assert len(variants) == 2
+        assert variants[0].position == 200.0
+        assert variants[1].position == 400.0

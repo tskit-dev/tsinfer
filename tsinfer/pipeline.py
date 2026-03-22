@@ -607,128 +607,73 @@ def augment_sites(
 
     logger.info("augment_sites: %d source(s)", len(aug_cfg.sources))
 
-    # --- sequence_intervals membership ---
+    # --- sequence_intervals ---
     meta = ts.metadata if ts.metadata is not None else {}
     intervals = meta.get("sequence_intervals")
-    if intervals is not None:
-        iv_arr = np.array(intervals, dtype=np.float64)
-        iv_starts = iv_arr[:, 0]
-        iv_ends = iv_arr[:, 1]
-    else:
-        iv_starts = np.array([0.0])
-        iv_ends = np.array([ts.sequence_length])
+    if intervals is None:
+        intervals = [[0.0, float(ts.sequence_length)]]
 
-    existing = set(ts.sites_position)
+    # --- Build sample_identifiers from ts node metadata ---
+    required_keys = {"source", "sample_id", "ploidy_index"}
+    sample_identifiers = []
+    for u in ts.samples():
+        md = ts.node(u).metadata
+        if not md or not required_keys.issubset(md):
+            missing = required_keys - set(md) if md else required_keys
+            raise ValueError(
+                f"Node {u} is missing required metadata key(s) "
+                f"{missing} for augment_sites"
+            )
+        sample_identifiers.append((md["source"], md["sample_id"], md["ploidy_index"]))
 
-    # --- Build MultiSourceView ---
+    # --- Build MultiSourceView and resolve positions ---
     source_configs = [cfg.sources[name] for name in aug_cfg.sources]
     view = vcz_mod.MultiSourceView(
         source_configs,
         cfg.ancestral_state,
     )
 
-    # --- Post-filter positions ---
-    mask = np.array(
-        [
-            int(pos) not in existing and _position_in_intervals(pos, iv_starts, iv_ends)
-            for pos in view.positions
-        ],
-        dtype=bool,
-    )
-    filtered_positions = view.positions[mask]
+    positions = view.positions_in_intervals(intervals)
+    positions = view.filter_positions(ts.sites_position, positions)
+    n_sites = len(positions)
 
-    # Prepare the view for the filtered subset
-    if len(filtered_positions) == 0:
+    if n_sites == 0:
         logger.info("augment_sites: no new sites to add")
         return ts
 
-    view.prepare(filtered_positions)
-    filtered_alleles = view.alleles
-    filtered_source_has_site = view.source_has_site[mask]
-
-    n_sites = len(filtered_positions)
     logger.info("augment_sites: %d new sites to place", n_sites)
-    n_sources = view.num_sources
-
-    # --- Build sample node map ---
-    sample_nodes = ts.samples()
-    node_to_sample_idx = {int(n): i for i, n in enumerate(sample_nodes)}
-
-    sid_ploidy_to_ts_idx: dict[tuple[str, int], int] = {}
-    for node_id in sample_nodes:
-        md = ts.node(node_id).metadata
-        if md and "sample_id" in md and "ploidy_index" in md:
-            key = (md["sample_id"], md["ploidy_index"])
-            sid_ploidy_to_ts_idx[key] = node_to_sample_idx[int(node_id)]
-
-    # Per-source: list of (vcz_flat_col, ts_sample_idx) pairs
-    per_source_col_map: list[list[tuple[int, int]]] = []
-    for src_idx in range(n_sources):
-        ploidy = view.source_ploidy(src_idx)
-        sample_ids = view.source_sample_ids(src_idx)
-        col_map = []
-        for i, sid in enumerate(sample_ids):
-            for p in range(ploidy):
-                flat_col = i * ploidy + p
-                key = (sid, p)
-                if key in sid_ploidy_to_ts_idx:
-                    col_map.append((flat_col, sid_ploidy_to_ts_idx[key]))
-        per_source_col_map.append(col_map)
-
-    num_ts_samples = len(sample_nodes)
 
     # --- Stream genotypes and place via map_mutations ---
     tables = ts.dump_tables()
     tree = ts.first()
 
-    site_iter = enumerate(view.iter_genotypes(filtered_positions))
+    site_iter = view.iter_genotypes(
+        positions,
+        sample_identifiers=sample_identifiers,
+    )
     if progress:
         site_iter = tqdm.tqdm(
             site_iter, total=n_sites, desc="augment_sites", unit="sites"
         )
 
-    for ui, canonical_row in site_iter:
-        # Map canonical codes to per-ts-sample genotypes
-        genotypes = np.full(num_ts_samples, tskit.MISSING_DATA, dtype=np.int32)
-        # Distribute canonical codes to ts sample slots
-        offset = 0
-        for src_idx in range(n_sources):
-            num_haps = view.source_num_haplotypes(src_idx)
-            if filtered_source_has_site[ui, src_idx]:
-                src_row = canonical_row[offset : offset + num_haps]
-                col_map = per_source_col_map[src_idx]
-                for flat_col, ts_sample_idx in col_map:
-                    val = int(src_row[flat_col])
-                    if val >= 0:
-                        genotypes[ts_sample_idx] = val
-            offset += num_haps
+    for var in site_iter:
+        genotypes = var.genotypes.astype(np.int32)
+        alleles = list(var.alleles)
 
         # Skip all-missing sites
-        non_missing = genotypes[genotypes >= 0]
-        if len(non_missing) == 0:
+        if np.all(genotypes < 0):
             continue
 
-        # Get alleles from canonical encoding (code -> allele string)
-        # Canonical codes are indices into this allele list
-        site_allele_row = filtered_alleles[ui]
-        alleles = [str(a) if a is not None else "" for a in site_allele_row]
-        # Trim trailing empty alleles
-        while alleles and alleles[-1] == "":
-            alleles.pop()
         # Canonical code 0 = ancestral allele
         anc_allele = alleles[0] if alleles else ""
-        pos = float(filtered_positions[ui])
-        tree.seek(pos)
+        tree.seek(var.position)
         if anc_allele and anc_allele != "":
             ancestral_state, mutations = tree.map_mutations(
                 genotypes, alleles, ancestral_state=anc_allele
             )
         else:
             # No ancestral allele known; let parsimony choose
-            # Strip the leading empty string and remap genotypes
             real_alleles = [a for a in alleles if a != ""]
-            # Remap genotypes: canonical code N -> real_alleles index
-            # Build mapping from canonical code -> real allele index
             code_to_real = {}
             for c, a in enumerate(alleles):
                 if a != "":
@@ -738,9 +683,9 @@ def augment_sites(
                 if genotypes[i] >= 0 and genotypes[i] in code_to_real:
                     remapped[i] = code_to_real[genotypes[i]]
             ancestral_state, mutations = tree.map_mutations(remapped, real_alleles)
-            alleles = real_alleles
-            genotypes = remapped
-        site_id = tables.sites.add_row(position=pos, ancestral_state=ancestral_state)
+        site_id = tables.sites.add_row(
+            position=var.position, ancestral_state=ancestral_state
+        )
         mut_id_map = {tskit.NULL: tskit.NULL}
         for list_id, mut in enumerate(mutations):
             new_id = tables.mutations.add_row(
@@ -762,14 +707,6 @@ def augment_sites(
         n_sites - n_added,
     )
     return result
-
-
-def _position_in_intervals(position, starts, ends):
-    """Check if position falls within any [start, end) interval."""
-    idx = np.searchsorted(starts, position, side="right") - 1
-    if idx < 0:
-        return False
-    return position < ends[idx]
 
 
 def run(
