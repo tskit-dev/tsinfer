@@ -2163,43 +2163,7 @@ class MultiSourceView:
         for s in per_source_pos_sets:
             all_pos_set |= s
 
-        # Filter: ancestral allele must match at least one source's
-        # allele list at that position
-        valid_positions: set[int] = set()
-        num_no_ancestral = 0
-        for pos in all_pos_set:
-            anc_str = self._ann_lookup.get(pos, "")
-            found = False
-            for src_idx in range(n_sources):
-                if pos not in per_source_pos_sets[src_idx]:
-                    continue
-                src_positions = self._positions_per_source[src_idx]
-                idx = int(np.searchsorted(src_positions, pos))
-                if idx < len(src_positions) and int(src_positions[idx]) == pos:
-                    site_alleles = self._alleles_per_source[src_idx][idx]
-                    allele_list = (
-                        site_alleles.tolist()
-                        if hasattr(site_alleles, "tolist")
-                        else site_alleles
-                    )
-                    for a in allele_list:
-                        if a is not None and str(a) != "" and str(a) == anc_str:
-                            found = True
-                            break
-                if found:
-                    break
-            if found:
-                valid_positions.add(pos)
-            else:
-                num_no_ancestral += 1
-
-        if num_no_ancestral > 0:
-            logger.info(
-                "Excluded %d position(s) with no ancestral allele match",
-                num_no_ancestral,
-            )
-
-        sorted_positions = sorted(valid_positions)
+        sorted_positions = sorted(all_pos_set)
         self._positions = np.array(sorted_positions, dtype=np.int32)
         num_sites = len(sorted_positions)
 
