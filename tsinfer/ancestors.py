@@ -347,8 +347,8 @@ def _process_interval(
         unit="sites",
         disable=not progress,
     )
-    for j, row in enumerate(gt_iter):
-        derived_gt = np.where(row > 0, np.int8(1), row)
+    for j, var in enumerate(gt_iter):
+        derived_gt = np.where(var.genotypes > 0, np.int8(1), var.genotypes)
         ab.add_site(time=float(local_times[j]), genotypes=derived_gt)
 
     ancestor_descriptors = list(ab.ancestor_descriptors())
@@ -501,8 +501,8 @@ def infer_ancestors(
 
     # --- 2. Pass 1: compute site stats ---
     def _pass1_genotype_iter():
-        for row in view.iter_genotypes():
-            yield np.where(row > 0, np.int8(1), row)
+        for var in view.iter_genotypes():
+            yield np.where(var.genotypes > 0, np.int8(1), var.genotypes)
 
     unified_inf_sites = InferenceSites(
         positions=unified_positions,

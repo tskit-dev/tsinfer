@@ -62,6 +62,24 @@ logger = logging.getLogger(__name__)
 _VLEN_STR = VariableLengthUTF8()
 _ZARR_FORMAT = 2
 
+
+@dataclass
+class Variant:
+    """A single variant yielded by ``MultiSourceView.iter_genotypes``."""
+
+    position: float
+    genotypes: np.ndarray  # int8, canonical codes (0=anc, 1+=derived, -1=missing)
+    alleles: tuple[str, ...]  # code-to-allele mapping (trimmed of trailing empty)
+
+
+def _position_in_intervals(position, starts, ends):
+    """Check if position falls within any [start, end) interval."""
+    idx = np.searchsorted(starts, position, side="right") - 1
+    if idx < 0:
+        return False
+    return position < ends[idx]
+
+
 # ---------------------------------------------------------------------------
 # Store access
 # ---------------------------------------------------------------------------
@@ -2352,28 +2370,114 @@ class MultiSourceView:
     def source_store(self, src_idx: int):
         return self._stores[src_idx]
 
-    def haplotypes(self) -> list[tuple[str, int, int]]:
-        """(sample_id, ploidy_index, source_idx) per haplotype."""
+    def haplotypes(self) -> list[tuple[str, str, int]]:
+        """(source_name, sample_id, ploidy_index) per haplotype."""
         result = []
         for src_idx in range(len(self._sources)):
+            source_name = self._sources[src_idx].name
             ploidy = self._ploidies[src_idx]
             for sid in self._sample_ids_per_source[src_idx]:
                 for p in range(ploidy):
-                    result.append((sid, p, src_idx))
+                    result.append((source_name, sid, p))
+        return result
+
+    def positions_in_intervals(self, intervals) -> np.ndarray:
+        """
+        Return the subset of ``self.positions`` that fall within the
+        given ``[start, end)`` intervals.
+
+        Parameters
+        ----------
+        intervals : list of [start, end) pairs
+            Half-open intervals.
+        """
+        iv_arr = np.array(intervals, dtype=np.float64)
+        iv_starts = iv_arr[:, 0]
+        iv_ends = iv_arr[:, 1]
+        mask = np.array(
+            [
+                _position_in_intervals(p, iv_starts, iv_ends)
+                for p in self._positions.tolist()
+            ],
+            dtype=bool,
+        )
+        return self._positions[mask]
+
+    def filter_positions(self, exclude_positions, positions=None) -> np.ndarray:
+        """
+        Return positions with *exclude_positions* removed.
+
+        Parameters
+        ----------
+        exclude_positions : array-like
+            Positions to exclude.
+        positions : array-like or None
+            Positions to filter. Defaults to ``self.positions``.
+        """
+        if positions is None:
+            positions = self._positions
+        else:
+            positions = np.asarray(positions, dtype=np.int32)
+        exclude_set = set(int(p) for p in np.asarray(exclude_positions).tolist())
+        mask = np.array(
+            [int(p) not in exclude_set for p in positions.tolist()],
+            dtype=bool,
+        )
+        return positions[mask]
+
+    def _build_permutation(self, sample_identifiers):
+        """
+        Build an int array mapping output column index to natural
+        haplotype column index (or -1 for identifiers not in the view).
+
+        Matches first on (source_name, sample_id, ploidy_index), then
+        falls back to (sample_id, ploidy_index) to handle cases where
+        the source names differ (e.g. augment_sites).
+        """
+        natural = self.haplotypes()
+        key_to_col = {key: i for i, key in enumerate(natural)}
+        # Fallback: (sample_id, ploidy_index) → col index
+        sid_ploidy_to_col: dict[tuple[str, int], int] = {}
+        for src_name, sid, p in natural:
+            short_key = (sid, p)
+            if short_key not in sid_ploidy_to_col:
+                sid_ploidy_to_col[short_key] = key_to_col[(src_name, sid, p)]
+
+        result = np.full(len(sample_identifiers), -1, dtype=np.intp)
+        for i, ident in enumerate(sample_identifiers):
+            ident = tuple(ident)
+            if ident in key_to_col:
+                result[i] = key_to_col[ident]
+            else:
+                short_key = (ident[1], ident[2])
+                if short_key in sid_ploidy_to_col:
+                    result[i] = sid_ploidy_to_col[short_key]
         return result
 
     def iter_genotypes(
         self,
         positions: np.ndarray | None = None,
+        *,
+        sample_identifiers=None,
     ):
         """
-        Yield (total_haplotypes,) int8 rows with canonical allele
-        codes (0=ancestral, 1+=derived, -1=missing), concatenated
-        across sources. Sources missing a site contribute -1 arrays.
+        Yield ``Variant`` instances with canonical allele codes
+        (0=ancestral, 1+=derived, -1=missing), concatenated across
+        sources. Sources missing a site contribute -1 arrays.
 
         If ``prepare()`` has not been called, it is called automatically
         with the requested positions (or all positions if *positions*
         is None).
+
+        Parameters
+        ----------
+        positions : array-like or None
+            Subset of ``self.positions`` to iterate. None = all.
+            Use ``positions_in_intervals`` and ``filter_positions``
+            to narrow the set before calling.
+        sample_identifiers : list of (source_name, sample_id, ploidy_index) or None
+            Reorder output columns to match; unmatched identifiers get -1.
+            When None, columns stay in natural source order.
 
         Sources with variant filters (include/exclude/regions/targets)
         contribute -1 for positions that don't pass the filter.
@@ -2383,11 +2487,19 @@ class MultiSourceView:
         else:
             positions = np.asarray(positions, dtype=np.int32)
 
+        if len(positions) == 0:
+            return
+
         # Auto-prepare if needed or if positions differ
         if self._allele_mapper is None or not np.array_equal(
             positions, self._prepared_positions
         ):
             self.prepare(positions)
+
+        # Build permutation for sample reordering
+        perm = None
+        if sample_identifiers is not None:
+            perm = self._build_permutation(sample_identifiers)
 
         # Compute source_has_site for the requested positions,
         # taking variant filters into account
@@ -2452,6 +2564,9 @@ class MultiSourceView:
             else:
                 source_remap_iters.append(iter([]))
 
+        # Precompute alleles array for all positions
+        alleles_array = self._allele_mapper.forward_map()
+
         for site_idx in range(len(positions)):
             parts = []
             for src_idx in range(n_sources):
@@ -2473,4 +2588,24 @@ class MultiSourceView:
                     parts.append(row)
                 else:
                     parts.append(np.full(num_haps, -1, dtype=np.int8))
-            yield np.concatenate(parts)
+
+            genotypes = np.concatenate(parts)
+
+            # Apply sample permutation if requested
+            if perm is not None:
+                natural_gt = genotypes
+                genotypes = np.full(len(perm), np.int8(-1), dtype=np.int8)
+                valid = perm >= 0
+                genotypes[valid] = natural_gt[perm[valid]]
+
+            # Build alleles tuple (trimmed of trailing empty)
+            site_alleles = alleles_array[site_idx]
+            allele_list = [str(a) if a is not None else "" for a in site_alleles]
+            while allele_list and allele_list[-1] == "":
+                allele_list.pop()
+
+            yield Variant(
+                position=float(positions[site_idx]),
+                genotypes=genotypes,
+                alleles=tuple(allele_list),
+            )
