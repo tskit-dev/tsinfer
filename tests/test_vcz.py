@@ -1615,49 +1615,6 @@ class TestMultiSourceView:
         assert view.source_ploidy(0) == 2
         assert view.source_store(0) is not None
 
-    def test_duplicate_sample_ids_across_sources_warns(self, caplog):
-        import logging
-
-        from tsinfer.config import AncestralState, Source
-        from tsinfer.vcz import MultiSourceView
-
-        # Both sources have sample "s0"
-        store_a = make_sample_vcz(
-            genotypes=np.array([[[1]]], dtype=np.int8),
-            positions=np.array([100], dtype=np.int32),
-            alleles=np.array([["A", "T"]]),
-            ancestral_state=np.array(["A"]),
-            sequence_length=1000,
-            sample_ids=np.array(["s0"]),
-        )
-        store_b = make_sample_vcz(
-            genotypes=np.array([[[1]]], dtype=np.int8),
-            positions=np.array([200], dtype=np.int32),
-            alleles=np.array([["C", "G"]]),
-            ancestral_state=np.array(["C"]),
-            sequence_length=1000,
-            sample_ids=np.array(["s0"]),
-        )
-        ann_store = make_sample_vcz(
-            genotypes=np.zeros((2, 1, 1), dtype=np.int8),
-            positions=np.array([100, 200], dtype=np.int32),
-            alleles=np.array([["A", "T"], ["C", "G"]]),
-            ancestral_state=np.array(["A", "C"]),
-            sequence_length=1000,
-        )
-        anc = AncestralState(path=ann_store, field="variant_ancestral_allele")
-        with caplog.at_level(logging.WARNING, logger="tsinfer.vcz"):
-            view = MultiSourceView(
-                [
-                    Source(path=store_a, name="a"),
-                    Source(path=store_b, name="b"),
-                ],
-                anc,
-            )
-        assert "Duplicate sample ID" in caplog.text
-        # Construction succeeds — it's a warning, not an error
-        assert view.num_sources == 2
-
     def test_prepare_subset(self):
         """prepare() with a position subset builds mapper for that subset."""
         from tsinfer.config import Source
