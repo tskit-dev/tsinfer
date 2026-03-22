@@ -2130,18 +2130,6 @@ class MultiSourceView:
             dup_positions = _find_duplicate_positions(src_positions)
             self._dup_positions_per_source.append(dup_positions)
 
-        # --- Check for duplicate sample IDs across sources ---
-        all_ids: set[str] = set()
-        for _src_idx, ids in enumerate(self._sample_ids_per_source):
-            src_set = set(ids)
-            overlap = all_ids & src_set
-            if overlap:
-                logger.warning(
-                    "Duplicate sample ID(s) across sources: %s",
-                    overlap,
-                )
-            all_ids |= src_set
-
         # --- Ancestral state lookup ---
         ann_store = open_store(ancestral_state.path)
         ann_positions = np.asarray(ann_store["variant_position"][:])
