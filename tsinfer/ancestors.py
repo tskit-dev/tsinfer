@@ -22,6 +22,7 @@ Ancestor generation: builds the ancestor VCZ store from a samples VCZ store.
 
 from __future__ import annotations
 
+import concurrent.futures
 import logging
 import time
 from dataclasses import dataclass
@@ -307,6 +308,15 @@ def _apply_site_stats(genotype_iter, inf_sites, num_haplotypes, progress):
     return final_positions, final_alleles, final_anc_indices, times
 
 
+def _compute_bounds(ab, focal_sites, j, anc_time, local_mask, final_positions, n_local):
+    """Compute ancestor bounds via make_ancestor (thread-safe)."""
+    temp = np.empty(n_local, dtype=np.int8)
+    start_local, end_local = ab.make_ancestor(focal_sites, temp)
+    start_pos = int(final_positions[int(local_mask[start_local])])
+    end_pos = int(final_positions[int(local_mask[end_local - 1])])
+    return j, anc_time, start_pos, end_pos
+
+
 def _process_interval(
     view,
     i_idx,
@@ -375,18 +385,41 @@ def _process_interval(
 
     # --- Bounds sub-pass: get (start, end) for each ancestor ---
     t_bounds = time.monotonic()
-    temp_array = np.empty(n_local, dtype=np.int8)
     anc_starts = np.empty(n_ancestors, dtype=np.int32)
     anc_ends = np.empty(n_ancestors, dtype=np.int32)
     anc_times = np.empty(n_ancestors, dtype=np.float64)
 
-    for j, (anc_time, focal_sites) in enumerate(ancestor_descriptors):
-        start_local, end_local = ab.make_ancestor(focal_sites, temp_array)
-        start_site_idx = int(local_mask[start_local])
-        end_site_idx = int(local_mask[end_local - 1]) + 1
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(num_threads, 1)) as pool:
+        futures = {
+            pool.submit(
+                _compute_bounds,
+                ab,
+                focal_sites,
+                j,
+                anc_time,
+                local_mask,
+                final_positions,
+                n_local,
+            ): j
+            for j, (anc_time, focal_sites) in enumerate(ancestor_descriptors)
+        }
+        results = []
+        pbar = tqdm_mod.tqdm(
+            total=n_ancestors,
+            desc=f"Interval {i_idx}: bounds",
+            unit="haps",
+            disable=not progress,
+        )
+        for fut in concurrent.futures.as_completed(futures):
+            results.append(fut.result())
+            pbar.update(1)
+        pbar.close()
+
+    results.sort(key=lambda r: r[0])
+    for j, anc_time, start_pos, end_pos in results:
         anc_times[j] = anc_time
-        anc_starts[j] = int(final_positions[start_site_idx])
-        anc_ends[j] = int(final_positions[end_site_idx - 1])
+        anc_starts[j] = start_pos
+        anc_ends[j] = end_pos
 
     logger.info(
         "Interval %d: bounds pass %.3fs",
