@@ -633,6 +633,7 @@ class TestComputeGroupsJson:
             "node_flags",
             "individual_id",
             "population_id",
+            "sample_chunk",
         }
         for rec in records:
             assert set(rec.keys()) == expected_keys

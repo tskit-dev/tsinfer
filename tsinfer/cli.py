@@ -316,6 +316,31 @@ def show_match_jobs_cmd(json_file):
 
     click.echo(f"\n{len(records)} jobs in {len(group_intervals)} groups")
 
+    # Chunk locality summary (per source)
+    # Build {source: {group: set(chunk_indices)}}
+    source_group_chunks: dict[str, dict[int, set[int]]] = collections.defaultdict(
+        lambda: collections.defaultdict(set)
+    )
+    for rec in records:
+        source_group_chunks[rec["source"]][rec["group"]].add(rec["sample_chunk"])
+
+    if source_group_chunks:
+        click.echo("\nChunk locality (by source):")
+        for source_name in sorted(source_group_chunks):
+            click.echo(f"  Source '{source_name}':")
+            click.echo(f"    {'Group':>6}  {'Chunks':>6}  Shared w/prev")
+            sgc = source_group_chunks[source_name]
+            prev_chunks: set[int] | None = None
+            for group_idx in sorted(sgc):
+                chunks = sgc[group_idx]
+                n_chunks = len(chunks)
+                if prev_chunks is None:
+                    shared = "-"
+                else:
+                    shared = str(len(chunks & prev_chunks))
+                click.echo(f"    {group_idx:>6}  {n_chunks:>6}  {shared}")
+                prev_chunks = chunks
+
 
 # ---------------------------------------------------------------------------
 # Config utility

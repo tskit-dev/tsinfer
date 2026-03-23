@@ -50,6 +50,7 @@ class MatchJob:
     node_flags: int = 1
     individual_id: int | None = None
     population_id: int | None = None
+    sample_chunk: int = 0
 
 
 def assign_groups(jobs: list[MatchJob]) -> list[MatchJob]:
