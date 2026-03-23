@@ -1057,54 +1057,132 @@ class TestChunkCache:
         for r in results:
             np.testing.assert_array_equal(r, a)
 
-    # --- Group 5: evict_for() ---
+    # --- Group 5: reserve_for_load() ---
 
-    def test_evict_for_empty_cache(self):
+    def test_reserve_empty_cache(self):
         cache = ChunkCache(max_bytes=100)
-        cache.evict_for(50)  # no-op
+        cache.reserve_for_load(50)
+        assert cache._reserved_bytes == 50
         assert cache.total_bytes == 0
+        # Clean up reservation
+        cache.finish_load(("s", 0), None, reserved_bytes=50)
 
-    def test_evict_for_no_eviction_needed(self):
+    def test_reserve_no_eviction_needed(self):
         cache = ChunkCache(max_bytes=100)
         cache.put(("s", 0), _arr(30))
-        cache.evict_for(50)  # 30+50=80 ≤ 100 → nothing evicted
+        cache.reserve_for_load(50)  # 30+50=80 ≤ 100 → nothing evicted
         assert ("s", 0) in cache._cache
         assert cache.total_bytes == 30
+        assert cache._reserved_bytes == 50
+        cache.finish_load(("s", 1), None, reserved_bytes=50)
 
-    def test_evict_for_evicts_lru(self):
+    def test_reserve_evicts_lru(self):
         cache = ChunkCache(max_bytes=100)
         cache.put(("s", 0), _arr(40))
         cache.put(("s", 1), _arr(40))
-        cache.evict_for(50)  # 80+50=130 > 100 → evict ("s",0) → 40+50=90
+        cache.reserve_for_load(50)
         assert ("s", 0) not in cache._cache
         assert ("s", 1) in cache._cache
         assert cache.total_bytes == 40
+        assert cache._reserved_bytes == 50
+        cache.finish_load(("s", 2), None, reserved_bytes=50)
 
-    def test_evict_for_evicts_multiple(self):
+    def test_reserve_evicts_multiple(self):
         cache = ChunkCache(max_bytes=100)
         cache.put(("s", 0), _arr(30))
         cache.put(("s", 1), _arr(30))
         cache.put(("s", 2), _arr(30))
-        # 90 used; need room for 50 → must evict 40 worth
-        cache.evict_for(50)
+        cache.reserve_for_load(50)
         assert ("s", 0) not in cache._cache
         assert ("s", 1) not in cache._cache
         assert ("s", 2) in cache._cache
         assert cache.total_bytes == 30
+        assert cache._reserved_bytes == 50
+        cache.finish_load(("s", 3), None, reserved_bytes=50)
 
-    def test_evict_for_then_put_no_double_eviction(self):
+    def test_reserve_then_put_no_double_eviction(self):
         cache = ChunkCache(max_bytes=100)
         cache.put(("s", 0), _arr(40))
         cache.put(("s", 1), _arr(40))
-        # Pre-evict for upcoming 50-byte insert
-        cache.evict_for(50)
+        cache.reserve_for_load(50)
         assert cache.total_bytes == 40  # ("s",0) evicted
-        # Now put should NOT need to evict ("s",1)
-        cache.put(("s", 2), _arr(50))
+        cache.finish_load(("s", 2), _arr(50), reserved_bytes=50)
         assert ("s", 1) in cache._cache
         assert ("s", 2) in cache._cache
         assert len(cache._cache) == 2
         assert cache.total_bytes == 90
+
+    def test_reserve_blocks_when_over_budget(self):
+        cache = ChunkCache(max_bytes=100)
+        # Thread A reserves 80 bytes
+        cache.reserve_for_load(80)
+        blocked = threading.Event()
+        unblocked = threading.Event()
+
+        def thread_b():
+            blocked.set()
+            cache.reserve_for_load(80)
+            unblocked.set()
+            cache.finish_load(("s", 1), _arr(80), reserved_bytes=80)
+
+        t = threading.Thread(target=thread_b)
+        t.start()
+        blocked.wait()
+        # Give thread B time to block
+        import time
+
+        time.sleep(0.05)
+        assert not unblocked.is_set()
+        # Release thread A's reservation
+        cache.finish_load(("s", 0), _arr(80), reserved_bytes=80)
+        t.join(timeout=2)
+        assert unblocked.is_set()
+
+    def test_reserve_deadlock_prevention(self):
+        cache = ChunkCache(max_bytes=10)
+        # Single chunk larger than cache, no other in-flight loads
+        cache.reserve_for_load(50)
+        assert cache._reserved_bytes == 50
+        cache.finish_load(("s", 0), None, reserved_bytes=50)
+
+    def test_concurrent_reserves_respect_budget(self):
+        cache = ChunkCache(max_bytes=100)
+        max_concurrent = 0
+        lock = threading.Lock()
+        current_count = 0
+
+        def worker(idx):
+            nonlocal max_concurrent, current_count
+            cache.reserve_for_load(60)
+            with lock:
+                current_count += 1
+                max_concurrent = max(max_concurrent, current_count)
+            # Simulate load
+            import time
+
+            time.sleep(0.02)
+            with lock:
+                current_count -= 1
+            cache.finish_load(("s", idx), _arr(60), reserved_bytes=60)
+
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(5)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=5)
+        # At most 1 thread should load at a time (60+60=120 > 100)
+        assert max_concurrent <= 1
+
+    def test_failed_load_releases_reservation(self):
+        cache = ChunkCache(max_bytes=100)
+        cache.reserve_for_load(80)
+        # Simulate failed load
+        cache.finish_load(("s", 0), None, reserved_bytes=80)
+        assert cache._reserved_bytes == 0
+        # Another thread should now be able to reserve
+        cache.reserve_for_load(80)
+        assert cache._reserved_bytes == 80
+        cache.finish_load(("s", 1), None, reserved_bytes=80)
 
     # --- Group 6: Edge cases ---
 
