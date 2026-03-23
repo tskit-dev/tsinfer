@@ -473,6 +473,7 @@ class _WorkItem:
     anc_time: float
     ancestor_index: int  # global index across all intervals
     expected_count: int  # expected ancestors in this chunk
+    match_group: int = 0  # pre-computed match group for this ancestor
 
 
 class ChunkBuffer:
@@ -494,6 +495,7 @@ class ChunkBuffer:
         "times",
         "starts",
         "ends",
+        "match_groups",
         "focal_positions",
         "expected_count",
         "filled_count",
@@ -509,6 +511,7 @@ class ChunkBuffer:
         self.times = np.zeros(chunk_size, dtype=np.float64)
         self.starts = np.zeros(chunk_size, dtype=np.int32)
         self.ends = np.zeros(chunk_size, dtype=np.int32)
+        self.match_groups = np.zeros(chunk_size, dtype=np.int32)
         self.focal_positions: list = [None] * chunk_size
         self.expected_count: int = -1  # -1 = unknown
         self.filled_count: int = 0
@@ -536,6 +539,7 @@ class ChunkBuffer:
         self.times[:] = 0
         self.starts[:] = 0
         self.ends[:] = 0
+        self.match_groups[:] = 0
         self.focal_positions = [None] * chunk_size
         self.expected_count = -1
         self.filled_count = 0
@@ -711,6 +715,7 @@ class AncestorWriter:
             self._root["sample_time"].resize((new_total,))
             self._root["sample_start_position"].resize((new_total,))
             self._root["sample_end_position"].resize((new_total,))
+            self._root["sample_match_group"].resize((new_total,))
 
         # Compute buffer pool size
         max_queued = max(8 * max(num_threads, 1), 1)
@@ -737,6 +742,9 @@ class AncestorWriter:
             )
             buf.ends[:partial_count] = np.asarray(
                 self._root["sample_end_position"][start:end]
+            )
+            buf.match_groups[:partial_count] = np.asarray(
+                self._root["sample_match_group"][start:end]
             )
             buf.focal_positions[:partial_count] = [None] * partial_count
             buf._partial_count = partial_count
@@ -785,6 +793,7 @@ class AncestorWriter:
         focal_sites,
         anc_time,
         ancestor_local_index,
+        match_group=0,
     ):
         """Submit a work item for ancestor building."""
         self._check_errors()
@@ -802,6 +811,7 @@ class AncestorWriter:
             anc_time=anc_time,
             ancestor_index=ancestor_index,
             expected_count=expected_count,
+            match_group=match_group,
         )
         t0 = _time.monotonic()
         self._work_queue.put(item)
@@ -866,6 +876,7 @@ class AncestorWriter:
                 buf.times[slot] = item.anc_time
                 buf.starts[slot] = start_pos
                 buf.ends[slot] = end_pos
+                buf.match_groups[slot] = item.match_group
                 buf.focal_positions[slot] = np.asarray(focal_pos, dtype=np.int32)
                 t_buf_fill += _time.monotonic() - t0
 
@@ -939,6 +950,9 @@ class AncestorWriter:
                 self._root["sample_time"][col_start:col_end] = buf.times[:n]
                 self._root["sample_start_position"][col_start:col_end] = buf.starts[:n]
                 self._root["sample_end_position"][col_start:col_end] = buf.ends[:n]
+                self._root["sample_match_group"][col_start:col_end] = buf.match_groups[
+                    :n
+                ]
                 dt_zarr = _time.monotonic() - t0
                 t_zarr += dt_zarr
 
@@ -1158,7 +1172,12 @@ def setup_ancestor_zarr(
     )
     gt.attrs["_ARRAY_DIMENSIONS"] = ["variants", "samples", "ploidy"]
 
-    for name in ("sample_time", "sample_start_position", "sample_end_position"):
+    for name in (
+        "sample_time",
+        "sample_start_position",
+        "sample_end_position",
+        "sample_match_group",
+    ):
         dt = np.float64 if name == "sample_time" else np.int32
         a = root.create_array(
             name,
@@ -2078,6 +2097,13 @@ def write_empty_ancestor_vcz(
     _arr(
         root,
         "sample_end_position",
+        np.zeros(0, dtype=np.int32),
+        ["samples"],
+        compressor=compressor,
+    )
+    _arr(
+        root,
+        "sample_match_group",
         np.zeros(0, dtype=np.int32),
         ["samples"],
         compressor=compressor,
