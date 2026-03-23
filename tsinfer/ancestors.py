@@ -34,6 +34,7 @@ import zarr
 
 import _tsinfer
 
+from . import grouping as grouping_mod
 from . import vcz as vcz_mod
 from .config import AncestorsConfig, AncestralState, Source
 
@@ -320,14 +321,18 @@ def _process_interval(
     ancestor_index,
     progress,
     compressor,
+    group_offset,
 ):
     """
     Process a single sequence interval: load genotypes, build ancestors.
 
-    Creates a per-interval AncestorWriter that owns its own worker and
-    writer threads.
+    Two sub-passes within each interval:
+      1. Bounds pass — call make_ancestor to get (start, end) for each
+         ancestor, then compute per-partition grouping order.
+      2. Write pass — submit ancestors to AncestorWriter in grouping order.
 
-    Returns (updated_ancestor_index, interval_focal_positions).
+    Returns (updated_ancestor_index, interval_focal_positions,
+             next_group_offset).
     """
     n_local = len(local_mask)
     local_positions = final_positions[local_mask]
@@ -366,8 +371,61 @@ def _process_interval(
     )
 
     if n_ancestors == 0:
-        return ancestor_index, []
+        return ancestor_index, [], group_offset
 
+    # --- Bounds sub-pass: get (start, end) for each ancestor ---
+    t_bounds = time.monotonic()
+    temp_array = np.empty(n_local, dtype=np.int8)
+    anc_starts = np.empty(n_ancestors, dtype=np.int32)
+    anc_ends = np.empty(n_ancestors, dtype=np.int32)
+    anc_times = np.empty(n_ancestors, dtype=np.float64)
+
+    for j, (anc_time, focal_sites) in enumerate(ancestor_descriptors):
+        start_local, end_local = ab.make_ancestor(focal_sites, temp_array)
+        start_site_idx = int(local_mask[start_local])
+        end_site_idx = int(local_mask[end_local - 1]) + 1
+        anc_times[j] = anc_time
+        anc_starts[j] = int(final_positions[start_site_idx])
+        anc_ends[j] = int(final_positions[end_site_idx - 1])
+
+    logger.info(
+        "Interval %d: bounds pass %.3fs",
+        i_idx,
+        time.monotonic() - t_bounds,
+    )
+
+    # --- Compute per-partition grouping ---
+    t_group = time.monotonic()
+    if n_ancestors <= 1:
+        # Trivial case: single ancestor, no need for linesweep
+        grouping = {0: [0]} if n_ancestors == 1 else {}
+    else:
+        grouping = grouping_mod.group_haplotypes_by_linesweep(
+            anc_starts, anc_ends, anc_times
+        )
+
+    # Build write order (group-sorted) and global group assignments
+    write_order = []
+    group_values = []
+    for gid in sorted(grouping.keys()):
+        for idx in grouping[gid]:
+            write_order.append(idx)
+            group_values.append(group_offset + gid)
+    group_values = np.array(group_values, dtype=np.int32)
+
+    next_group_offset = (
+        group_offset + max(grouping.keys()) + 1 if grouping else group_offset
+    )
+    n_groups = len(grouping)
+    logger.info(
+        "Interval %d: %d groups in %.3fs (group_offset=%d)",
+        i_idx,
+        n_groups,
+        time.monotonic() - t_group,
+        group_offset,
+    )
+
+    # --- Write pass: submit ancestors in grouping order ---
     num_sites = len(final_positions)
     writer = vcz_mod.AncestorWriter(
         zarr_root=zarr_root,
@@ -390,12 +448,14 @@ def _process_interval(
         disable=not progress,
     )
 
-    for local_index, (anc_time, focal_sites) in enumerate(ancestor_descriptors):
+    for write_idx, orig_idx in enumerate(write_order):
+        anc_time, focal_sites = ancestor_descriptors[orig_idx]
         writer.submit(
             ab,
             focal_sites,
             anc_time,
-            local_index,
+            write_idx,
+            match_group=int(group_values[write_idx]),
         )
         pbar.update(1)
 
@@ -413,10 +473,12 @@ def _process_interval(
         logger.info(
             "Interval %d: %d ancestors, %d chunks in %.3fs | "
             "submit: wall=%.3fs put_block=%.3fs | "
-            "workers: make_ancestor=%.3fs (mean=%.4fs min=%.4fs max=%.4fs) "
+            "workers: make_ancestor=%.3fs"
+            " (mean=%.4fs min=%.4fs max=%.4fs) "
             "buf_fill=%.3fs registry_wait=%.3fs | "
             "writers: scatter=%.3fs zarr=%.3fs release=%.3fs | "
-            "finalize: worker_join=%.3fs seal=%.3fs writer_join=%.3fs",
+            "finalize: worker_join=%.3fs seal=%.3fs"
+            " writer_join=%.3fs",
             i_idx,
             n_ancestors,
             s.writer_chunks,
@@ -438,7 +500,7 @@ def _process_interval(
         )
 
     ancestor_index += n_ancestors
-    return ancestor_index, interval_focals
+    return ancestor_index, interval_focals, next_group_offset
 
 
 def infer_ancestors(
@@ -586,13 +648,14 @@ def infer_ancestors(
 
     ancestor_index = 0
     all_focal_positions = []
+    group_offset = 0
 
     for i_idx in range(len(seq_intervals)):
         in_interval = site_interval_idx == i_idx
         if not np.any(in_interval):
             continue
         local_mask = np.where(in_interval)[0]
-        ancestor_index, interval_focals = _process_interval(
+        ancestor_index, interval_focals, group_offset = _process_interval(
             view,
             i_idx,
             local_mask,
@@ -606,6 +669,7 @@ def infer_ancestors(
             ancestor_index,
             progress,
             compressor,
+            group_offset,
         )
         all_focal_positions.extend(interval_focals)
 
