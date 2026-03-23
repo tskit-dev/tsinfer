@@ -22,6 +22,7 @@ Tests for the tsinfer CLI (click commands).
 
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 from pathlib import Path
@@ -606,3 +607,115 @@ class TestShowMatchJobs:
             assert "Var kb" in result.output
             assert "#" in result.output
             assert "jobs in" in result.output
+
+
+class TestSimulateCache:
+    def test_basic_simulation(self):
+        """simulate-cache reports hits, misses, and load counts."""
+        runner = CliRunner()
+        # 4 jobs across 2 groups, 2 sources, 3 distinct chunks
+        # Group 0: (A,0), (A,1) — 2 misses
+        # Group 1: (B,0), (A,0) — 1 miss (B,0) + 1 hit (A,0 still cached)
+        # With cache_slots=3: no evictions, 3 total misses
+        records = [
+            {
+                "haplotype_index": 0,
+                "source": "A",
+                "sample_id": "s0",
+                "ploidy_index": 0,
+                "time": 10.0,
+                "start_position": 0,
+                "end_position": 100,
+                "group": 0,
+                "node_flags": 1,
+                "individual_id": None,
+                "population_id": None,
+                "sample_chunk": 0,
+            },
+            {
+                "haplotype_index": 1,
+                "source": "A",
+                "sample_id": "s1",
+                "ploidy_index": 0,
+                "time": 10.0,
+                "start_position": 0,
+                "end_position": 100,
+                "group": 0,
+                "node_flags": 1,
+                "individual_id": None,
+                "population_id": None,
+                "sample_chunk": 1,
+            },
+            {
+                "haplotype_index": 2,
+                "source": "B",
+                "sample_id": "s0",
+                "ploidy_index": 0,
+                "time": 5.0,
+                "start_position": 0,
+                "end_position": 100,
+                "group": 1,
+                "node_flags": 1,
+                "individual_id": None,
+                "population_id": None,
+                "sample_chunk": 0,
+            },
+            {
+                "haplotype_index": 3,
+                "source": "A",
+                "sample_id": "s0",
+                "ploidy_index": 0,
+                "time": 5.0,
+                "start_position": 0,
+                "end_position": 100,
+                "group": 1,
+                "node_flags": 1,
+                "individual_id": None,
+                "population_id": None,
+                "sample_chunk": 0,
+            },
+        ]
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump(records, f)
+            f.flush()
+            result = runner.invoke(
+                main, ["simulate-cache", f.name, "--cache-slots", "3"]
+            )
+        os.unlink(f.name)
+        assert result.exit_code == 0, result.output
+        assert "3 hits" in result.output or "1 hits" in result.output
+        assert "miss rate" in result.output
+        assert "chunk loads" in result.output
+
+    def test_eviction_causes_reloads(self):
+        """With cache_slots=1, every new chunk evicts the previous one."""
+        runner = CliRunner()
+        # 3 jobs in 1 group, each hitting a different chunk
+        # cache_slots=1 → 3 misses, 0 hits
+        records = [
+            {
+                "haplotype_index": i,
+                "source": "A",
+                "sample_id": f"s{i}",
+                "ploidy_index": 0,
+                "time": 10.0,
+                "start_position": 0,
+                "end_position": 100,
+                "group": 0,
+                "node_flags": 1,
+                "individual_id": None,
+                "population_id": None,
+                "sample_chunk": i,
+            }
+            for i in range(3)
+        ]
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump(records, f)
+            f.flush()
+            result = runner.invoke(
+                main, ["simulate-cache", f.name, "--cache-slots", "1"]
+            )
+        os.unlink(f.name)
+        assert result.exit_code == 0, result.output
+        assert "0 hits" in result.output
+        assert "3 misses" in result.output

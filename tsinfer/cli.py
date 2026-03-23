@@ -342,6 +342,98 @@ def show_match_jobs_cmd(json_file):
                 prev_chunks = chunks
 
 
+@main.command("simulate-cache")
+@click.argument("json_file", metavar="JSON_FILE", type=click.Path(exists=True))
+@click.option(
+    "--cache-slots",
+    type=int,
+    required=True,
+    help="Number of chunk slots in the simulated LRU cache.",
+)
+def simulate_cache_cmd(json_file, cache_slots):
+    """Simulate LRU chunk cache for match-jobs and report load counts."""
+    records = json.loads(Path(json_file).read_text())
+    if not records:
+        click.echo("No match jobs.")
+        return
+
+    # Group records, sort each group by haplotype_index
+    groups: dict[int, list[dict]] = collections.defaultdict(list)
+    for rec in records:
+        groups[rec["group"]].append(rec)
+    for g in groups.values():
+        g.sort(key=lambda r: r["haplotype_index"])
+
+    # Build deduplicated access sequence per group
+    # (consecutive jobs for the same sample hit the same chunk)
+    group_accesses: dict[int, list[tuple[str, int]]] = {}
+    for group_idx in sorted(groups):
+        accesses = []
+        prev_key = None
+        for rec in groups[group_idx]:
+            key = (rec["source"], rec["sample_chunk"])
+            if key != prev_key:
+                accesses.append(key)
+                prev_key = key
+        group_accesses[group_idx] = accesses
+
+    # LRU simulation
+    cache: collections.OrderedDict[tuple[str, int], None] = collections.OrderedDict()
+    chunk_loads: dict[tuple[str, int], int] = collections.defaultdict(int)
+    group_stats: dict[int, tuple[int, int]] = {}  # group -> (accesses, misses)
+    total_hits = 0
+    total_misses = 0
+
+    for group_idx in sorted(group_accesses):
+        accesses = group_accesses[group_idx]
+        group_misses = 0
+        group_hits = 0
+        for key in accesses:
+            if key in cache:
+                cache.move_to_end(key)
+                group_hits += 1
+            else:
+                if len(cache) >= cache_slots:
+                    cache.popitem(last=False)
+                cache[key] = None
+                chunk_loads[key] += 1
+                group_misses += 1
+        group_stats[group_idx] = (len(accesses), group_misses)
+        total_hits += group_hits
+        total_misses += group_misses
+
+    # Print results
+    click.echo(f"Cache simulation (cache_slots={cache_slots}):\n")
+
+    click.echo("Per-group summary:")
+    click.echo(
+        f"  {'Group':>6}  {'Jobs':>6}  {'Accesses':>8}  {'Misses':>6}  {'Miss%':>6}"
+    )
+    for group_idx in sorted(group_stats):
+        n_jobs = len(groups[group_idx])
+        n_acc, n_miss = group_stats[group_idx]
+        pct = 100 * n_miss / n_acc if n_acc > 0 else 0
+        click.echo(
+            f"  {group_idx:>6}  {n_jobs:>6}  {n_acc:>8}  {n_miss:>6}  {pct:>5.1f}%"
+        )
+
+    # Per-chunk load counts (only chunks loaded more than once)
+    multi_loaded = {k: v for k, v in chunk_loads.items() if v > 1}
+    if multi_loaded:
+        click.echo("\nChunks loaded more than once:")
+        click.echo(f"  {'Source':<20}  {'Chunk':>6}  {'Loads':>5}")
+        for (src, chunk), loads in sorted(multi_loaded.items(), key=lambda x: -x[1]):
+            click.echo(f"  {src:<20}  {chunk:>6}  {loads:>5}")
+
+    total = total_hits + total_misses
+    miss_pct = 100 * total_misses / total if total > 0 else 0
+    click.echo(
+        f"\nTotals: {total_hits} hits, {total_misses} misses"
+        f" ({miss_pct:.1f}% miss rate),"
+        f" {sum(chunk_loads.values())} chunk loads"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Config utility
 # ---------------------------------------------------------------------------
