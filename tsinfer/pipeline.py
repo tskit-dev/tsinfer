@@ -78,9 +78,11 @@ def _build_jobs_with_metadata(cfg):
         store = vcz_mod.open_store(source.path)
 
         # Shape metadata only — no data loaded
-        gt_shape = store["call_genotype"].shape
+        call_gt = store["call_genotype"]
+        gt_shape = call_gt.shape
         num_samples = gt_shape[1]
         ploidy = gt_shape[2]
+        sample_chunk_size = call_gt.chunks[1]
 
         samples_selection = vcz_mod.resolve_samples_selection(store, source.samples)
         num_samples = len(samples_selection)
@@ -152,6 +154,13 @@ def _build_jobs_with_metadata(cfg):
             else:
                 individual_id = None
 
+            # Determine sample chunk index
+            if samples_selection is not None:
+                store_col = int(samples_selection[i])
+            else:
+                store_col = i
+            sample_chunk = store_col // sample_chunk_size
+
             for p in range(ploidy):
                 jobs.append(
                     MatchJob(
@@ -166,6 +175,7 @@ def _build_jobs_with_metadata(cfg):
                         node_flags=src_cfg.node_flags,
                         individual_id=individual_id,
                         population_id=None,
+                        sample_chunk=sample_chunk,
                     )
                 )
                 hap_idx += 1
