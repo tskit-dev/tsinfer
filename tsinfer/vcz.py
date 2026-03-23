@@ -1221,22 +1221,31 @@ class ChunkCache:
 
     Uses a memory limit in bytes rather than entry count, so that cache
     utilisation adapts to actual chunk sizes.
+
+    Tracks in-flight reservations so that concurrent loads cannot commit
+    more memory than ``max_bytes``.  When the budget is exhausted and
+    nothing can be evicted, threads block until a load completes.
     """
 
     def __init__(self, max_bytes: int):
         self._max_bytes = max_bytes
         self._current_bytes = 0
+        self._reserved_bytes = 0
         self._cache: collections.OrderedDict[tuple[str, int], np.ndarray] = (
             collections.OrderedDict()
         )
-        self._lock = threading.Lock()
+        self._condition = threading.Condition()
         self._pending: dict[tuple[str, int], threading.Event] = {}
         self._hits = 0
         self._misses = 0
 
+    def _committed_bytes(self) -> int:
+        """Cached + in-flight bytes. Caller must hold the condition."""
+        return self._current_bytes + self._reserved_bytes
+
     def get(self, key: tuple[str, int]) -> np.ndarray | None:
         """Return cached chunk or None. Thread-safe."""
-        with self._lock:
+        with self._condition:
             if key in self._cache:
                 self._cache.move_to_end(key)
                 self._hits += 1
@@ -1247,7 +1256,7 @@ class ChunkCache:
     def put(self, key: tuple[str, int], data: np.ndarray) -> None:
         """Insert chunk, evicting LRU entries until it fits. Thread-safe."""
         evicted_info = []
-        with self._lock:
+        with self._condition:
             if key in self._cache:
                 return
             new_bytes = data.nbytes
@@ -1259,6 +1268,7 @@ class ChunkCache:
             self._current_bytes += new_bytes
             total = self._current_bytes
             count = len(self._cache)
+            self._condition.notify_all()
         # Log outside lock
         for ek, eb in evicted_info:
             logger.info(
@@ -1284,7 +1294,7 @@ class ChunkCache:
         this key, waits for it and returns the result. Returns None when the
         caller should perform the load and call ``finish_load``.
         """
-        with self._lock:
+        with self._condition:
             if key in self._cache:
                 self._cache.move_to_end(key)
                 self._hits += 1
@@ -1300,23 +1310,40 @@ class ChunkCache:
         event.wait()
         return self.get(key)
 
-    def finish_load(self, key: tuple[str, int], data: np.ndarray | None):
-        """Insert loaded data and wake waiters. Call in finally block."""
-        if data is not None:
-            self.put(key, data)
-        with self._lock:
-            event = self._pending.pop(key, None)
-        if event is not None:
-            event.set()
+    def reserve_for_load(self, estimated_bytes: int) -> None:
+        """Reserve memory for an upcoming chunk load, blocking if needed.
 
-    def evict_for(self, nbytes: int) -> None:
-        """Pre-evict LRU entries to make room for an upcoming insert."""
+        Evicts LRU entries to make room.  If the budget is still exceeded
+        after eviction, blocks until another thread releases a reservation
+        (via ``finish_load``).  As a deadlock-prevention measure, one thread
+        is always allowed to proceed when no other loads are in-flight.
+        """
         evicted_info = []
-        with self._lock:
-            while self._cache and self._current_bytes + nbytes > self._max_bytes:
-                evict_key, evicted = self._cache.popitem(last=False)
-                self._current_bytes -= evicted.nbytes
-                evicted_info.append((evict_key, evicted.nbytes))
+        with self._condition:
+            while True:
+                # Evict cached entries while over budget
+                while (
+                    self._cache
+                    and self._committed_bytes() + estimated_bytes > self._max_bytes
+                ):
+                    evict_key, evicted = self._cache.popitem(last=False)
+                    self._current_bytes -= evicted.nbytes
+                    evicted_info.append((evict_key, evicted.nbytes))
+
+                # Check if reservation fits
+                if self._committed_bytes() + estimated_bytes <= self._max_bytes:
+                    self._reserved_bytes += estimated_bytes
+                    break
+
+                # Deadlock prevention: if no other thread is loading,
+                # allow this one even if it exceeds the budget
+                if self._reserved_bytes == 0:
+                    self._reserved_bytes += estimated_bytes
+                    break
+
+                # Wait for a load to complete or an eviction
+                self._condition.wait()
+
         for ek, eb in evicted_info:
             logger.info(
                 "Chunk cache evict: source=%s chunk=%d freed=%.1f MiB",
@@ -1324,6 +1351,22 @@ class ChunkCache:
                 ek[1],
                 eb / (1024 * 1024),
             )
+
+    def finish_load(
+        self,
+        key: tuple[str, int],
+        data: np.ndarray | None,
+        reserved_bytes: int = 0,
+    ):
+        """Insert loaded data, release reservation, and wake waiters."""
+        if data is not None:
+            self.put(key, data)
+        with self._condition:
+            event = self._pending.pop(key, None)
+            self._reserved_bytes -= reserved_bytes
+            self._condition.notify_all()
+        if event is not None:
+            event.set()
 
     @property
     def total_bytes(self) -> int:
@@ -1749,20 +1792,20 @@ class VCZHaplotypeReader:
         data = self._cache.get_or_wait(key)
         if data is not None:
             return data
-        # Pre-evict so peak memory stays within the cache limit
+        # Reserve memory before loading so peak usage stays bounded
         sc_start = chunk_idx * self._sample_chunk_size
         chunk_samples = min(
             self._sample_chunk_size,
             self._num_store_samples - sc_start,
         )
         estimated_bytes = self._num_selected * chunk_samples * self._ploidy
-        self._cache.evict_for(estimated_bytes)
+        self._cache.reserve_for_load(estimated_bytes)
         # We are the loader
         result = None
         try:
             result = self._do_load_chunk(chunk_idx)
         finally:
-            self._cache.finish_load(key, result)
+            self._cache.finish_load(key, result, reserved_bytes=estimated_bytes)
         return result
 
     def read_haplotype(self, sample_id: str, ploidy_index: int = 0) -> np.ndarray:
