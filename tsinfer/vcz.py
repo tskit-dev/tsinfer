@@ -1249,6 +1249,14 @@ class ScheduledCache:
         self._readahead_pending: set[tuple[str, int]] = set()
         self._hits = 0
         self._misses = 0
+        # Timing stats
+        self._total_load_time = 0.0
+        self._total_wait_time = 0.0
+        self._total_readahead_loads = 0
+        self._total_demand_loads = 0
+        self._total_evictions = 0
+        self._total_evicted_bytes = 0
+        self._t_start = _time.monotonic()
 
     def register_loader(
         self,
@@ -1260,7 +1268,7 @@ class ScheduledCache:
 
     # ----- public interface used by VCZHaplotypeReader ---------------------
 
-    def get(self, key: tuple[str, int]) -> np.ndarray:
+    def get(self, key: tuple[str, int], _readahead: bool = False) -> np.ndarray:
         """Return cached chunk, loading from zarr if necessary.
 
         Concurrent loads for the same key are deduplicated: only one
@@ -1281,26 +1289,44 @@ class ScheduledCache:
 
         if event is not None:
             # Another thread is loading — wait for it
+            t_wait = _time.monotonic()
             event.wait()
+            wait_elapsed = _time.monotonic() - t_wait
             with self._condition:
+                self._total_wait_time += wait_elapsed
+                logger.debug(
+                    "Chunk cache wait: source=%s chunk=%d waited=%.3fs",
+                    key[0],
+                    key[1],
+                    wait_elapsed,
+                )
                 return self._chunks[key]
 
         # We are the loader
+        t_load = _time.monotonic()
         data = self._loaders[key[0]](key[1])
+        load_elapsed = _time.monotonic() - t_load
         with self._condition:
             if key not in self._chunks:
                 self._chunks[key] = data
                 self._current_bytes += data.nbytes
             ev = self._pending.pop(key, None)
+            self._total_load_time += load_elapsed
+            if _readahead:
+                self._total_readahead_loads += 1
+            else:
+                self._total_demand_loads += 1
             self._condition.notify_all()
         if ev is not None:
             ev.set()
         logger.info(
-            "Chunk cache load: source=%s chunk=%d size=%.1f MiB"
-            " (total: %.1f MiB, %d entries)",
+            "Chunk cache %s: source=%s chunk=%d size=%.1f MiB"
+            " load=%.3fs (total: %.1f MiB, %d entries)",
+            "readahead" if _readahead else "load",
             key[0],
             key[1],
             data.nbytes / (1024 * 1024),
+            load_elapsed,
             self._current_bytes / (1024 * 1024),
             len(self._chunks),
         )
@@ -1314,24 +1340,38 @@ class ScheduledCache:
         """
         evicted = False
         freed = 0
+        remaining = 0
         with self._condition:
             self._refcount[key] -= 1
-            if self._refcount[key] <= 0:
+            remaining = self._refcount[key]
+            if remaining <= 0:
                 del self._refcount[key]
                 if key in self._chunks:
                     freed = self._chunks[key].nbytes
                     del self._chunks[key]
                     self._current_bytes -= freed
+                    self._total_evictions += 1
+                    self._total_evicted_bytes += freed
                     evicted = True
                     self._condition.notify_all()
         if evicted:
             logger.info(
-                "Chunk cache evict (refcount=0): source=%s chunk=%d freed=%.1f MiB",
+                "Chunk cache evict (refcount=0): source=%s chunk=%d"
+                " freed=%.1f MiB (remaining: %.1f MiB, %d entries)",
                 key[0],
                 key[1],
                 freed / (1024 * 1024),
+                self._current_bytes / (1024 * 1024),
+                len(self._chunks),
             )
             self._try_readahead()
+        else:
+            logger.debug(
+                "Chunk cache read: source=%s chunk=%d refcount=%d",
+                key[0],
+                key[1],
+                remaining,
+            )
 
     # ----- background read-ahead ------------------------------------------
 
@@ -1354,23 +1394,52 @@ class ScheduledCache:
                 return
             # Only read ahead if we have room
             if self._current_bytes >= self._max_bytes:
+                logger.debug(
+                    "Chunk cache readahead skipped (at capacity):"
+                    " source=%s chunk=%d cached=%.1f MiB limit=%.1f MiB",
+                    next_key[0],
+                    next_key[1],
+                    self._current_bytes / (1024 * 1024),
+                    self._max_bytes / (1024 * 1024),
+                )
                 return
             self._readahead_pending.add(next_key)
 
+        logger.info(
+            "Chunk cache readahead submit: source=%s chunk=%d",
+            next_key[0],
+            next_key[1],
+        )
         # Submit outside lock
         self._readahead_executor.submit(self._do_readahead, next_key)
 
     def _do_readahead(self, key: tuple[str, int]) -> None:
         """Background read-ahead worker."""
         try:
-            self.get(key)  # reuses deduplication logic
+            self.get(key, _readahead=True)
         finally:
             with self._condition:
                 self._readahead_pending.discard(key)
 
     def shutdown(self) -> None:
-        """Shut down the read-ahead executor."""
+        """Shut down the read-ahead executor and log summary stats."""
         self._readahead_executor.shutdown(wait=True)
+        wall = _time.monotonic() - self._t_start
+        total_loads = self._total_demand_loads + self._total_readahead_loads
+        logger.info(
+            "Chunk cache summary: %d loads (demand=%d readahead=%d)"
+            " %d evictions, %d hits, %d misses,"
+            " load_time=%.1fs wait_time=%.1fs wall=%.1fs",
+            total_loads,
+            self._total_demand_loads,
+            self._total_readahead_loads,
+            self._total_evictions,
+            self._hits,
+            self._misses,
+            self._total_load_time,
+            self._total_wait_time,
+            wall,
+        )
 
     @property
     def total_bytes(self) -> int:
