@@ -118,7 +118,13 @@ def _add_options(options):
 @main.command("infer-ancestors")
 @_config_arg
 @_add_options(_runtime_options)
-def infer_ancestors_cmd(config, threads, force, progress, verbose):
+@click.option(
+    "--write-threads",
+    default=2,
+    show_default=True,
+    help="Writer threads for Zarr I/O.",
+)
+def infer_ancestors_cmd(config, threads, write_threads, force, progress, verbose):
     """Build the ancestor VCZ store from the samples VCZ."""
     _setup_logging(verbose)
     cfg = Config.from_toml(config)
@@ -140,6 +146,7 @@ def infer_ancestors_cmd(config, threads, force, progress, verbose):
         cfg.ancestral_state,
         progress=progress,
         num_threads=threads,
+        write_threads=write_threads,
     )
     logger.info("Ancestor inference complete")
 
