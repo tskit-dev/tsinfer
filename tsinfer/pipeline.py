@@ -415,6 +415,10 @@ def match(
 
     schedule = []
     for group_idx in sorted_groups:
+        if group_idx <= last_completed_group:
+            continue
+        if group_stop is not None and group_idx >= group_stop:
+            break
         for _, job in sorted(groups_dict[group_idx], key=lambda p: p[1].haplotype_index):
             schedule.append((job.source, job.sample_id, job.ploidy_index))
 
