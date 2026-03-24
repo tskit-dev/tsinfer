@@ -568,6 +568,59 @@ class TestHaplotypeReader:
                 cache_size_mb=0,
             )
 
+    def test_no_schedule(self):
+        """HaplotypeReader works when constructed without a schedule."""
+        anc_store, sample_store, source, anc_source, positions, anc_alleles = (
+            _make_ancestor_and_sample_stores()
+        )
+        reader = HaplotypeReader(
+            {"ancestors": anc_source, "test": source},
+            positions,
+            anc_alleles,
+        )
+        # Cache should have empty refcounts
+        assert len(reader._cache._refcount) == 0
+
+    def test_shutdown(self):
+        """HaplotypeReader.shutdown() shuts down the cache executor."""
+        anc_store, sample_store, source, anc_source, positions, anc_alleles = (
+            _make_ancestor_and_sample_stores()
+        )
+        reader = HaplotypeReader(
+            {"ancestors": anc_source, "test": source},
+            positions,
+            anc_alleles,
+        )
+        reader.shutdown()
+
+    def test_allele_mapper_property(self):
+        """allele_mapper property returns an AlleleMapper instance."""
+        anc_store, sample_store, source, anc_source, positions, anc_alleles = (
+            _make_ancestor_and_sample_stores()
+        )
+        reader = HaplotypeReader(
+            {"ancestors": anc_source, "test": source},
+            positions,
+            anc_alleles,
+        )
+        assert isinstance(reader.allele_mapper, AlleleMapper)
+
+    def test_get_num_alleles(self):
+        """get_num_alleles returns per-site allele counts."""
+        anc_store, sample_store, source, anc_source, positions, anc_alleles = (
+            _make_ancestor_and_sample_stores()
+        )
+        reader = HaplotypeReader(
+            {"ancestors": anc_source, "test": source},
+            positions,
+            anc_alleles,
+        )
+        num_alleles = reader.get_num_alleles()
+        assert num_alleles.shape == (len(positions),)
+        assert num_alleles.dtype == np.uint64
+        # Each site has at least 2 alleles (ancestral + 1 derived)
+        assert np.all(num_alleles >= 2)
+
 
 # ---------------------------------------------------------------------------
 # VCZHaplotypeReader
@@ -753,6 +806,74 @@ class TestVCZHaplotypeReader:
         hap = reader.read_haplotype("sample_1")
         np.testing.assert_array_equal(hap, [1])
 
+    def test_no_overlapping_positions(self):
+        """Reader with no overlapping positions returns all -1."""
+        # Source has positions 100, 200 but reference has 500, 600
+        positions_src = np.array([100, 200], dtype=np.int32)
+        positions_ref = np.array([500, 600], dtype=np.int32)
+        gt = np.array([[[0]], [[1]]], dtype=np.int8)
+        sample_store = make_sample_vcz(
+            genotypes=gt,
+            positions=positions_src,
+            alleles=np.array([["A", "T"], ["A", "T"]]),
+            ancestral_state=np.array(["A", "A"]),
+            sequence_length=1000,
+        )
+        anc_alleles = np.array(["A", "A"])
+        reader = VCZHaplotypeReader(
+            sample_store,
+            positions_ref,
+            anc_alleles,
+            source_name="test",
+            cache=None,
+        )
+        assert reader._num_selected == 0
+        # _precompute_allele_remap should return early
+        reader._precompute_allele_remap()
+        cache = _make_cache_for_reader(reader, ["sample_0"])
+        reader._cache = cache
+        hap = reader.read_haplotype("sample_0")
+        np.testing.assert_array_equal(hap, [-1, -1])
+
+    def test_variant_chunk_fully_skipped(self):
+        """Variant chunks with no selected sites are skipped during load."""
+        # 6 source variants with variant chunk size 2 → 3 variant chunks
+        # Only position 500 matches reference → only chunk 2 has selected sites
+        positions_src = np.array([100, 200, 300, 400, 500, 600], dtype=np.int32)
+        positions_ref = np.array([500], dtype=np.int32)
+        gt = np.zeros((6, 1, 1), dtype=np.int8)
+        gt[4, 0, 0] = 1  # pos 500
+        alleles = np.array([["A", "T"]] * 6)
+        sample_store = make_sample_vcz(
+            genotypes=gt,
+            positions=positions_src,
+            alleles=alleles,
+            ancestral_state=np.array(["A"] * 6),
+            sequence_length=1000,
+        )
+        # Force variant chunk size to 2
+        del sample_store["call_genotype"]
+        cg = sample_store.create_array(
+            "call_genotype",
+            data=gt,
+            chunks=(2, 1, 1),
+        )
+        cg.attrs["_ARRAY_DIMENSIONS"] = ["variants", "samples", "ploidy"]
+        anc_alleles = np.array(["A"])
+        reader = VCZHaplotypeReader(
+            sample_store,
+            positions_ref,
+            anc_alleles,
+            source_name="test",
+            cache=None,
+        )
+        # Only 1 of 3 variant chunks should be in _needed_vc
+        assert len(reader._needed_vc) == 1
+        cache = _make_cache_for_reader(reader, ["sample_0"])
+        reader._cache = cache
+        hap = reader.read_haplotype("sample_0")
+        np.testing.assert_array_equal(hap, [1])
+
 
 # ---------------------------------------------------------------------------
 # ChunkCache
@@ -934,6 +1055,37 @@ class TestScheduledCache:
         cache._try_readahead()
         time.sleep(0.05)
         assert 1 not in loaded
+        cache.shutdown()
+
+    def test_readahead_skips_pending_chunk(self):
+        """Readahead skips chunks that are already being loaded."""
+        cache = ScheduledCache(
+            max_bytes=100,
+            refcounts={("s", 0): 1, ("s", 1): 1},
+            chunk_order=[("s", 0), ("s", 1)],
+        )
+        cache.register_loader("s", lambda idx: _arr(10))
+        # Simulate chunk 0 being loaded by adding to _pending
+        cache._pending[("s", 0)] = threading.Event()
+        cache._try_readahead()
+        # Should skip ("s", 0) and submit ("s", 1) instead
+        time.sleep(0.1)
+        assert ("s", 1) in cache._chunks
+        cache.shutdown()
+
+    def test_readahead_skips_unregistered_source(self):
+        """Readahead skips chunks whose source has no registered loader."""
+        cache = ScheduledCache(
+            max_bytes=100,
+            refcounts={("unknown", 0): 1, ("s", 0): 1},
+            chunk_order=[("unknown", 0), ("s", 0)],
+        )
+        cache.register_loader("s", lambda idx: _arr(10))
+        # No loader for "unknown" — should skip it and load ("s", 0)
+        cache._try_readahead()
+        time.sleep(0.1)
+        assert ("s", 0) in cache._chunks
+        assert ("unknown", 0) not in cache._chunks
         cache.shutdown()
 
     # --- Group 5: shutdown ---
