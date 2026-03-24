@@ -532,6 +532,7 @@ def infer_ancestors(
     ancestral_state: AncestralState,
     progress: bool = False,
     num_threads: int = 0,
+    write_threads: int = 2,
 ) -> zarr.Group:
     """
     Build the ancestor VCZ store from one or more samples VCZ stores.
@@ -631,7 +632,7 @@ def infer_ancestors(
     # --- 4. Pass 2: per-interval ancestor building ---
     t_pass2 = time.monotonic()
     encoding_name = "one_bit" if cfg.genotype_encoding == 1 else "eight_bit"
-    write_threads = max(1, num_threads)
+    write_threads = max(1, write_threads)
     if num_threads > 0:
         logger.info(
             "Pass 2: building ancestors per interval "
