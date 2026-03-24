@@ -33,8 +33,8 @@ from helpers import make_sample_vcz
 from tsinfer.grouping import MatchJob
 from tsinfer.vcz import (
     AlleleMapper,
-    ChunkCache,
     HaplotypeReader,
+    ScheduledCache,
     VCZHaplotypeReader,
     num_contigs,
     open_store,
@@ -345,8 +345,12 @@ class TestHaplotypeReader:
         anc_store, sample_store, source, anc_source, positions, anc_alleles = (
             _make_ancestor_and_sample_stores()
         )
+        schedule = [("ancestors", "a0", 0)]
         reader = HaplotypeReader(
-            {"ancestors": anc_source, "test": source}, positions, anc_alleles
+            {"ancestors": anc_source, "test": source},
+            positions,
+            anc_alleles,
+            schedule=schedule,
         )
         # a0 has genotype [0, 1, 0]
         job = MatchJob(
@@ -366,8 +370,12 @@ class TestHaplotypeReader:
         anc_store, sample_store, source, anc_source, positions, anc_alleles = (
             _make_ancestor_and_sample_stores()
         )
+        schedule = [("ancestors", "a1", 0)]
         reader = HaplotypeReader(
-            {"ancestors": anc_source, "test": source}, positions, anc_alleles
+            {"ancestors": anc_source, "test": source},
+            positions,
+            anc_alleles,
+            schedule=schedule,
         )
         # a1 has genotype [1, 0, 1]
         job = MatchJob(
@@ -387,8 +395,12 @@ class TestHaplotypeReader:
         anc_store, sample_store, source, anc_source, positions, anc_alleles = (
             _make_ancestor_and_sample_stores()
         )
+        schedule = [("test", "sample_0", 0)]
         reader = HaplotypeReader(
-            {"ancestors": anc_source, "test": source}, positions, anc_alleles
+            {"ancestors": anc_source, "test": source},
+            positions,
+            anc_alleles,
+            schedule=schedule,
         )
         # sample_0: gt [0, 1, 1] → encoded [0=anc, 1=derived, 1=derived]
         job = MatchJob(
@@ -408,8 +420,12 @@ class TestHaplotypeReader:
         anc_store, sample_store, source, anc_source, positions, anc_alleles = (
             _make_ancestor_and_sample_stores()
         )
+        schedule = [("test", "sample_1", 0)]
         reader = HaplotypeReader(
-            {"ancestors": anc_source, "test": source}, positions, anc_alleles
+            {"ancestors": anc_source, "test": source},
+            positions,
+            anc_alleles,
+            schedule=schedule,
         )
         # sample_1: gt [1, 0, 0] → encoded [1=derived, 0=anc, 0=anc]
         job = MatchJob(
@@ -452,8 +468,12 @@ class TestHaplotypeReader:
         source = Source(path=sample_store, name="test")
         anc_source = Source(path=anc_store, name="ancestors", sample_time="sample_time")
         anc_alleles = np.asarray(anc_store["variant_allele"][:])[:, 0]
+        schedule = [("test", "sample_0", 0)]
         reader = HaplotypeReader(
-            {"ancestors": anc_source, "test": source}, positions, anc_alleles
+            {"ancestors": anc_source, "test": source},
+            positions,
+            anc_alleles,
+            schedule=schedule,
         )
         job = MatchJob(
             haplotype_index=2,
@@ -507,7 +527,8 @@ class TestHaplotypeReader:
             "src_b": Source(path=store_b, name="src_b"),
         }
         anc_alleles = np.asarray(anc_store["variant_allele"][:])[:, 0]
-        reader = HaplotypeReader(sources, positions, anc_alleles)
+        schedule = [("src_a", "sample_0", 0), ("src_b", "sample_0", 0)]
+        reader = HaplotypeReader(sources, positions, anc_alleles, schedule=schedule)
 
         job_a = MatchJob(
             haplotype_index=2,
@@ -547,41 +568,45 @@ class TestHaplotypeReader:
                 cache_size_mb=0,
             )
 
-    def test_cache_size_mb_warning(self):
-        """HaplotypeReader warns when fewer than 2 chunks fit."""
-        anc_store, sample_store, source, anc_source, positions, anc_alleles = (
-            _make_ancestor_and_sample_stores()
-        )
-        # Ancestor chunk: 3 sites * N samples * 1 ploidy * 1 byte.
-        # With default chunk size covering all samples, chunk is small.
-        # cache_size_mb=1 → 1 MiB which fits the tiny test chunks fine.
-        # We need cache to fit exactly 1 chunk but not 2.
-        # Ancestor store has 2 samples, chunk_size = 2 (all in one chunk)
-        # → chunk_bytes = 3 * 2 * 1 * 1 = 6 bytes.
-        # Sample store has 2 samples → chunk_bytes = 3 * 2 * 1 * 1 = 6 bytes.
-        # We need max_bytes >= 6 (fits 1) but < 12 (fits <2 from each).
-        # cache_size_mb must be integer MiB, but 1 MiB is way too large.
-        # This test is not practical with MiB granularity and tiny stores.
-        # Skip this — the ValueError test above covers the fail-early path.
-
 
 # ---------------------------------------------------------------------------
 # VCZHaplotypeReader
 # ---------------------------------------------------------------------------
 
 
+def _make_cache_for_reader(reader, sample_ids, max_bytes=1024 * 1024):
+    """Build a ScheduledCache for a VCZHaplotypeReader test.
+
+    Each sample_id is scheduled for exactly one read at ploidy_index=0.
+    """
+    refcounts = {}
+    chunk_order = []
+    seen = set()
+    for sid in sample_ids:
+        chunk_idx = reader._chunk_for_sample(sid)
+        key = (reader._source_name, chunk_idx)
+        refcounts[key] = refcounts.get(key, 0) + 1
+        if key not in seen:
+            chunk_order.append(key)
+            seen.add(key)
+    cache = ScheduledCache(max_bytes, refcounts, chunk_order)
+    cache.register_loader(reader._source_name, reader._do_load_chunk)
+    return cache
+
+
 class TestVCZHaplotypeReader:
     def test_ancestor_store_direct(self):
         """VCZHaplotypeReader reads ancestor haplotypes correctly."""
         anc_store, _, _, _, positions, anc_alleles = _make_ancestor_and_sample_stores()
-        cache = ChunkCache(max_bytes=1024 * 1024)
         reader = VCZHaplotypeReader(
             anc_store,
             positions,
             anc_alleles,
             source_name="anc",
-            cache=cache,
+            cache=None,
         )
+        cache = _make_cache_for_reader(reader, ["a0"])
+        reader._cache = cache
         hap = reader.read_haplotype("a0", ploidy_index=0)
         np.testing.assert_array_equal(hap, [0, 1, 0])
 
@@ -590,42 +615,45 @@ class TestVCZHaplotypeReader:
         _, sample_store, _, _, positions, anc_alleles = (
             _make_ancestor_and_sample_stores()
         )
-        cache = ChunkCache(max_bytes=1024 * 1024)
         reader = VCZHaplotypeReader(
             sample_store,
             positions,
             anc_alleles,
             source_name="test",
-            cache=cache,
+            cache=None,
         )
+        cache = _make_cache_for_reader(reader, ["sample_0"])
+        reader._cache = cache
         # sample_0: gt [0, 1, 1] → encoded [0, 1, 1]
         hap = reader.read_haplotype("sample_0", ploidy_index=0)
         np.testing.assert_array_equal(hap, [0, 1, 1])
 
     def test_cache_hit(self):
-        """Second read for a sample in the same chunk uses the cache."""
+        """Two samples in the same chunk share a single load."""
         anc_store, sample_store, _, _, positions, anc_alleles = (
             _make_ancestor_and_sample_stores()
         )
-        cache = ChunkCache(max_bytes=1024 * 1024)
         reader = VCZHaplotypeReader(
             sample_store,
             positions,
             anc_alleles,
             source_name="test",
-            cache=cache,
+            cache=None,
         )
+        cache = _make_cache_for_reader(reader, ["sample_0", "sample_1"])
+        reader._cache = cache
         reader.read_haplotype("sample_0")
-        # Both samples are in the same chunk for this small store
-        assert len(cache._cache) == 1
+        # Chunk is still alive (refcount=1 remaining)
+        assert ("test", 0) in cache._chunks
+        assert cache._hits == 0
         reader.read_haplotype("sample_1")
-        # Should still be just 1 cached chunk
-        assert len(cache._cache) == 1
+        # After last read, chunk is evicted (refcount=0)
+        assert ("test", 0) not in cache._chunks
+        assert cache._hits == 1
 
-    def test_cache_eviction(self):
-        """Oldest chunk is evicted when cache is full."""
+    def test_refcount_eviction(self):
+        """Chunk is evicted exactly when its last scheduled read completes."""
         positions = np.array([100], dtype=np.int32)
-        # Create a store with 6 samples to span multiple chunks
         n_samples = 6
         gt = np.zeros((1, n_samples, 1), dtype=np.int8)
         sample_ids = np.array([f"sample_{i}" for i in range(n_samples)])
@@ -646,26 +674,30 @@ class TestVCZHaplotypeReader:
         )
         cg.attrs["_ARRAY_DIMENSIONS"] = ["variants", "samples", "ploidy"]
         anc_alleles = np.array(["A"])
-        # Each chunk is 1 site * 2 samples * 1 ploidy * 1 byte = 2 bytes.
-        # max_bytes=4 allows exactly 2 chunks.
-        cache = ChunkCache(max_bytes=4)
         reader = VCZHaplotypeReader(
             sample_store,
             positions,
             anc_alleles,
             source_name="test",
-            cache=cache,
+            cache=None,
         )
-        # Read from chunk 0
+        # Schedule: read one sample from each of the 3 chunks
+        cache = _make_cache_for_reader(
+            reader,
+            ["sample_0", "sample_2", "sample_4"],
+            max_bytes=1024 * 1024,
+        )
+        reader._cache = cache
+        # Read from chunk 0 — evicted immediately (only 1 scheduled read)
         reader.read_haplotype("sample_0")
-        assert len(cache._cache) == 1
+        assert ("test", 0) not in cache._chunks
         # Read from chunk 1
         reader.read_haplotype("sample_2")
-        assert len(cache._cache) == 2
-        # Read from chunk 2 — should evict chunk 0
+        assert ("test", 1) not in cache._chunks
+        # Read from chunk 2
         reader.read_haplotype("sample_4")
-        assert len(cache._cache) == 2
-        assert ("test", 0) not in cache._cache
+        assert ("test", 2) not in cache._chunks
+        assert cache.total_bytes == 0
 
     def test_missing_genotype(self):
         """Missing genotypes encode as -1."""
@@ -679,14 +711,15 @@ class TestVCZHaplotypeReader:
             sequence_length=1000,
         )
         anc_alleles = np.array(["A", "A"])
-        cache = ChunkCache(max_bytes=1024 * 1024)
         reader = VCZHaplotypeReader(
             sample_store,
             positions,
             anc_alleles,
             source_name="test",
-            cache=cache,
+            cache=None,
         )
+        cache = _make_cache_for_reader(reader, ["sample_0"])
+        reader._cache = cache
         hap = reader.read_haplotype("sample_0")
         assert hap[0] == -1
         assert hap[1] == 0
@@ -707,168 +740,18 @@ class TestVCZHaplotypeReader:
         # Select only sample_1
         selection = np.array([1])
         anc_alleles = np.array(["A"])
-        cache = ChunkCache(max_bytes=1024 * 1024)
         reader = VCZHaplotypeReader(
             sample_store,
             positions,
             anc_alleles,
             source_name="test",
-            cache=cache,
+            cache=None,
             samples_selection=selection,
         )
+        cache = _make_cache_for_reader(reader, ["sample_1"])
+        reader._cache = cache
         hap = reader.read_haplotype("sample_1")
         np.testing.assert_array_equal(hap, [1])
-
-    def test_cross_source_eviction(self):
-        """Shared cache evicts across sources when at capacity."""
-        positions = np.array([100], dtype=np.int32)
-        gt = np.zeros((1, 1, 1), dtype=np.int8)
-        alleles = np.array([["A", "T"]])
-        anc_alleles = np.array(["A"])
-
-        store_a = make_sample_vcz(
-            genotypes=gt,
-            positions=positions,
-            alleles=alleles,
-            ancestral_state=np.array(["A"]),
-            sequence_length=1000,
-        )
-        store_b = make_sample_vcz(
-            genotypes=gt,
-            positions=positions,
-            alleles=alleles,
-            ancestral_state=np.array(["A"]),
-            sequence_length=1000,
-        )
-
-        # Each chunk is 1 site * 1 sample * 1 ploidy * 1 byte = 1 byte.
-        # max_bytes=2 allows exactly 2 chunks.
-        cache = ChunkCache(max_bytes=2)
-        reader_a = VCZHaplotypeReader(
-            store_a,
-            positions,
-            anc_alleles,
-            source_name="src_a",
-            cache=cache,
-        )
-        reader_b = VCZHaplotypeReader(
-            store_b,
-            positions,
-            anc_alleles,
-            source_name="src_b",
-            cache=cache,
-        )
-
-        reader_a.read_haplotype("sample_0")
-        assert len(cache._cache) == 1
-        reader_b.read_haplotype("sample_0")
-        assert len(cache._cache) == 2
-
-        # Third source should evict src_a's chunk
-        store_c = make_sample_vcz(
-            genotypes=gt,
-            positions=positions,
-            alleles=alleles,
-            ancestral_state=np.array(["A"]),
-            sequence_length=1000,
-        )
-        reader_c = VCZHaplotypeReader(
-            store_c,
-            positions,
-            anc_alleles,
-            source_name="src_c",
-            cache=cache,
-        )
-        reader_c.read_haplotype("sample_0")
-        assert len(cache._cache) == 2
-        assert ("src_a", 0) not in cache._cache
-        assert ("src_b", 0) in cache._cache
-        assert ("src_c", 0) in cache._cache
-
-    def test_large_chunk_evicts_multiple_small(self):
-        """A single large chunk can evict multiple smaller entries."""
-        positions = np.array([100, 200], dtype=np.int32)
-
-        # Small store: 2 sites, 1 sample, 1 ploidy → 2 bytes per chunk
-        gt_small = np.zeros((2, 1, 1), dtype=np.int8)
-        alleles = np.array([["A", "T"], ["A", "T"]])
-        store_small = make_sample_vcz(
-            genotypes=gt_small,
-            positions=positions,
-            alleles=alleles,
-            ancestral_state=np.array(["A", "A"]),
-            sequence_length=1000,
-        )
-
-        # Large store: 2 sites, 4 samples, 1 ploidy, chunk_size=4 → 8 bytes
-        gt_large = np.zeros((2, 4, 1), dtype=np.int8)
-        sample_ids = np.array([f"s{i}" for i in range(4)])
-        store_large = make_sample_vcz(
-            genotypes=gt_large,
-            positions=positions,
-            alleles=alleles,
-            ancestral_state=np.array(["A", "A"]),
-            sequence_length=1000,
-            sample_ids=sample_ids,
-        )
-
-        anc_alleles = np.array(["A", "A"])
-        # Cache fits 9 bytes: 2+2+8=12 > 9, and 2+8=10 > 9,
-        # so inserting the large chunk must evict both smalls.
-        cache = ChunkCache(max_bytes=9)
-
-        reader_small_a = VCZHaplotypeReader(
-            store_small,
-            positions,
-            anc_alleles,
-            source_name="small_a",
-            cache=cache,
-        )
-        reader_small_b = VCZHaplotypeReader(
-            store_small,
-            positions,
-            anc_alleles,
-            source_name="small_b",
-            cache=cache,
-        )
-        reader_large = VCZHaplotypeReader(
-            store_large,
-            positions,
-            anc_alleles,
-            source_name="large",
-            cache=cache,
-        )
-
-        # Fill with 2-byte chunks: 2+2 = 4 bytes
-        reader_small_a.read_haplotype("sample_0")
-        reader_small_b.read_haplotype("sample_0")
-        assert len(cache._cache) == 2
-        assert cache.total_bytes == 4
-
-        # Insert large 8-byte chunk: 4 + 8 = 12 > 10, must evict both smalls
-        reader_large.read_haplotype("s0")
-        assert ("small_a", 0) not in cache._cache
-        assert ("small_b", 0) not in cache._cache
-        assert ("large", 0) in cache._cache
-        assert cache.total_bytes == 8
-
-    def test_cache_bytes_tracking(self):
-        """ChunkCache tracks _current_bytes correctly through inserts/evictions."""
-        cache = ChunkCache(max_bytes=100)
-        a = np.zeros(30, dtype=np.int8)  # 30 bytes
-        b = np.zeros(40, dtype=np.int8)  # 40 bytes
-        c = np.zeros(50, dtype=np.int8)  # 50 bytes
-
-        cache.put(("x", 0), a)
-        assert cache.total_bytes == 30
-
-        cache.put(("x", 1), b)
-        assert cache.total_bytes == 70
-
-        # c (50) + 70 = 120 > 100 → evict a (30) → 40+50=90
-        cache.put(("x", 2), c)
-        assert cache.total_bytes == 90
-        assert ("x", 0) not in cache._cache
 
 
 # ---------------------------------------------------------------------------
@@ -881,329 +764,206 @@ def _arr(n):
     return np.arange(n, dtype=np.int8)
 
 
-class TestChunkCache:
-    # --- Group 1: get() ---
+class TestScheduledCache:
+    # --- Group 1: get() loads via registered loader ---
 
-    def test_get_miss_returns_none(self):
-        cache = ChunkCache(max_bytes=100)
-        assert cache.get(("s", 0)) is None
-        assert cache._misses == 1
-
-    def test_get_hit_returns_data(self):
-        cache = ChunkCache(max_bytes=100)
-        a = _arr(10)
-        cache.put(("s", 0), a)
+    def test_get_loads_via_loader(self):
+        data = _arr(10)
+        cache = ScheduledCache(
+            max_bytes=100,
+            refcounts={("s", 0): 1},
+            chunk_order=[("s", 0)],
+        )
+        cache.register_loader("s", lambda idx: data)
         result = cache.get(("s", 0))
-        assert result is a
-        assert cache._hits == 1
+        np.testing.assert_array_equal(result, data)
+        assert cache.total_bytes == 10
 
-    def test_get_updates_lru_order(self):
-        cache = ChunkCache(max_bytes=30)
-        cache.put(("s", 0), _arr(10))  # A
-        cache.put(("s", 1), _arr(10))  # B
-        # Touch A so B becomes the LRU entry
+    def test_get_returns_cached(self):
+        """Second get returns cached data without calling loader again."""
+        call_count = [0]
+
+        def loader(idx):
+            call_count[0] += 1
+            return _arr(10)
+
+        cache = ScheduledCache(
+            max_bytes=100,
+            refcounts={("s", 0): 2},
+            chunk_order=[("s", 0)],
+        )
+        cache.register_loader("s", loader)
         cache.get(("s", 0))
-        # Insert C — should evict B (LRU), not A
-        cache.put(("s", 2), _arr(15))
-        assert ("s", 1) not in cache._cache
-        assert ("s", 0) in cache._cache
-
-    # --- Group 2: put() ---
-
-    def test_put_inserts_and_tracks_bytes(self):
-        cache = ChunkCache(max_bytes=100)
-        cache.put(("s", 0), _arr(30))
-        assert cache.total_bytes == 30
-        assert ("s", 0) in cache._cache
-
-    def test_put_noop_if_key_exists(self):
-        cache = ChunkCache(max_bytes=100)
-        a = _arr(30)
-        cache.put(("s", 0), a)
-        cache.put(("s", 0), _arr(50))  # should be ignored
-        assert cache.total_bytes == 30
-        assert cache._cache[("s", 0)] is a
-
-    def test_put_evicts_lru_single(self):
-        cache = ChunkCache(max_bytes=50)
-        cache.put(("s", 0), _arr(30))
-        cache.put(("s", 1), _arr(30))
-        # 30+30=60 > 50 → evict ("s",0)
-        assert ("s", 0) not in cache._cache
-        assert ("s", 1) in cache._cache
-        assert cache.total_bytes == 30
-
-    def test_put_evicts_multiple(self):
-        cache = ChunkCache(max_bytes=100)
-        cache.put(("s", 0), _arr(30))
-        cache.put(("s", 1), _arr(30))
-        cache.put(("s", 2), _arr(30))
-        # 90 used; inserting 50 → need to evict at least 40
-        cache.put(("s", 3), _arr(50))
-        assert ("s", 0) not in cache._cache
-        assert ("s", 1) not in cache._cache
-        assert ("s", 2) in cache._cache
-        assert ("s", 3) in cache._cache
-        assert cache.total_bytes == 80
-
-    def test_put_item_larger_than_max(self):
-        cache = ChunkCache(max_bytes=10)
-        cache.put(("s", 0), _arr(5))
-        cache.put(("s", 1), _arr(20))
-        # All prior entries evicted; oversized item still inserted
-        assert ("s", 0) not in cache._cache
-        assert ("s", 1) in cache._cache
-        assert cache.total_bytes == 20
-
-    # --- Group 3: get_or_wait + finish_load (single-thread) ---
-
-    def test_get_or_wait_hit(self):
-        cache = ChunkCache(max_bytes=100)
-        a = _arr(10)
-        cache.put(("s", 0), a)
-        result = cache.get_or_wait(("s", 0))
-        assert result is a
+        result = cache.get(("s", 0))
+        assert call_count[0] == 1
         assert cache._hits == 1
-
-    def test_get_or_wait_loader_path(self):
-        cache = ChunkCache(max_bytes=100)
-        result = cache.get_or_wait(("s", 0))
-        assert result is None
-        assert ("s", 0) in cache._pending
         assert cache._misses == 1
+        assert result is not None
 
-    def test_finish_load_inserts_and_wakes(self):
-        cache = ChunkCache(max_bytes=100)
-        cache.get_or_wait(("s", 0))  # creates pending
-        a = _arr(20)
-        cache.finish_load(("s", 0), a)
-        assert ("s", 0) in cache._cache
-        assert ("s", 0) not in cache._pending
-        assert cache.total_bytes == 20
+    # --- Group 2: record_read() ---
 
-    def test_finish_load_none_clears_pending(self):
-        cache = ChunkCache(max_bytes=100)
-        cache.get_or_wait(("s", 0))
-        cache.finish_load(("s", 0), None)
-        assert ("s", 0) not in cache._cache
-        assert ("s", 0) not in cache._pending
+    def test_record_read_decrements_refcount(self):
+        cache = ScheduledCache(
+            max_bytes=100,
+            refcounts={("s", 0): 3},
+            chunk_order=[("s", 0)],
+        )
+        cache.register_loader("s", lambda idx: _arr(10))
+        cache.get(("s", 0))
+        cache.record_read(("s", 0))
+        assert cache._refcount[("s", 0)] == 2
+        assert ("s", 0) in cache._chunks  # not evicted yet
+
+    def test_record_read_evicts_at_zero(self):
+        cache = ScheduledCache(
+            max_bytes=100,
+            refcounts={("s", 0): 1},
+            chunk_order=[("s", 0)],
+        )
+        cache.register_loader("s", lambda idx: _arr(10))
+        cache.get(("s", 0))
+        assert cache.total_bytes == 10
+        cache.record_read(("s", 0))
+        assert ("s", 0) not in cache._chunks
         assert cache.total_bytes == 0
 
-    # --- Group 4: Threading coordination ---
+    def test_record_read_multiple_chunks(self):
+        """Chunks are evicted independently as their refcounts hit zero."""
+        cache = ScheduledCache(
+            max_bytes=100,
+            refcounts={("s", 0): 1, ("s", 1): 2},
+            chunk_order=[("s", 0), ("s", 1)],
+        )
+        cache.register_loader("s", lambda idx: _arr(10))
+        cache.get(("s", 0))
+        cache.get(("s", 1))
+        assert cache.total_bytes == 20
 
-    def test_waiter_receives_data(self):
-        cache = ChunkCache(max_bytes=100)
-        a = _arr(20)
-        # Main thread becomes the loader
-        assert cache.get_or_wait(("s", 0)) is None
+        cache.record_read(("s", 0))
+        assert ("s", 0) not in cache._chunks
+        assert ("s", 1) in cache._chunks
+        assert cache.total_bytes == 10
 
-        results = [None]
-        loader_called = threading.Event()
+        cache.record_read(("s", 1))
+        assert ("s", 1) in cache._chunks  # refcount=1, not zero yet
 
-        def waiter():
-            loader_called.wait()
-            results[0] = cache.get_or_wait(("s", 0))
+        cache.record_read(("s", 1))
+        assert ("s", 1) not in cache._chunks
+        assert cache.total_bytes == 0
 
-        t = threading.Thread(target=waiter)
-        t.start()
-        loader_called.set()
-        time.sleep(0.05)
-        cache.finish_load(("s", 0), a)
-        t.join(timeout=5)
-        assert not t.is_alive()
-        np.testing.assert_array_equal(results[0], a)
+    # --- Group 3: concurrent load deduplication ---
 
-    def test_waiter_gets_none_on_load_failure(self):
-        cache = ChunkCache(max_bytes=100)
-        assert cache.get_or_wait(("s", 0)) is None
+    def test_concurrent_get_deduplicates(self):
+        """Two threads requesting the same chunk: only one loads."""
+        call_count = [0]
+        load_event = threading.Event()
 
-        results = [object()]  # sentinel
-        loader_called = threading.Event()
+        def slow_loader(idx):
+            call_count[0] += 1
+            load_event.wait()
+            return _arr(10)
 
-        def waiter():
-            loader_called.wait()
-            results[0] = cache.get_or_wait(("s", 0))
+        cache = ScheduledCache(
+            max_bytes=100,
+            refcounts={("s", 0): 2},
+            chunk_order=[("s", 0)],
+        )
+        cache.register_loader("s", slow_loader)
 
-        t = threading.Thread(target=waiter)
-        t.start()
-        loader_called.set()
-        time.sleep(0.05)
-        cache.finish_load(("s", 0), None)
-        t.join(timeout=5)
-        assert not t.is_alive()
-        assert results[0] is None
-
-    def test_multiple_waiters(self):
-        cache = ChunkCache(max_bytes=100)
-        a = _arr(20)
-        assert cache.get_or_wait(("s", 0)) is None
-
-        barrier = threading.Barrier(3, timeout=5)
         results = [None, None]
 
-        def waiter(idx):
-            barrier.wait()
-            results[idx] = cache.get_or_wait(("s", 0))
+        def worker(i):
+            results[i] = cache.get(("s", 0))
 
-        threads = [threading.Thread(target=waiter, args=(i,)) for i in range(2)]
-        for t in threads:
-            t.start()
-        barrier.wait()  # ensure both waiters are ready
+        t0 = threading.Thread(target=worker, args=(0,))
+        t1 = threading.Thread(target=worker, args=(1,))
+        t0.start()
         time.sleep(0.05)
-        cache.finish_load(("s", 0), a)
-        for t in threads:
-            t.join(timeout=5)
-            assert not t.is_alive()
+        t1.start()
+        time.sleep(0.05)
+        load_event.set()
+        t0.join(timeout=5)
+        t1.join(timeout=5)
+        assert call_count[0] == 1
         for r in results:
-            np.testing.assert_array_equal(r, a)
+            np.testing.assert_array_equal(r, _arr(10))
 
-    # --- Group 5: reserve_for_load() ---
+    # --- Group 4: read-ahead ---
 
-    def test_reserve_empty_cache(self):
-        cache = ChunkCache(max_bytes=100)
-        cache.reserve_for_load(50)
-        assert cache._reserved_bytes == 50
-        assert cache.total_bytes == 0
-        # Clean up reservation
-        cache.finish_load(("s", 0), None, reserved_bytes=50)
+    def test_readahead_triggers_on_eviction(self):
+        """Evicting a chunk triggers read-ahead for the next one."""
+        loaded = set()
 
-    def test_reserve_no_eviction_needed(self):
-        cache = ChunkCache(max_bytes=100)
-        cache.put(("s", 0), _arr(30))
-        cache.reserve_for_load(50)  # 30+50=80 ≤ 100 → nothing evicted
-        assert ("s", 0) in cache._cache
-        assert cache.total_bytes == 30
-        assert cache._reserved_bytes == 50
-        cache.finish_load(("s", 1), None, reserved_bytes=50)
+        def loader(idx):
+            loaded.add(idx)
+            return _arr(10)
 
-    def test_reserve_evicts_lru(self):
-        cache = ChunkCache(max_bytes=100)
-        cache.put(("s", 0), _arr(40))
-        cache.put(("s", 1), _arr(40))
-        cache.reserve_for_load(50)
-        assert ("s", 0) not in cache._cache
-        assert ("s", 1) in cache._cache
-        assert cache.total_bytes == 40
-        assert cache._reserved_bytes == 50
-        cache.finish_load(("s", 2), None, reserved_bytes=50)
+        cache = ScheduledCache(
+            max_bytes=100,
+            refcounts={("s", 0): 1, ("s", 1): 1},
+            chunk_order=[("s", 0), ("s", 1)],
+        )
+        cache.register_loader("s", loader)
+        cache.get(("s", 0))
+        assert 0 in loaded
+        # Evict chunk 0 — should trigger read-ahead for chunk 1
+        cache.record_read(("s", 0))
+        # Give the background thread time to complete
+        time.sleep(0.1)
+        assert 1 in loaded
+        assert ("s", 1) in cache._chunks
+        cache.shutdown()
 
-    def test_reserve_evicts_multiple(self):
-        cache = ChunkCache(max_bytes=100)
-        cache.put(("s", 0), _arr(30))
-        cache.put(("s", 1), _arr(30))
-        cache.put(("s", 2), _arr(30))
-        cache.reserve_for_load(50)
-        assert ("s", 0) not in cache._cache
-        assert ("s", 1) not in cache._cache
-        assert ("s", 2) in cache._cache
-        assert cache.total_bytes == 30
-        assert cache._reserved_bytes == 50
-        cache.finish_load(("s", 3), None, reserved_bytes=50)
+    def test_readahead_respects_memory_limit(self):
+        """Read-ahead does not fire when cache is at capacity."""
+        cache = ScheduledCache(
+            max_bytes=10,
+            refcounts={("s", 0): 1, ("s", 1): 1},
+            chunk_order=[("s", 0), ("s", 1)],
+        )
+        loaded = set()
 
-    def test_reserve_then_put_no_double_eviction(self):
-        cache = ChunkCache(max_bytes=100)
-        cache.put(("s", 0), _arr(40))
-        cache.put(("s", 1), _arr(40))
-        cache.reserve_for_load(50)
-        assert cache.total_bytes == 40  # ("s",0) evicted
-        cache.finish_load(("s", 2), _arr(50), reserved_bytes=50)
-        assert ("s", 1) in cache._cache
-        assert ("s", 2) in cache._cache
-        assert len(cache._cache) == 2
-        assert cache.total_bytes == 90
+        def loader(idx):
+            loaded.add(idx)
+            return _arr(10)
 
-    def test_reserve_blocks_when_over_budget(self):
-        cache = ChunkCache(max_bytes=100)
-        # Thread A reserves 80 bytes
-        cache.reserve_for_load(80)
-        blocked = threading.Event()
-        unblocked = threading.Event()
-
-        def thread_b():
-            blocked.set()
-            cache.reserve_for_load(80)
-            unblocked.set()
-            cache.finish_load(("s", 1), _arr(80), reserved_bytes=80)
-
-        t = threading.Thread(target=thread_b)
-        t.start()
-        blocked.wait()
-        # Give thread B time to block
-        import time
-
+        cache.register_loader("s", loader)
+        cache.get(("s", 0))  # fills cache to capacity
+        assert cache.total_bytes == 10
+        # Read-ahead should not trigger because cache is full
+        cache._try_readahead()
         time.sleep(0.05)
-        assert not unblocked.is_set()
-        # Release thread A's reservation
-        cache.finish_load(("s", 0), _arr(80), reserved_bytes=80)
-        t.join(timeout=2)
-        assert unblocked.is_set()
+        assert 1 not in loaded
+        cache.shutdown()
 
-    def test_reserve_deadlock_prevention(self):
-        cache = ChunkCache(max_bytes=10)
-        # Single chunk larger than cache, no other in-flight loads
-        cache.reserve_for_load(50)
-        assert cache._reserved_bytes == 50
-        cache.finish_load(("s", 0), None, reserved_bytes=50)
+    # --- Group 5: shutdown ---
 
-    def test_concurrent_reserves_respect_budget(self):
-        cache = ChunkCache(max_bytes=100)
-        max_concurrent = 0
-        lock = threading.Lock()
-        current_count = 0
+    def test_shutdown(self):
+        cache = ScheduledCache(
+            max_bytes=100,
+            refcounts={},
+            chunk_order=[],
+        )
+        cache.shutdown()
+        # Should not raise
 
-        def worker(idx):
-            nonlocal max_concurrent, current_count
-            cache.reserve_for_load(60)
-            with lock:
-                current_count += 1
-                max_concurrent = max(max_concurrent, current_count)
-            # Simulate load
-            import time
+    # --- Group 6: bytes tracking ---
 
-            time.sleep(0.02)
-            with lock:
-                current_count -= 1
-            cache.finish_load(("s", idx), _arr(60), reserved_bytes=60)
-
-        threads = [threading.Thread(target=worker, args=(i,)) for i in range(5)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join(timeout=5)
-        # At most 1 thread should load at a time (60+60=120 > 100)
-        assert max_concurrent <= 1
-
-    def test_failed_load_releases_reservation(self):
-        cache = ChunkCache(max_bytes=100)
-        cache.reserve_for_load(80)
-        # Simulate failed load
-        cache.finish_load(("s", 0), None, reserved_bytes=80)
-        assert cache._reserved_bytes == 0
-        # Another thread should now be able to reserve
-        cache.reserve_for_load(80)
-        assert cache._reserved_bytes == 80
-        cache.finish_load(("s", 1), None, reserved_bytes=80)
-
-    # --- Group 6: Edge cases ---
-
-    def test_finish_load_without_prior_get_or_wait(self):
-        cache = ChunkCache(max_bytes=100)
-        a = _arr(20)
-        cache.finish_load(("s", 0), a)  # no pending entry
-        assert ("s", 0) in cache._cache
-        assert cache.total_bytes == 20
-
-    def test_hits_and_misses_counting(self):
-        cache = ChunkCache(max_bytes=100)
-        cache.get(("s", 0))  # miss
-        cache.get(("s", 1))  # miss
-        cache.put(("s", 0), _arr(10))
-        cache.get(("s", 0))  # hit
-        cache.get_or_wait(("s", 0))  # hit
-        cache.get_or_wait(("s", 2))  # miss (loader path)
-        cache.finish_load(("s", 2), _arr(10))
-        assert cache._hits == 2
-        assert cache._misses == 3
+    def test_total_bytes_tracking(self):
+        cache = ScheduledCache(
+            max_bytes=100,
+            refcounts={("s", 0): 1, ("s", 1): 1},
+            chunk_order=[("s", 0), ("s", 1)],
+        )
+        cache.register_loader("s", lambda idx: _arr(30))
+        cache.get(("s", 0))
+        assert cache.total_bytes == 30
+        cache.get(("s", 1))
+        assert cache.total_bytes == 60
+        cache.record_read(("s", 0))
+        assert cache.total_bytes == 30
+        cache.record_read(("s", 1))
+        assert cache.total_bytes == 0
 
 
 # ---------------------------------------------------------------------------
@@ -1303,17 +1063,18 @@ class TestVariantSelection:
             sequence_length=1000,
         )
         anc_alleles = np.array(["A", "A"])
-        cache = ChunkCache(max_bytes=1024 * 1024)
         reader = VCZHaplotypeReader(
             store,
             positions_ref,
             anc_alleles,
             source_name="test",
-            cache=cache,
+            cache=None,
         )
+        cache = _make_cache_for_reader(reader, ["sample_0", "sample_1"])
+        reader._cache = cache
         reader.read_haplotype("sample_0")
         # Cache should have one entry with shape (2, 2, 1) not (5, 2, 1)
-        cached = list(cache._cache.values())[0]
+        cached = list(cache._chunks.values())[0]
         assert cached.shape == (2, 2, 1)
 
     def test_chunk_bytes_reflects_selected(self):
@@ -1328,13 +1089,12 @@ class TestVariantSelection:
             ancestral_state=np.array(["A"] * 3),
             sequence_length=1000,
         )
-        cache = ChunkCache(max_bytes=1024 * 1024)
         reader = VCZHaplotypeReader(
             store,
             positions_ref,
             np.array(["A"]),
             source_name="test",
-            cache=cache,
+            cache=None,
         )
         # 1 selected * 2 samples * 1 ploidy * 1 byte = 2
         assert reader.chunk_bytes == 2
@@ -1359,14 +1119,15 @@ class TestVariantSelection:
             sequence_length=2000,
         )
         anc_alleles = np.array(["A", "A"])
-        cache = ChunkCache(max_bytes=1024 * 1024)
         reader = VCZHaplotypeReader(
             store,
             positions_ref,
             anc_alleles,
             source_name="test",
-            cache=cache,
+            cache=None,
         )
+        cache = _make_cache_for_reader(reader, ["sample_0"])
+        reader._cache = cache
         hap = reader.read_haplotype("sample_0")
         np.testing.assert_array_equal(hap, [1, 0])
 
@@ -1398,7 +1159,8 @@ class TestGetSiteAlleles:
             "src_b": Source(path=store_b, name="src_b"),
         }
         anc_alleles = np.array(["A", "A"])
-        reader = HaplotypeReader(sources, positions, anc_alleles)
+        schedule = [("src_a", "sample_0", 0), ("src_b", "sample_0", 0)]
+        reader = HaplotypeReader(sources, positions, anc_alleles, schedule=schedule)
 
         # Read from both sources to trigger allele discovery
         job_a = MatchJob(
