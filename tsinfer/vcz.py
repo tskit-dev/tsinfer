@@ -1245,7 +1245,7 @@ class ScheduledCache:
         self._lock = threading.Lock()
         self._pending: dict[tuple[str, int], threading.Event] = {}
         self._loaders: dict[str, Any] = {}
-        self._readahead_executor = ThreadPoolExecutor(max_workers=1)
+        self._readahead_executor = ThreadPoolExecutor(max_workers=4)
         self._readahead_pending: set[tuple[str, int]] = set()
         self._hits = 0
         self._misses = 0
@@ -1404,42 +1404,40 @@ class ScheduledCache:
     # ----- background read-ahead ------------------------------------------
 
     def _try_readahead(self) -> None:
-        """Submit a background load for the next needed chunk, if room."""
+        """Submit background loads for upcoming chunks until cache is full."""
+        to_submit = []
         with self._lock:
-            # Advance cursor past chunks already cached or consumed
             while self._cursor < len(self._chunk_order):
                 k = self._chunk_order[self._cursor]
                 if k in self._chunks or k not in self._refcount:
                     self._cursor += 1
-                else:
+                    continue
+                if k in self._pending or k in self._readahead_pending:
+                    self._cursor += 1
+                    continue
+                if k[0] not in self._loaders:
+                    self._cursor += 1
+                    continue
+                if self._current_bytes >= self._max_bytes:
+                    logger.debug(
+                        "Chunk cache readahead stopped (at capacity):"
+                        " cached=%.1f MiB limit=%.1f MiB, %d submitted",
+                        self._current_bytes / (1024 * 1024),
+                        self._max_bytes / (1024 * 1024),
+                        len(to_submit),
+                    )
                     break
-            if self._cursor >= len(self._chunk_order):
-                return
-            next_key = self._chunk_order[self._cursor]
-            if next_key in self._pending or next_key in self._readahead_pending:
-                return
-            if next_key[0] not in self._loaders:
-                return
-            # Only read ahead if we have room
-            if self._current_bytes >= self._max_bytes:
-                logger.debug(
-                    "Chunk cache readahead skipped (at capacity):"
-                    " source=%s chunk=%d cached=%.1f MiB limit=%.1f MiB",
-                    next_key[0],
-                    next_key[1],
-                    self._current_bytes / (1024 * 1024),
-                    self._max_bytes / (1024 * 1024),
-                )
-                return
-            self._readahead_pending.add(next_key)
+                self._readahead_pending.add(k)
+                to_submit.append(k)
+                self._cursor += 1
 
-        logger.info(
-            "Chunk cache readahead submit: source=%s chunk=%d",
-            next_key[0],
-            next_key[1],
-        )
-        # Submit outside lock
-        self._readahead_executor.submit(self._do_readahead, next_key)
+        for key in to_submit:
+            logger.info(
+                "Chunk cache readahead submit: source=%s chunk=%d",
+                key[0],
+                key[1],
+            )
+            self._readahead_executor.submit(self._do_readahead, key)
 
     def _do_readahead(self, key: tuple[str, int]) -> None:
         """Background read-ahead worker."""
@@ -2072,6 +2070,7 @@ class HaplotypeReader:
         for name, reader in self._readers.items():
             reader._cache = self._cache
             self._cache.register_loader(name, reader._do_load_chunk)
+        self._cache._try_readahead()
 
         self._readers_lock = threading.Lock()
 
