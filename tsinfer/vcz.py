@@ -1242,7 +1242,7 @@ class ScheduledCache:
         self._refcount = dict(refcounts)
         self._chunk_order = chunk_order
         self._cursor = 0
-        self._condition = threading.Condition()
+        self._lock = threading.Lock()
         self._pending: dict[tuple[str, int], threading.Event] = {}
         self._loaders: dict[str, Any] = {}
         self._readahead_executor = ThreadPoolExecutor(max_workers=1)
@@ -1271,10 +1271,26 @@ class ScheduledCache:
     def get(self, key: tuple[str, int], _readahead: bool = False) -> np.ndarray:
         """Return cached chunk, loading from zarr if necessary.
 
+        Cache hits are lock-free: the refcount guarantees a chunk
+        cannot be evicted while any reader still needs it, so
+        ``self._chunks.get(key)`` is safe without the lock.
+
         Concurrent loads for the same key are deduplicated: only one
-        thread performs the I/O while others wait.
+        thread performs the I/O while others wait on a
+        ``threading.Event``.
         """
-        with self._condition:
+        # Fast path — lock-free cache hit.
+        # Safe because the refcount guarantees the chunk is alive
+        # as long as any reader needs it, and CPython dict.get()
+        # is GIL-atomic.
+        data = self._chunks.get(key)
+        if data is not None:
+            self._hits += 1
+            return data
+
+        # Slow path — coordinate loading under lock
+        with self._lock:
+            # Re-check: another thread may have loaded it
             if key in self._chunks:
                 self._hits += 1
                 return self._chunks[key]
@@ -1288,25 +1304,24 @@ class ScheduledCache:
                 event = None
 
         if event is not None:
-            # Another thread is loading — wait for it
+            # Another thread is loading — wait on event (no lock held)
             t_wait = _time.monotonic()
             event.wait()
             wait_elapsed = _time.monotonic() - t_wait
-            with self._condition:
-                self._total_wait_time += wait_elapsed
-                logger.debug(
-                    "Chunk cache wait: source=%s chunk=%d waited=%.3fs",
-                    key[0],
-                    key[1],
-                    wait_elapsed,
-                )
-                return self._chunks[key]
+            self._total_wait_time += wait_elapsed
+            logger.debug(
+                "Chunk cache wait: source=%s chunk=%d waited=%.3fs",
+                key[0],
+                key[1],
+                wait_elapsed,
+            )
+            return self._chunks[key]
 
-        # We are the loader
+        # We are the loader — I/O outside the lock
         t_load = _time.monotonic()
         data = self._loaders[key[0]](key[1])
         load_elapsed = _time.monotonic() - t_load
-        with self._condition:
+        with self._lock:
             if key not in self._chunks:
                 self._chunks[key] = data
                 self._current_bytes += data.nbytes
@@ -1316,7 +1331,6 @@ class ScheduledCache:
                 self._total_readahead_loads += 1
             else:
                 self._total_demand_loads += 1
-            self._condition.notify_all()
         if ev is not None:
             ev.set()
         logger.info(
@@ -1341,19 +1355,18 @@ class ScheduledCache:
         evicted = False
         freed = 0
         remaining = 0
-        with self._condition:
+        with self._lock:
             self._refcount[key] -= 1
             remaining = self._refcount[key]
             if remaining <= 0:
                 del self._refcount[key]
-                if key in self._chunks:
-                    freed = self._chunks[key].nbytes
-                    del self._chunks[key]
+                data = self._chunks.pop(key, None)
+                if data is not None:
+                    freed = data.nbytes
                     self._current_bytes -= freed
                     self._total_evictions += 1
                     self._total_evicted_bytes += freed
                     evicted = True
-                    self._condition.notify_all()
         if evicted:
             logger.info(
                 "Chunk cache evict (refcount=0): source=%s chunk=%d"
@@ -1377,7 +1390,7 @@ class ScheduledCache:
 
     def _try_readahead(self) -> None:
         """Submit a background load for the next needed chunk, if room."""
-        with self._condition:
+        with self._lock:
             # Advance cursor past chunks already cached or consumed
             while self._cursor < len(self._chunk_order):
                 k = self._chunk_order[self._cursor]
@@ -1418,7 +1431,7 @@ class ScheduledCache:
         try:
             self.get(key, _readahead=True)
         finally:
-            with self._condition:
+            with self._lock:
                 self._readahead_pending.discard(key)
 
     def shutdown(self) -> None:
