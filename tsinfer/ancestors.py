@@ -331,7 +331,6 @@ def _process_interval(
     ancestor_index,
     progress,
     compressor,
-    group_offset,
 ):
     """
     Process a single sequence interval: load genotypes, build ancestors.
@@ -341,8 +340,7 @@ def _process_interval(
          ancestor, then compute per-partition grouping order.
       2. Write pass — submit ancestors to AncestorWriter in grouping order.
 
-    Returns (updated_ancestor_index, interval_focal_positions,
-             next_group_offset).
+    Returns (updated_ancestor_index, interval_focal_positions).
     """
     n_local = len(local_mask)
     local_positions = final_positions[local_mask]
@@ -381,7 +379,7 @@ def _process_interval(
     )
 
     if n_ancestors == 0:
-        return ancestor_index, [], group_offset
+        return ancestor_index, []
 
     # --- Bounds sub-pass: get (start, end) for each ancestor ---
     t_bounds = time.monotonic()
@@ -437,25 +435,18 @@ def _process_interval(
             anc_starts, anc_ends, anc_times
         )
 
-    # Build write order (group-sorted) and global group assignments
+    # Build write order (group-sorted)
     write_order = []
-    group_values = []
     for gid in sorted(grouping.keys()):
         for idx in grouping[gid]:
             write_order.append(idx)
-            group_values.append(group_offset + gid)
-    group_values = np.array(group_values, dtype=np.int32)
 
-    next_group_offset = (
-        group_offset + max(grouping.keys()) + 1 if grouping else group_offset
-    )
     n_groups = len(grouping)
     logger.info(
-        "Interval %d: %d groups in %.3fs (group_offset=%d)",
+        "Interval %d: %d groups in %.3fs",
         i_idx,
         n_groups,
         time.monotonic() - t_group,
-        group_offset,
     )
 
     # --- Write pass: submit ancestors in grouping order ---
@@ -488,7 +479,6 @@ def _process_interval(
             focal_sites,
             anc_time,
             write_idx,
-            match_group=int(group_values[write_idx]),
         )
         pbar.update(1)
 
@@ -533,7 +523,7 @@ def _process_interval(
         )
 
     ancestor_index += n_ancestors
-    return ancestor_index, interval_focals, next_group_offset
+    return ancestor_index, interval_focals
 
 
 def infer_ancestors(
@@ -681,14 +671,13 @@ def infer_ancestors(
 
     ancestor_index = 0
     all_focal_positions = []
-    group_offset = 0
 
     for i_idx in range(len(seq_intervals)):
         in_interval = site_interval_idx == i_idx
         if not np.any(in_interval):
             continue
         local_mask = np.where(in_interval)[0]
-        ancestor_index, interval_focals, group_offset = _process_interval(
+        ancestor_index, interval_focals = _process_interval(
             view,
             i_idx,
             local_mask,
@@ -702,7 +691,6 @@ def infer_ancestors(
             ancestor_index,
             progress,
             compressor,
-            group_offset,
         )
         all_focal_positions.extend(interval_focals)
 
