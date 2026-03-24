@@ -482,6 +482,7 @@ def match(
             )
             break
 
+        reader.log_cache_state()
         logger.info("Group %d/%d: %d haplotypes", gi + 1, num_groups, num_in_group)
 
         # Match against current TS (haplotypes read on demand via reader)
