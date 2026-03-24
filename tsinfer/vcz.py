@@ -1401,6 +1401,19 @@ class ScheduledCache:
             parts.append(f"{src}:{idx}(ref={ref})")
         return "[" + ", ".join(parts) + "]"
 
+    def log_state(self) -> None:
+        """Log an info-level summary of current cache state."""
+        with self._lock:
+            n_chunks = len(self._chunks)
+            cached_mb = self._current_bytes / (1024 * 1024)
+            ready_haps = sum(self._refcount.get(k, 0) for k in self._chunks)
+        logger.info(
+            "Chunk cache state: %.1f MiB, %d chunks cached, %d haplotypes ready",
+            cached_mb,
+            n_chunks,
+            ready_haps,
+        )
+
     # ----- background read-ahead ------------------------------------------
 
     def _try_readahead(self) -> None:
@@ -2100,6 +2113,10 @@ class HaplotypeReader:
             self._readers[source_name] = reader
             self._cache.register_loader(source_name, reader._do_load_chunk)
             return reader
+
+    def log_cache_state(self) -> None:
+        """Log an info-level summary of current cache state."""
+        self._cache.log_state()
 
     def shutdown(self) -> None:
         """Shut down the cache's background read-ahead executor."""
