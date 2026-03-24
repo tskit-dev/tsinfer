@@ -1331,6 +1331,7 @@ class ScheduledCache:
                 self._total_readahead_loads += 1
             else:
                 self._total_demand_loads += 1
+            state = self._cache_state_summary()
         if ev is not None:
             ev.set()
         logger.info(
@@ -1344,6 +1345,7 @@ class ScheduledCache:
             self._current_bytes / (1024 * 1024),
             len(self._chunks),
         )
+        logger.debug("Chunk cache state: %s", state)
         return data
 
     def record_read(self, key: tuple[str, int]) -> None:
@@ -1367,6 +1369,7 @@ class ScheduledCache:
                     self._total_evictions += 1
                     self._total_evicted_bytes += freed
                     evicted = True
+            state = self._cache_state_summary()
         if evicted:
             logger.info(
                 "Chunk cache evict (refcount=0): source=%s chunk=%d"
@@ -1377,6 +1380,7 @@ class ScheduledCache:
                 self._current_bytes / (1024 * 1024),
                 len(self._chunks),
             )
+            logger.debug("Chunk cache state: %s", state)
             self._try_readahead()
         else:
             logger.debug(
@@ -1385,6 +1389,17 @@ class ScheduledCache:
                 key[1],
                 remaining,
             )
+
+    def _cache_state_summary(self) -> str:
+        """Return a brief snapshot of cached chunks and their refcounts.
+
+        Must be called under ``self._lock``.
+        """
+        parts = []
+        for src, idx in sorted(self._chunks):
+            ref = self._refcount.get((src, idx), 0)
+            parts.append(f"{src}:{idx}(ref={ref})")
+        return "[" + ", ".join(parts) + "]"
 
     # ----- background read-ahead ------------------------------------------
 
