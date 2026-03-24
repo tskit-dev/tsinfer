@@ -41,12 +41,12 @@ Low-level utilities for reading and writing VCZ (VCF Zarr) stores.
 
 from __future__ import annotations
 
-import collections
 import logging
 import math
 import queue
 import threading
 import time as _time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -1220,157 +1220,157 @@ def finalize_ancestor_zarr(root, focal_positions_acc, compressor=None):
 # ---------------------------------------------------------------------------
 
 
-class ChunkCache:
-    """Unified LRU cache for sample chunks, keyed by (source_name, chunk_index).
+class ScheduledCache:
+    """Schedule-driven chunk cache keyed by (source_name, chunk_index).
 
-    Uses a memory limit in bytes rather than entry count, so that cache
-    utilisation adapts to actual chunk sizes.
-
-    Tracks in-flight reservations so that concurrent loads cannot commit
-    more memory than ``max_bytes``.  When the budget is exhausted and
-    nothing can be evicted, threads block until a load completes.
+    Requires a full read schedule at construction: a refcount per chunk
+    (how many haplotype reads will use it) and the order chunks will first
+    be needed.  Chunks are evicted the moment their refcount reaches zero,
+    and a background thread reads ahead for the next chunk when memory
+    allows.
     """
 
-    def __init__(self, max_bytes: int):
+    def __init__(
+        self,
+        max_bytes: int,
+        refcounts: dict[tuple[str, int], int],
+        chunk_order: list[tuple[str, int]],
+    ):
         self._max_bytes = max_bytes
+        self._chunks: dict[tuple[str, int], np.ndarray] = {}
         self._current_bytes = 0
-        self._reserved_bytes = 0
-        self._cache: collections.OrderedDict[tuple[str, int], np.ndarray] = (
-            collections.OrderedDict()
-        )
+        self._refcount = dict(refcounts)
+        self._chunk_order = chunk_order
+        self._cursor = 0
         self._condition = threading.Condition()
         self._pending: dict[tuple[str, int], threading.Event] = {}
+        self._loaders: dict[str, Any] = {}
+        self._readahead_executor = ThreadPoolExecutor(max_workers=1)
+        self._readahead_pending: set[tuple[str, int]] = set()
         self._hits = 0
         self._misses = 0
 
-    def _committed_bytes(self) -> int:
-        """Cached + in-flight bytes. Caller must hold the condition."""
-        return self._current_bytes + self._reserved_bytes
+    def register_loader(
+        self,
+        source_name: str,
+        load_fn,
+    ) -> None:
+        """Register a loader ``load_fn(chunk_idx) -> ndarray`` for a source."""
+        self._loaders[source_name] = load_fn
 
-    def get(self, key: tuple[str, int]) -> np.ndarray | None:
-        """Return cached chunk or None. Thread-safe."""
-        with self._condition:
-            if key in self._cache:
-                self._cache.move_to_end(key)
-                self._hits += 1
-                return self._cache[key]
-            self._misses += 1
-            return None
+    # ----- public interface used by VCZHaplotypeReader ---------------------
 
-    def put(self, key: tuple[str, int], data: np.ndarray) -> None:
-        """Insert chunk, evicting LRU entries until it fits. Thread-safe."""
-        evicted_info = []
-        with self._condition:
-            if key in self._cache:
-                return
-            new_bytes = data.nbytes
-            while self._cache and self._current_bytes + new_bytes > self._max_bytes:
-                evict_key, evicted = self._cache.popitem(last=False)
-                self._current_bytes -= evicted.nbytes
-                evicted_info.append((evict_key, evicted.nbytes))
-            self._cache[key] = data
-            self._current_bytes += new_bytes
-            total = self._current_bytes
-            count = len(self._cache)
-            self._condition.notify_all()
-        # Log outside lock
-        for ek, eb in evicted_info:
-            logger.info(
-                "Chunk cache evict: source=%s chunk=%d freed=%.1f MiB",
-                ek[0],
-                ek[1],
-                eb / (1024 * 1024),
-            )
-        logger.info(
-            "Chunk cache insert: source=%s chunk=%d"
-            " size=%.1f MiB (total: %.1f MiB, %d entries)",
-            key[0],
-            key[1],
-            data.nbytes / (1024 * 1024),
-            total / (1024 * 1024),
-            count,
-        )
+    def get(self, key: tuple[str, int]) -> np.ndarray:
+        """Return cached chunk, loading from zarr if necessary.
 
-    def get_or_wait(self, key: tuple[str, int]) -> np.ndarray | None:
-        """Check cache, coordinate concurrent loads.
-
-        Returns cached data if present. If another thread is already loading
-        this key, waits for it and returns the result. Returns None when the
-        caller should perform the load and call ``finish_load``.
+        Concurrent loads for the same key are deduplicated: only one
+        thread performs the I/O while others wait.
         """
         with self._condition:
-            if key in self._cache:
-                self._cache.move_to_end(key)
+            if key in self._chunks:
                 self._hits += 1
-                return self._cache[key]
+                return self._chunks[key]
             if key in self._pending:
                 event = self._pending[key]
                 self._misses += 1
             else:
                 self._pending[key] = threading.Event()
                 self._misses += 1
-                return None
-        # Wait outside lock
-        event.wait()
-        return self.get(key)
+                # Caller is the loader — fall through below
+                event = None
 
-    def reserve_for_load(self, estimated_bytes: int) -> None:
-        """Reserve memory for an upcoming chunk load, blocking if needed.
-
-        Evicts LRU entries to make room.  If the budget is still exceeded
-        after eviction, blocks until another thread releases a reservation
-        (via ``finish_load``).  As a deadlock-prevention measure, one thread
-        is always allowed to proceed when no other loads are in-flight.
-        """
-        evicted_info = []
-        with self._condition:
-            while True:
-                # Evict cached entries while over budget
-                while (
-                    self._cache
-                    and self._committed_bytes() + estimated_bytes > self._max_bytes
-                ):
-                    evict_key, evicted = self._cache.popitem(last=False)
-                    self._current_bytes -= evicted.nbytes
-                    evicted_info.append((evict_key, evicted.nbytes))
-
-                # Check if reservation fits
-                if self._committed_bytes() + estimated_bytes <= self._max_bytes:
-                    self._reserved_bytes += estimated_bytes
-                    break
-
-                # Deadlock prevention: if no other thread is loading,
-                # allow this one even if it exceeds the budget
-                if self._reserved_bytes == 0:
-                    self._reserved_bytes += estimated_bytes
-                    break
-
-                # Wait for a load to complete or an eviction
-                self._condition.wait()
-
-        for ek, eb in evicted_info:
-            logger.info(
-                "Chunk cache evict: source=%s chunk=%d freed=%.1f MiB",
-                ek[0],
-                ek[1],
-                eb / (1024 * 1024),
-            )
-
-    def finish_load(
-        self,
-        key: tuple[str, int],
-        data: np.ndarray | None,
-        reserved_bytes: int = 0,
-    ):
-        """Insert loaded data, release reservation, and wake waiters."""
-        if data is not None:
-            self.put(key, data)
-        with self._condition:
-            event = self._pending.pop(key, None)
-            self._reserved_bytes -= reserved_bytes
-            self._condition.notify_all()
         if event is not None:
-            event.set()
+            # Another thread is loading — wait for it
+            event.wait()
+            with self._condition:
+                return self._chunks[key]
+
+        # We are the loader
+        data = self._loaders[key[0]](key[1])
+        with self._condition:
+            if key not in self._chunks:
+                self._chunks[key] = data
+                self._current_bytes += data.nbytes
+            ev = self._pending.pop(key, None)
+            self._condition.notify_all()
+        if ev is not None:
+            ev.set()
+        logger.info(
+            "Chunk cache load: source=%s chunk=%d size=%.1f MiB"
+            " (total: %.1f MiB, %d entries)",
+            key[0],
+            key[1],
+            data.nbytes / (1024 * 1024),
+            self._current_bytes / (1024 * 1024),
+            len(self._chunks),
+        )
+        return data
+
+    def record_read(self, key: tuple[str, int]) -> None:
+        """Record that one haplotype was read from *key*.
+
+        When the refcount reaches zero the chunk is evicted and a
+        background read-ahead may be triggered.
+        """
+        evicted = False
+        freed = 0
+        with self._condition:
+            self._refcount[key] -= 1
+            if self._refcount[key] <= 0:
+                del self._refcount[key]
+                if key in self._chunks:
+                    freed = self._chunks[key].nbytes
+                    del self._chunks[key]
+                    self._current_bytes -= freed
+                    evicted = True
+                    self._condition.notify_all()
+        if evicted:
+            logger.info(
+                "Chunk cache evict (refcount=0): source=%s chunk=%d freed=%.1f MiB",
+                key[0],
+                key[1],
+                freed / (1024 * 1024),
+            )
+            self._try_readahead()
+
+    # ----- background read-ahead ------------------------------------------
+
+    def _try_readahead(self) -> None:
+        """Submit a background load for the next needed chunk, if room."""
+        with self._condition:
+            # Advance cursor past chunks already cached or consumed
+            while self._cursor < len(self._chunk_order):
+                k = self._chunk_order[self._cursor]
+                if k in self._chunks or k not in self._refcount:
+                    self._cursor += 1
+                else:
+                    break
+            if self._cursor >= len(self._chunk_order):
+                return
+            next_key = self._chunk_order[self._cursor]
+            if next_key in self._pending or next_key in self._readahead_pending:
+                return
+            if next_key[0] not in self._loaders:
+                return
+            # Only read ahead if we have room
+            if self._current_bytes >= self._max_bytes:
+                return
+            self._readahead_pending.add(next_key)
+
+        # Submit outside lock
+        self._readahead_executor.submit(self._do_readahead, next_key)
+
+    def _do_readahead(self, key: tuple[str, int]) -> None:
+        """Background read-ahead worker."""
+        try:
+            self.get(key)  # reuses deduplication logic
+        finally:
+            with self._condition:
+                self._readahead_pending.discard(key)
+
+    def shutdown(self) -> None:
+        """Shut down the read-ahead executor."""
+        self._readahead_executor.shutdown(wait=True)
 
     @property
     def total_bytes(self) -> int:
@@ -1544,7 +1544,7 @@ class VCZHaplotypeReader:
     aligned to a reference coordinate system, and genotypes are polarised
     so that the ancestral allele is always 0.
 
-    Uses an external ``ChunkCache`` shared across all sources to avoid
+    Uses an external ``ScheduledCache`` shared across all sources to avoid
     repeated zarr reads when successive haplotypes fall in the same chunk.
 
     Parameters
@@ -1557,7 +1557,7 @@ class VCZHaplotypeReader:
         Authoritative ancestral allele strings for polarisation.
     source_name : str
         Name used as the first element of the cache key.
-    cache : ChunkCache
+    cache : ScheduledCache
         Shared chunk cache instance.
     samples_selection : np.ndarray or None
         Optional subset of sample indices to use.
@@ -1570,7 +1570,7 @@ class VCZHaplotypeReader:
         ancestral_alleles: np.ndarray,
         *,
         source_name: str,
-        cache: ChunkCache,
+        cache: ScheduledCache,
         samples_selection: np.ndarray | None = None,
         _allele_mapper: AlleleMapper | None = None,
     ):
@@ -1779,38 +1779,27 @@ class VCZHaplotypeReader:
         )
         return result
 
-    def _load_sample_chunk(self, chunk_idx: int) -> np.ndarray:
-        """Load a sample chunk, selecting only matched variants.
+    def _chunk_for_sample(self, sample_id: str) -> int:
+        """Map a sample_id to its zarr sample-chunk index."""
+        col = self._sample_id_to_col[sample_id]
+        if self._samples_selection is not None:
+            store_col = int(self._samples_selection[col])
+        else:
+            store_col = col
+        return store_col // self._sample_chunk_size
 
-        On cache miss, iterates over zarr variant chunks, skipping chunks
-        with no selected variants. When ``_allele_remap`` is set, allele
-        encoding is performed at load time via vectorized numpy remap.
+    def _load_sample_chunk(self, chunk_idx: int) -> np.ndarray:
+        """Load a sample chunk via the shared ScheduledCache.
+
         Returns array of shape ``(num_selected, chunk_samples, ploidy)``.
 
-        Thread-safe via the shared ``ChunkCache``.  Concurrent misses for
-        the same chunk are deduplicated — only one thread loads from zarr.
-        The returned numpy array remains valid even if later evicted from
-        the cache, because Python's reference counting keeps it alive.
+        Thread-safe: concurrent loads for the same chunk are
+        deduplicated by the cache.  The returned numpy array remains
+        valid even after eviction because Python ref-counting keeps
+        it alive.
         """
         key = (self._source_name, chunk_idx)
-        data = self._cache.get_or_wait(key)
-        if data is not None:
-            return data
-        # Reserve memory before loading so peak usage stays bounded
-        sc_start = chunk_idx * self._sample_chunk_size
-        chunk_samples = min(
-            self._sample_chunk_size,
-            self._num_store_samples - sc_start,
-        )
-        estimated_bytes = self._num_selected * chunk_samples * self._ploidy
-        self._cache.reserve_for_load(estimated_bytes)
-        # We are the loader
-        result = None
-        try:
-            result = self._do_load_chunk(chunk_idx)
-        finally:
-            self._cache.finish_load(key, result, reserved_bytes=estimated_bytes)
-        return result
+        return self._cache.get(key)
 
     def read_haplotype(self, sample_id: str, ploidy_index: int = 0) -> np.ndarray:
         """
@@ -1832,6 +1821,7 @@ class VCZHaplotypeReader:
         chunk_offset = store_col % self._sample_chunk_size
 
         # Read from cache — shape (num_selected, chunk_samples, ploidy)
+        key = (self._source_name, chunk_idx)
         chunk_data = self._load_sample_chunk(chunk_idx)
         encoded_col = chunk_data[:, chunk_offset, ploidy_index]  # (num_selected,)
 
@@ -1855,6 +1845,9 @@ class VCZHaplotypeReader:
                     np.where(raw_v == ai_v, np.int8(0), np.int8(1)),
                 )
                 hap[anc_v] = encoded
+
+        # Notify the cache that one scheduled read is done
+        self._cache.record_read(key)
         return hap
 
 
@@ -1871,6 +1864,7 @@ class HaplotypeReader:
         positions: np.ndarray,
         ancestral_alleles: np.ndarray,
         cache_size_mb: int = 256,
+        schedule: list[tuple[str, str, int]] | None = None,
     ):
         """
         Parameters
@@ -1884,6 +1878,10 @@ class HaplotypeReader:
             reference position.  Authoritative source for polarisation.
         cache_size_mb : int
             Cache memory limit in MiB.
+        schedule : list of (source_name, sample_id, ploidy_index)
+            Ordered list of every haplotype read that will be made.
+            The cache uses this to compute per-chunk reference counts
+            for deterministic eviction and background read-ahead.
         """
         self._positions = np.asarray(positions, dtype=np.int32)
         self._ancestral_alleles = ancestral_alleles
@@ -1958,10 +1956,25 @@ class HaplotypeReader:
                 f"{max_chunk / (1024 * 1024):.0f} MiB."
             )
 
-        # Now create the shared cache and assign to all readers
-        self._cache = ChunkCache(max_bytes=max_bytes)
-        for reader in self._readers.values():
+        # Build schedule-driven cache from the read schedule
+        if schedule is None:
+            schedule = []
+        refcounts: dict[tuple[str, int], int] = {}
+        chunk_order: list[tuple[str, int]] = []
+        seen: set[tuple[str, int]] = set()
+        for source_name, sample_id, _ploidy_index in schedule:
+            reader = self._readers[source_name]
+            chunk_idx = reader._chunk_for_sample(sample_id)
+            key = (source_name, chunk_idx)
+            refcounts[key] = refcounts.get(key, 0) + 1
+            if key not in seen:
+                chunk_order.append(key)
+                seen.add(key)
+
+        self._cache = ScheduledCache(max_bytes, refcounts, chunk_order)
+        for name, reader in self._readers.items():
             reader._cache = self._cache
+            self._cache.register_loader(name, reader._do_load_chunk)
 
         self._readers_lock = threading.Lock()
 
@@ -1986,7 +1999,12 @@ class HaplotypeReader:
                 _allele_mapper=self._allele_mapper,
             )
             self._readers[source_name] = reader
+            self._cache.register_loader(source_name, reader._do_load_chunk)
             return reader
+
+    def shutdown(self) -> None:
+        """Shut down the cache's background read-ahead executor."""
+        self._cache.shutdown()
 
     def read_haplotype(self, job) -> np.ndarray:
         """

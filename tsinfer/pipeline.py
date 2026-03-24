@@ -407,7 +407,18 @@ def match(
     if seq_len is None:
         seq_len = float(np.max(seq_intervals)) if len(seq_intervals) > 0 else 1.0
 
-    # 3. Create lazy reader with all match sources
+    # 3. Group jobs and build read schedule
+    groups_dict = collections.defaultdict(list)
+    for idx, job in enumerate(jobs):
+        groups_dict[job.group].append((idx, job))
+    sorted_groups = sorted(groups_dict.keys())
+
+    schedule = []
+    for group_idx in sorted_groups:
+        for _, job in sorted(groups_dict[group_idx], key=lambda p: p[1].haplotype_index):
+            schedule.append((job.source, job.sample_id, job.ploidy_index))
+
+    # 4. Create lazy reader with all match sources
     ancestral_alleles = site_alleles[:, 0]
     match_sources = {name: cfg.sources[name] for name in cfg.match.sources}
     reader = vcz_mod.HaplotypeReader(
@@ -415,10 +426,11 @@ def match(
         positions,
         ancestral_alleles,
         cache_size_mb=cache_size,
+        schedule=schedule,
     )
     allele_mapper = reader.allele_mapper
 
-    # 4. Build initial root TS (or resume from workdir checkpoint)
+    # 5. Build initial root TS (or resume from workdir checkpoint)
     anc_times = np.asarray(anc_store["sample_time"][:], dtype=np.float64)
     max_anc_time = float(np.max(anc_times)) if len(anc_times) > 0 else 0.0
     if workdir_starting_ts is not None:
@@ -440,12 +452,6 @@ def match(
         len(positions),
         seq_len,
     )
-
-    # 5. Group jobs by group index
-    groups_dict = collections.defaultdict(list)
-    for idx, job in enumerate(jobs):
-        groups_dict[job.group].append((idx, job))
-    sorted_groups = sorted(groups_dict.keys())
 
     # 6. Match loop — process groups in order
     num_groups = len(sorted_groups)
@@ -523,6 +529,7 @@ def match(
                     prev_path.unlink()
             prev_written_group = group_idx
 
+    reader.shutdown()
     logger.info(
         "Match complete: %d nodes, %d individuals",
         ts.num_nodes,
