@@ -1245,7 +1245,7 @@ class ScheduledCache:
         self._lock = threading.Lock()
         self._pending: dict[tuple[str, int], threading.Event] = {}
         self._loaders: dict[str, Any] = {}
-        self._readahead_executor = ThreadPoolExecutor(max_workers=4)
+        self._readahead_executor = ThreadPoolExecutor(max_workers=1)
         self._readahead_pending: set[tuple[str, int]] = set()
         self._hits = 0
         self._misses = 0
@@ -1404,8 +1404,8 @@ class ScheduledCache:
     # ----- background read-ahead ------------------------------------------
 
     def _try_readahead(self) -> None:
-        """Submit background loads for upcoming chunks until cache is full."""
-        to_submit = []
+        """Submit a background load for the next needed chunk, if room."""
+        next_key = None
         with self._lock:
             while self._cursor < len(self._chunk_order):
                 k = self._chunk_order[self._cursor]
@@ -1420,32 +1420,35 @@ class ScheduledCache:
                     continue
                 if self._current_bytes >= self._max_bytes:
                     logger.debug(
-                        "Chunk cache readahead stopped (at capacity):"
-                        " cached=%.1f MiB limit=%.1f MiB, %d submitted",
+                        "Chunk cache readahead skipped (at capacity):"
+                        " source=%s chunk=%d cached=%.1f MiB limit=%.1f MiB",
+                        k[0],
+                        k[1],
                         self._current_bytes / (1024 * 1024),
                         self._max_bytes / (1024 * 1024),
-                        len(to_submit),
                     )
-                    break
+                    return
                 self._readahead_pending.add(k)
-                to_submit.append(k)
+                next_key = k
                 self._cursor += 1
+                break
 
-        for key in to_submit:
+        if next_key is not None:
             logger.info(
                 "Chunk cache readahead submit: source=%s chunk=%d",
-                key[0],
-                key[1],
+                next_key[0],
+                next_key[1],
             )
-            self._readahead_executor.submit(self._do_readahead, key)
+            self._readahead_executor.submit(self._do_readahead, next_key)
 
     def _do_readahead(self, key: tuple[str, int]) -> None:
-        """Background read-ahead worker."""
+        """Background read-ahead worker.  Chains the next readahead on completion."""
         try:
             self.get(key, _readahead=True)
         finally:
             with self._lock:
                 self._readahead_pending.discard(key)
+            self._try_readahead()
 
     def shutdown(self) -> None:
         """Shut down the read-ahead executor and log summary stats."""
