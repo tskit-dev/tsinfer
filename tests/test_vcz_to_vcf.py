@@ -21,6 +21,7 @@ Validate that make_sample_vcz and ts_to_sample_vcz produce correct VCZ by
 converting to VCF text via vcztools and comparing against expected output.
 """
 
+import subprocess
 import sys
 
 import bio2zarr.tskit as bzt
@@ -28,6 +29,8 @@ import helpers
 import msprime
 import numpy as np
 import zarr
+
+from tsinfer import ancestors, config
 
 
 def _parse_vcf_records(vcf_text: str) -> list[dict]:
@@ -357,10 +360,6 @@ class TestAncestorVczToVcf:
 
     def test_infer_ancestors_vcztools_view(self, tmp_path):
         """vcztools view on a filesystem-backed ancestor VCZ produces valid VCF."""
-        import subprocess
-
-        from tsinfer import ancestors, config
-
         n_sites = 20
         n_samples = 6
         rng = np.random.RandomState(42)

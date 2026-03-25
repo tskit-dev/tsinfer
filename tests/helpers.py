@@ -64,6 +64,10 @@ from __future__ import annotations
 import io
 
 import numpy as np
+import vcztools.retrieval
+import vcztools.samples
+import vcztools.utils
+import vcztools.vcf_writer
 import zarr
 from zarr.core.dtype.npy.string import VariableLengthUTF8
 
@@ -266,28 +270,21 @@ def vcz_to_vcf(root: zarr.Group, *, no_version: bool = True) -> str:
     Returns the full VCF as a string. ``no_version`` suppresses the
     ``##bcftools_view`` header line for deterministic output in tests.
     """
-    from vcztools import retrieval
-    from vcztools.samples import parse_samples
-    from vcztools.utils import _as_fixed_length_string
-    from vcztools.vcf_writer import (
-        _generate_header,
-        c_chunk_to_vcf,
-        get_filter_ids,
+    all_samples = root["sample_id"][:]
+    sample_ids, samples_selection = vcztools.samples.parse_samples(None, all_samples)
+
+    header = vcztools.vcf_writer._generate_header(
+        root, sample_ids, no_version=no_version
     )
 
-    all_samples = root["sample_id"][:]
-    sample_ids, samples_selection = parse_samples(None, all_samples)
-
-    header = _generate_header(root, sample_ids, no_version=no_version)
-
-    contigs = _as_fixed_length_string(root["contig_id"][:])
-    filters = get_filter_ids(root)
+    contigs = vcztools.utils._as_fixed_length_string(root["contig_id"][:])
+    filters = vcztools.vcf_writer.get_filter_ids(root)
 
     body = io.StringIO()
-    for chunk_data in retrieval.variant_chunk_iter(
+    for chunk_data in vcztools.retrieval.variant_chunk_iter(
         root, samples_selection=samples_selection
     ):
-        c_chunk_to_vcf(
+        vcztools.vcf_writer.c_chunk_to_vcf(
             chunk_data,
             samples_selection,
             contigs,

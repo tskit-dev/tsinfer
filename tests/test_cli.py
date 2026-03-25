@@ -29,6 +29,7 @@ import tempfile
 
 import helpers
 import numpy as np
+import tskit
 import zarr
 from click.testing import CliRunner
 
@@ -466,8 +467,6 @@ sources = ["augment"]
             )
             assert result.exit_code == 0, result.output
             assert pathlib.Path(augmented_path).exists()
-
-            import tskit
 
             original = tskit.load(output_path)
             augmented = tskit.load(augmented_path)

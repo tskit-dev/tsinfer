@@ -535,9 +535,7 @@ class TestComputeGroupsFromGrouping:
     """Test that grouping.compute_groups imported from grouping works correctly."""
 
     def test_import_from_grouping(self):
-        from tsinfer.grouping import compute_groups as cg
-
-        assert callable(cg)
+        assert callable(grouping.compute_groups)
 
     def test_basic_grouping(self):
         groups = grouping.compute_groups(

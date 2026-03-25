@@ -74,7 +74,7 @@ Sample VCZ → `infer_ancestors` → Ancestor VCZ → `match` → raw `tskit.Tre
 - Prefer dataclasses over tuples when returning multiple values.
 - Use explicit `None` comparisons: `if x is not None` not `if x`.
 - Zarr v3 is now used (dependency: `zarr>=3`).
-- Import all modules at the top of the file unless compelling reason otherwise.
+- Import all modules at the top of the file, not inside functions or methods.
 - Prefer importing a module and using module.function instead of
   using ``from module import function``. This applies to intra-package
   imports too: use ``from . import config`` then ``config.X``, not

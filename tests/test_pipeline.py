@@ -25,9 +25,16 @@ the pipeline produces valid tree sequences.
 
 from __future__ import annotations
 
+import io
+import json
+import logging
+
 import helpers
 import msprime
 import numpy as np
+import pandas as pd
+import pytest
+import tskit
 
 from tsinfer import ancestors, config, pipeline
 
@@ -516,8 +523,6 @@ class TestIndividualMetadata:
 class TestPipelineLogging:
     def test_run_logs_key_messages(self, caplog):
         """Key INFO messages from run()."""
-        import logging
-
         sim_ts = _simulate(num_samples=4, random_seed=30)
         sample_store = helpers.ts_to_sample_vcz(sim_ts)
         cfg = _make_config_for_run(sample_store)
@@ -530,8 +535,6 @@ class TestPipelineLogging:
 
     def test_match_logs_haplotype_count(self, caplog):
         """match() logs haplotype and site counts."""
-        import logging
-
         sim_ts = _simulate(num_samples=4, random_seed=31)
         sample_store = helpers.ts_to_sample_vcz(sim_ts)
         anc_cfg = config.AncestorsConfig(name="ancestors", path=None, sources=["test"])
@@ -579,8 +582,6 @@ class TestPipelineProgress:
 class TestComputeGroupsJson:
     def test_basic(self):
         """compute_groups_json returns a flat JSON array of records."""
-        import json
-
         sim_ts = _simulate(num_samples=4, random_seed=40)
         sample_store = helpers.ts_to_sample_vcz(sim_ts)
         anc_cfg = config.AncestorsConfig(name="ancestors", path=None, sources=["test"])
@@ -596,8 +597,6 @@ class TestComputeGroupsJson:
 
     def test_first_record_is_ancestor(self):
         """First record should be an ancestor in group 0."""
-        import json
-
         sim_ts = _simulate(num_samples=4, random_seed=41)
         sample_store = helpers.ts_to_sample_vcz(sim_ts)
         anc_cfg = config.AncestorsConfig(name="ancestors", path=None, sources=["test"])
@@ -616,8 +615,6 @@ class TestComputeGroupsJson:
 
     def test_all_indices_covered(self):
         """All haplotype indices should appear exactly once."""
-        import json
-
         sim_ts = _simulate(num_samples=6, random_seed=42)
         sample_store = helpers.ts_to_sample_vcz(sim_ts)
         anc_cfg = config.AncestorsConfig(name="ancestors", path=None, sources=["test"])
@@ -633,8 +630,6 @@ class TestComputeGroupsJson:
 
     def test_hand_constructed(self):
         """compute_groups_json with a hand-constructed VCZ."""
-        import json
-
         sample_store = helpers.make_sample_vcz(
             genotypes=np.array([[[0], [1]], [[1], [0]]], dtype=np.int8),
             positions=np.array([100, 200], dtype=np.int32),
@@ -672,11 +667,6 @@ class TestComputeGroupsJson:
 
     def test_round_trip_pandas(self):
         """match-jobs.json output can be loaded into a pandas DataFrame."""
-        import io
-        import json
-
-        import pandas as pd
-
         sim_ts = _simulate(num_samples=4, random_seed=45)
         sample_store = helpers.ts_to_sample_vcz(sim_ts)
         anc_cfg = config.AncestorsConfig(name="ancestors", path=None, sources=["test"])
@@ -725,8 +715,6 @@ class TestWorkdir:
 
     def test_workdir_creates_groups_and_trees(self, tmp_path):
         """Fresh run creates match-jobs.json and at least one .trees file."""
-        import tskit
-
         cfg = self._setup()
         workdir = tmp_path / "wd"
         cfg.match.workdir = str(workdir)
@@ -814,10 +802,6 @@ class TestWorkdir:
 
     def test_group_stop_produces_partial_result(self, tmp_path):
         """group_stop=1 processes only group 0; checkpoint matches returned ts."""
-        import json
-
-        import tskit
-
         cfg = self._setup()
         workdir = tmp_path / "wd"
         cfg.match.workdir = str(workdir)
@@ -866,8 +850,6 @@ class TestWorkdir:
 
     def test_group_stop_every_group_matches_full_run(self, tmp_path):
         """For each group g, stop at g then resume → matches full run."""
-        import json
-
         base_cfg = self._setup()
         full_ts = pipeline.match(base_cfg)
 
@@ -893,8 +875,6 @@ class TestWorkdir:
 
     def test_group_stop_multi_step_resume(self, tmp_path):
         """Step through groups one at a time → final matches full run."""
-        import json
-
         base_cfg = self._setup()
         full_ts = pipeline.match(base_cfg)
 
@@ -933,8 +913,6 @@ class TestWorkdir:
 
     def test_keep_intermediates_without_workdir_errors(self):
         """keep_intermediates=True without workdir raises ValueError."""
-        import pytest
-
         with pytest.raises(ValueError, match="keep_intermediates requires workdir"):
             config.Config(
                 sources={
