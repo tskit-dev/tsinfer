@@ -35,7 +35,7 @@ import tskit
 
 from . import vcz as vcz_mod
 from .ancestors import infer_ancestors
-from .config import Config
+from .config import DEFAULT_CACHE_SIZE, DEFAULT_NUM_THREADS, Config
 from .grouping import (
     MatchJob,
     assign_groups,
@@ -351,8 +351,8 @@ def match(
     cfg: Config,
     reference_ts: tskit.TreeSequence | None = None,
     progress: bool = False,
-    num_threads: int = 0,
-    cache_size: int = 256,
+    num_threads: int | None = None,
+    cache_size: int | None = None,
     group_stop: int | None = None,
     **kwargs,
 ) -> tskit.TreeSequence:
@@ -363,6 +363,10 @@ def match(
     haplotypes is matched against the current tree sequence, then the tree
     sequence is extended with the results.
     """
+    if num_threads is None:
+        num_threads = DEFAULT_NUM_THREADS
+    if cache_size is None:
+        cache_size = DEFAULT_CACHE_SIZE
     path_compression = kwargs.get("path_compression", cfg.match.path_compression)
 
     # Validate group_stop
@@ -734,13 +738,17 @@ def augment_sites(
 def run(
     cfg: Config,
     progress: bool = False,
-    num_threads: int = 0,
-    cache_size: int = 256,
+    num_threads: int | None = None,
+    cache_size: int | None = None,
     **kwargs,
 ) -> tskit.TreeSequence:
     """
     Run the full pipeline: infer_ancestors, match, post_process, augment_sites.
     """
+    if num_threads is None:
+        num_threads = DEFAULT_NUM_THREADS
+    if cache_size is None:
+        cache_size = DEFAULT_CACHE_SIZE
     logger.info("Starting full pipeline")
     anc_cfg = cfg.ancestors[0]
     sources = [cfg.sources[name] for name in anc_cfg.sources]

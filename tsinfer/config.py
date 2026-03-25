@@ -37,6 +37,22 @@ from pathlib import Path
 #   None             — not specified
 FieldSpec = str | dict | int | float | None
 
+# ---------------------------------------------------------------------------
+# Default constants
+# ---------------------------------------------------------------------------
+DEFAULT_MAX_GAP_LENGTH = 500_000
+DEFAULT_SAMPLES_CHUNK_SIZE = 1000
+DEFAULT_VARIANTS_CHUNK_SIZE = 1000
+DEFAULT_GENOTYPE_ENCODING = 0  # 0 = eight-bit, 1 = one-bit
+DEFAULT_COMPRESSOR = "zstd"
+DEFAULT_COMPRESSION_LEVEL = 7
+DEFAULT_NODE_FLAGS = 1  # tskit.NODE_IS_SAMPLE
+DEFAULT_NUM_THREADS = 0
+DEFAULT_WRITE_THREADS = 2
+DEFAULT_ANCESTOR_WRITE_THREADS = 4
+DEFAULT_CACHE_SIZE = 256  # MiB
+DEFAULT_CLI_THREADS = 1
+
 
 def _resolve_path(p: str | Path | None) -> str | Path | None:
     """Return *p* as-is (string or Path).
@@ -110,19 +126,19 @@ class AncestorsConfig:
     name: str
     path: str | Path
     sources: list[str]
-    max_gap_length: int = 500_000
-    samples_chunk_size: int = 1000
-    variants_chunk_size: int = 1000
-    genotype_encoding: int = 0  # 0 = eight-bit, 1 = one-bit
-    compressor: str = "zstd"  # blosc cname: zstd, lz4, lz4hc, etc.
-    compression_level: int = 7
+    max_gap_length: int = DEFAULT_MAX_GAP_LENGTH
+    samples_chunk_size: int = DEFAULT_SAMPLES_CHUNK_SIZE
+    variants_chunk_size: int = DEFAULT_VARIANTS_CHUNK_SIZE
+    genotype_encoding: int = DEFAULT_GENOTYPE_ENCODING
+    compressor: str = DEFAULT_COMPRESSOR  # blosc cname: zstd, lz4, lz4hc, etc.
+    compression_level: int = DEFAULT_COMPRESSION_LEVEL
 
 
 @dataclass
 class MatchSourceConfig:
     """Per-source parameters for the match step."""
 
-    node_flags: int = 1  # tskit.NODE_IS_SAMPLE
+    node_flags: int = DEFAULT_NODE_FLAGS  # tskit.NODE_IS_SAMPLE
     create_individuals: bool = True
 
 
@@ -431,7 +447,7 @@ def _parse_one_ancestor(entry: dict) -> AncestorsConfig:
     _check_unknown_keys("ancestors", entry, _KNOWN_ANCESTORS_KEYS)
     try:
         name = entry.get("name", "ancestors")
-        genotype_encoding = entry.get("genotype_encoding", 0)
+        genotype_encoding = entry.get("genotype_encoding", DEFAULT_GENOTYPE_ENCODING)
         if isinstance(genotype_encoding, str):
             _encoding_names = {"eight_bit": 0, "one_bit": 1}
             if genotype_encoding.lower() not in _encoding_names:
@@ -444,12 +460,18 @@ def _parse_one_ancestor(entry: dict) -> AncestorsConfig:
             name=str(name),
             path=_resolve_path(entry["path"]),
             sources=list(entry["sources"]),
-            max_gap_length=int(entry.get("max_gap_length", 500_000)),
-            samples_chunk_size=int(entry.get("samples_chunk_size", 1000)),
-            variants_chunk_size=int(entry.get("variants_chunk_size", 1000)),
+            max_gap_length=int(entry.get("max_gap_length", DEFAULT_MAX_GAP_LENGTH)),
+            samples_chunk_size=int(
+                entry.get("samples_chunk_size", DEFAULT_SAMPLES_CHUNK_SIZE)
+            ),
+            variants_chunk_size=int(
+                entry.get("variants_chunk_size", DEFAULT_VARIANTS_CHUNK_SIZE)
+            ),
             genotype_encoding=int(genotype_encoding),
-            compressor=str(entry.get("compressor", "zstd")),
-            compression_level=int(entry.get("compression_level", 7)),
+            compressor=str(entry.get("compressor", DEFAULT_COMPRESSOR)),
+            compression_level=int(
+                entry.get("compression_level", DEFAULT_COMPRESSION_LEVEL)
+            ),
         )
     except KeyError as e:
         raise ValueError(f"[ancestors] missing required key: {e}") from e
@@ -487,7 +509,7 @@ def _parse_match(raw: dict) -> MatchConfig:
                     _KNOWN_MATCH_SOURCE_KEYS,
                 )
                 sources[src_name] = MatchSourceConfig(
-                    node_flags=int(src_val.get("node_flags", 1)),
+                    node_flags=int(src_val.get("node_flags", DEFAULT_NODE_FLAGS)),
                     create_individuals=bool(src_val.get("create_individuals", True)),
                 )
             else:

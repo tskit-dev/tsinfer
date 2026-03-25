@@ -57,6 +57,8 @@ from vcztools.retrieval import variant_chunk_iter
 from vcztools.samples import parse_samples
 from zarr.core.dtype.npy.string import VariableLengthUTF8
 
+from .config import DEFAULT_ANCESTOR_WRITE_THREADS, DEFAULT_CACHE_SIZE
+
 logger = logging.getLogger(__name__)
 
 _VLEN_STR = VariableLengthUTF8()
@@ -680,10 +682,14 @@ class AncestorWriter:
         n_ancestors,
         local_mask,
         final_positions,
-        num_threads=0,
-        write_threads=4,
+        num_threads=None,
+        write_threads=None,
         compressor=None,
     ):
+        if num_threads is None:
+            num_threads = 0
+        if write_threads is None:
+            write_threads = DEFAULT_ANCESTOR_WRITE_THREADS
         self._root = zarr_root
         self._num_sites = num_sites
         self._chunk_size = chunk_size
@@ -1968,7 +1974,7 @@ class HaplotypeReader:
         sources: dict,
         positions: np.ndarray,
         ancestral_alleles: np.ndarray,
-        cache_size_mb: int = 256,
+        cache_size_mb: int | None = None,
         schedule: list[tuple[str, str, int]] | None = None,
     ):
         """
@@ -1988,6 +1994,8 @@ class HaplotypeReader:
             The cache uses this to compute per-chunk reference counts
             for deterministic eviction and background read-ahead.
         """
+        if cache_size_mb is None:
+            cache_size_mb = DEFAULT_CACHE_SIZE
         self._positions = np.asarray(positions, dtype=np.int32)
         self._ancestral_alleles = ancestral_alleles
         self._sources = sources

@@ -45,7 +45,12 @@ import click
 import tskit
 
 from .ancestors import infer_ancestors
-from .config import Config
+from .config import (
+    DEFAULT_CACHE_SIZE,
+    DEFAULT_CLI_THREADS,
+    DEFAULT_WRITE_THREADS,
+    Config,
+)
 from .pipeline import augment_sites as pipeline_augment_sites
 from .pipeline import match as pipeline_match
 from .pipeline import post_process as pipeline_post_process
@@ -94,7 +99,12 @@ def main():
 _config_arg = click.argument("config", metavar="CONFIG", type=click.Path(exists=True))
 
 _runtime_options = [
-    click.option("--threads", default=1, show_default=True, help="Worker threads."),
+    click.option(
+        "--threads",
+        default=DEFAULT_CLI_THREADS,
+        show_default=True,
+        help="Worker threads.",
+    ),
     click.option("--force", is_flag=True, help="Overwrite existing output files."),
     click.option("--progress", is_flag=True, help="Show per-step progress bars."),
     click.option("-v", "--verbose", count=True, help="Increase log verbosity."),
@@ -120,7 +130,7 @@ def _add_options(options):
 @_add_options(_runtime_options)
 @click.option(
     "--write-threads",
-    default=2,
+    default=DEFAULT_WRITE_THREADS,
     show_default=True,
     help="Writer threads for Zarr I/O.",
 )
@@ -166,7 +176,7 @@ def infer_ancestors_cmd(config, threads, write_threads, force, progress, verbose
 )
 @click.option(
     "--cache-size",
-    default=256,
+    default=DEFAULT_CACHE_SIZE,
     show_default=True,
     help="Genotype chunk cache size in MiB.",
 )
@@ -266,7 +276,7 @@ def augment_sites_cmd(config, input_ts, output_path, threads, force, progress, v
 @_config_arg
 @click.option(
     "--cache-size",
-    default=256,
+    default=DEFAULT_CACHE_SIZE,
     show_default=True,
     help="Genotype chunk cache size in MiB.",
 )

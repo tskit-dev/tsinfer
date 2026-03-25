@@ -37,7 +37,13 @@ import _tsinfer
 
 from . import grouping as grouping_mod
 from . import vcz as vcz_mod
-from .config import AncestorsConfig, AncestralState, Source
+from .config import (
+    DEFAULT_NUM_THREADS,
+    DEFAULT_WRITE_THREADS,
+    AncestorsConfig,
+    AncestralState,
+    Source,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -531,8 +537,8 @@ def infer_ancestors(
     cfg: AncestorsConfig,
     ancestral_state: AncestralState,
     progress: bool = False,
-    num_threads: int = 0,
-    write_threads: int = 2,
+    num_threads: int | None = None,
+    write_threads: int | None = None,
 ) -> zarr.Group:
     """
     Build the ancestor VCZ store from one or more samples VCZ stores.
@@ -544,6 +550,10 @@ def infer_ancestors(
     No virtual root is inserted; that is the responsibility of the match step.
     Ancestors are not sorted by time.
     """
+    if num_threads is None:
+        num_threads = DEFAULT_NUM_THREADS
+    if write_threads is None:
+        write_threads = DEFAULT_WRITE_THREADS
     if isinstance(sources, Source):
         sources = [sources]
 
