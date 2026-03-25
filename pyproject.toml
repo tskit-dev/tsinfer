@@ -69,7 +69,7 @@ Changelog = "https://tskit.dev/tsinfer/docs/stable/CHANGELOG.html"
 "Source Code" = "https://github.com/tskit-dev/tsinfer/"
 
 [project.scripts]
-tsinfer = "tsinfer.__main__:main"
+tsinfer = "tsinfer.cli:main"
 
 [dependency-groups]
 test = [
