@@ -38,6 +38,7 @@ import _tsinfer
 from . import grouping as grouping_mod
 from . import vcz as vcz_mod
 from .config import (
+    DEFAULT_GENOTYPE_ENCODING,
     DEFAULT_NUM_THREADS,
     DEFAULT_WRITE_THREADS,
     AncestorsConfig,
@@ -337,6 +338,7 @@ def _process_interval(
     ancestor_index,
     progress,
     compressor,
+    genotype_encoding,
 ):
     """
     Process a single sequence interval: load genotypes, build ancestors.
@@ -355,7 +357,7 @@ def _process_interval(
     ab = _tsinfer.AncestorBuilder(
         num_samples=num_haplotypes,
         max_sites=n_ab_sites,
-        genotype_encoding=cfg.genotype_encoding,
+        genotype_encoding=genotype_encoding,
     )
 
     genotype_iter = view.iter_genotypes(local_positions)
@@ -539,6 +541,7 @@ def infer_ancestors(
     progress: bool = False,
     num_threads: int | None = None,
     write_threads: int | None = None,
+    genotype_encoding: int | None = None,
 ) -> zarr.Group:
     """
     Build the ancestor VCZ store from one or more samples VCZ stores.
@@ -554,6 +557,8 @@ def infer_ancestors(
         num_threads = DEFAULT_NUM_THREADS
     if write_threads is None:
         write_threads = DEFAULT_WRITE_THREADS
+    if genotype_encoding is None:
+        genotype_encoding = DEFAULT_GENOTYPE_ENCODING
     if isinstance(sources, Source):
         sources = [sources]
 
@@ -641,7 +646,7 @@ def infer_ancestors(
 
     # --- 4. Pass 2: per-interval ancestor building ---
     t_pass2 = time.monotonic()
-    encoding_name = "one_bit" if cfg.genotype_encoding == 1 else "eight_bit"
+    encoding_name = "one_bit" if genotype_encoding == 1 else "eight_bit"
     write_threads = max(1, write_threads)
     if num_threads > 0:
         logger.info(
@@ -702,6 +707,7 @@ def infer_ancestors(
             ancestor_index,
             progress,
             compressor,
+            genotype_encoding,
         )
         all_focal_positions.extend(interval_focals)
 

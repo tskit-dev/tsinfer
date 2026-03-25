@@ -48,6 +48,7 @@ from .ancestors import infer_ancestors
 from .config import (
     DEFAULT_CACHE_SIZE,
     DEFAULT_CLI_THREADS,
+    DEFAULT_GENOTYPE_ENCODING,
     DEFAULT_WRITE_THREADS,
     Config,
 )
@@ -125,6 +126,10 @@ def _add_options(options):
 # ---------------------------------------------------------------------------
 
 
+_ENCODING_NAMES = {"one-bit": 1, "eight-bit": 0}
+_DEFAULT_ENCODING_NAME = "one-bit" if DEFAULT_GENOTYPE_ENCODING == 1 else "eight-bit"
+
+
 @main.command("infer-ancestors")
 @_config_arg
 @_add_options(_runtime_options)
@@ -134,7 +139,24 @@ def _add_options(options):
     show_default=True,
     help="Writer threads for Zarr I/O.",
 )
-def infer_ancestors_cmd(config, threads, write_threads, force, progress, verbose):
+@click.option(
+    "--genotype-encoding",
+    type=click.Choice(sorted(_ENCODING_NAMES)),
+    default=_DEFAULT_ENCODING_NAME,
+    show_default=True,
+    help="Genotype storage encoding. one-bit saves memory; "
+    "eight-bit is faster but uses ~8x more. "
+    "eight-bit is required when genotypes contain missing data.",
+)
+def infer_ancestors_cmd(
+    config,
+    threads,
+    write_threads,
+    genotype_encoding,
+    force,
+    progress,
+    verbose,
+):
     """Build the ancestor VCZ store from the samples VCZ."""
     _setup_logging(verbose)
     cfg = Config.from_toml(config)
@@ -157,6 +179,7 @@ def infer_ancestors_cmd(config, threads, write_threads, force, progress, verbose
         progress=progress,
         num_threads=threads,
         write_threads=write_threads,
+        genotype_encoding=_ENCODING_NAMES[genotype_encoding],
     )
     logger.info("Ancestor inference complete")
 
@@ -191,9 +214,9 @@ def infer_ancestors_cmd(config, threads, write_threads, force, progress, verbose
 @click.option(
     "--read-workers",
     type=int,
-    default=2,
-    show_default=True,
-    help="Number of background threads for loading genotype chunks.",
+    default=None,
+    help="Background threads for loading genotype chunks. "
+    "[default: threads/2, minimum 1]",
 )
 @_add_options(_runtime_options)
 def match_cmd(
@@ -215,6 +238,8 @@ def match_cmd(
         cfg.match.workdir = workdir
     if keep_intermediates:
         cfg.match.keep_intermediates = True
+    if read_workers is None:
+        read_workers = max(1, threads // 2)
     _check_output(cfg.match.output, force)
     logger.info("Running match")
     ts = pipeline_match(
@@ -290,17 +315,37 @@ def augment_sites_cmd(config, input_ts, output_path, threads, force, progress, v
     help="Genotype chunk cache size in MiB.",
 )
 @click.option(
+    "--genotype-encoding",
+    type=click.Choice(sorted(_ENCODING_NAMES)),
+    default=_DEFAULT_ENCODING_NAME,
+    show_default=True,
+    help="Genotype storage encoding. one-bit saves memory; "
+    "eight-bit is faster but uses ~8x more. "
+    "eight-bit is required when genotypes contain missing data.",
+)
+@click.option(
     "--read-workers",
     type=int,
-    default=2,
-    show_default=True,
-    help="Number of background threads for loading genotype chunks.",
+    default=None,
+    help="Background threads for loading genotype chunks. "
+    "[default: threads/2, minimum 1]",
 )
 @_add_options(_runtime_options)
-def run_cmd(config, cache_size, read_workers, threads, force, progress, verbose):
+def run_cmd(
+    config,
+    cache_size,
+    genotype_encoding,
+    read_workers,
+    threads,
+    force,
+    progress,
+    verbose,
+):
     """Run the full pipeline: infer-ancestors, match, post-process, augment-sites."""
     _setup_logging(verbose)
     cfg = Config.from_toml(config)
+    if read_workers is None:
+        read_workers = max(1, threads // 2)
     _check_output(cfg.match.output, force)
     logger.info("Running full pipeline")
     ts = pipeline_run(
@@ -308,6 +353,7 @@ def run_cmd(config, cache_size, read_workers, threads, force, progress, verbose)
         progress=progress,
         num_threads=threads,
         cache_size=cache_size,
+        genotype_encoding=_ENCODING_NAMES[genotype_encoding],
         read_workers=read_workers,
     )
     ts.dump(str(cfg.match.output))
