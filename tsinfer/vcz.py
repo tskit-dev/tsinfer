@@ -1227,10 +1227,10 @@ class ScheduledCache:
     (how many haplotype reads will use it) and the order chunks will first
     be needed.
 
-    ``prime()`` synchronously fills the cache at startup.  Chunks are
-    evicted when their refcount reaches zero, and the next needed chunk
-    is loaded in the background.  ``get()`` never triggers a load — it
-    returns cached data or waits for readahead to deliver it.
+    ``prime()`` fills the cache in a background thread at startup.
+    Chunks are evicted when their refcount reaches zero, and the next
+    needed chunk is loaded in the background.  ``get()`` never triggers
+    a load — it returns cached data or waits for readahead to deliver it.
     """
 
     def __init__(
@@ -1250,6 +1250,7 @@ class ScheduledCache:
         self._chunk_bytes: dict[str, int] = {}
         self._readahead_executor = ThreadPoolExecutor(max_workers=1)
         self._readahead_key: tuple[str, int] | None = None
+        self._priming = False
         self._hits = 0
         self._misses = 0
         self._total_load_time = 0.0
@@ -1375,7 +1376,8 @@ class ScheduledCache:
                 len(self._chunks),
             )
             logger.debug("Chunk cache state: %s", state)
-            self._schedule_readahead()
+            if not self._priming:
+                self._schedule_readahead()
         else:
             logger.debug(
                 "Chunk cache read: source=%s chunk=%d refcount=%d",
@@ -1385,18 +1387,28 @@ class ScheduledCache:
             )
 
     def prime(self) -> None:
-        """Synchronously load chunks in schedule order until cache is full."""
-        while True:
+        """Start filling the cache in the background thread."""
+        self._priming = True
+        self._readahead_executor.submit(self._do_prime)
+
+    def _do_prime(self) -> None:
+        """Background worker: load chunks until cache is full."""
+        try:
+            while True:
+                with self._condition:
+                    next_key = self._advance_cursor()
+                    if next_key is None:
+                        break
+                    est = self._chunk_bytes.get(next_key[0], 0)
+                    if self._current_bytes + est > self._max_bytes:
+                        break
+                    self._cursor += 1
+                self._load_chunk(next_key)
+                self._total_prime_loads += 1
+        finally:
             with self._condition:
-                next_key = self._advance_cursor()
-                if next_key is None:
-                    break
-                est = self._chunk_bytes.get(next_key[0], 0)
-                if self._current_bytes + est > self._max_bytes:
-                    break
-                self._cursor += 1
-            self._load_chunk(next_key)
-            self._total_prime_loads += 1
+                self._priming = False
+            self._schedule_readahead()
 
     def log_state(self) -> None:
         """Log an info-level summary of current cache state."""
@@ -1416,6 +1428,8 @@ class ScheduledCache:
     def _schedule_readahead(self) -> None:
         """Submit background load for the next needed chunk, if room."""
         with self._condition:
+            if self._priming:
+                return
             if self._readahead_key is not None:
                 return
             next_key = self._advance_cursor()
