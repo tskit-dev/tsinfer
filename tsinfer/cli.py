@@ -389,10 +389,12 @@ def show_match_jobs_cmd(json_file):
     records = json.loads(Path(json_file).read_text())
 
     group_intervals: dict[int, list[float]] = collections.defaultdict(list)
+    group_chunks: dict[int, set[tuple[str, int]]] = collections.defaultdict(set)
     for rec in records:
         g = rec["group"]
         interval_kb = (rec["end_position"] - rec["start_position"]) / 1000
         group_intervals[g].append(interval_kb)
+        group_chunks[g].add((rec["source"], rec["sample_chunk"]))
 
     if not group_intervals:
         click.echo("No match jobs.")
@@ -402,41 +404,22 @@ def show_match_jobs_cmd(json_file):
     max_count = max(len(v) for v in group_intervals.values())
     max_bar = 60
 
-    click.echo(f"{'Group':>6}  {'Count':>6}  {'Mean kb':>8}  {'Var kb':>8}  ")
+    click.echo(
+        f"{'Group':>6}  {'Count':>6}  {'Chunks':>6}  {'Mean kb':>8}  {'Var kb':>8}  "
+    )
     for group_idx, intervals in sorted_groups:
         count = len(intervals)
+        n_chunks = len(group_chunks[group_idx])
         mean = sum(intervals) / count
         variance = sum((x - mean) ** 2 for x in intervals) / count
         bar_len = round(count / max_count * max_bar) if max_count > 0 else 0
         bar = "#" * bar_len
-        click.echo(f"{group_idx:>6}  {count:>6}  {mean:>8.1f}  {variance:>8.3g}  {bar}")
+        click.echo(
+            f"{group_idx:>6}  {count:>6}  {n_chunks:>6}"
+            f"  {mean:>8.1f}  {variance:>8.3g}  {bar}"
+        )
 
     click.echo(f"\n{len(records)} jobs in {len(group_intervals)} groups")
-
-    # Chunk locality summary (per source)
-    # Build {source: {group: set(chunk_indices)}}
-    source_group_chunks: dict[str, dict[int, set[int]]] = collections.defaultdict(
-        lambda: collections.defaultdict(set)
-    )
-    for rec in records:
-        source_group_chunks[rec["source"]][rec["group"]].add(rec["sample_chunk"])
-
-    if source_group_chunks:
-        click.echo("\nChunk locality (by source):")
-        for source_name in sorted(source_group_chunks):
-            click.echo(f"  Source '{source_name}':")
-            click.echo(f"    {'Group':>6}  {'Chunks':>6}  Shared w/prev")
-            sgc = source_group_chunks[source_name]
-            prev_chunks: set[int] | None = None
-            for group_idx in sorted(sgc):
-                chunks = sgc[group_idx]
-                n_chunks = len(chunks)
-                if prev_chunks is None:
-                    shared = "-"
-                else:
-                    shared = str(len(chunks & prev_chunks))
-                click.echo(f"    {group_idx:>6}  {n_chunks:>6}  {shared}")
-                prev_chunks = chunks
 
 
 # ---------------------------------------------------------------------------
