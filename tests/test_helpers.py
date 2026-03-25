@@ -226,9 +226,9 @@ class TestMakeAncestorVcz:
 
     def test_end_position_derived_from_missing_pattern(self):
         vcz = _make_two_ancestor_vcz()
-        # ancestor 0: last non-missing site is index 2 → position 500
-        # ancestor 1: last non-missing site is index 1 → position 300
-        np.testing.assert_array_equal(vcz["sample_end_position"][:], [500, 300])
+        # ancestor 0: last non-missing at index 2 (pos 500), end = 501
+        # ancestor 1: last non-missing at index 1 (pos 300), end = 301
+        np.testing.assert_array_equal(vcz["sample_end_position"][:], [501, 301])
 
     def test_focal_positions(self):
         vcz = _make_two_ancestor_vcz()
@@ -250,7 +250,7 @@ class TestMakeAncestorVcz:
         intervals = np.array([[0, 100]], dtype=np.int32)
         vcz = make_ancestor_vcz(gt, pos, alleles, times, focal, intervals)
         assert vcz["sample_start_position"][:][0] == 10
-        assert vcz["sample_end_position"][:][0] == 30
+        assert vcz["sample_end_position"][:][0] == 31
 
     def test_multiple_focal_positions(self):
         gt = np.array([[[0]], [[1]], [[1]]], dtype=np.int8)

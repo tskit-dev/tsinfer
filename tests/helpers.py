@@ -231,12 +231,13 @@ def make_ancestor_vcz(
         hap = genotypes[:, i, 0]
         non_missing = np.where(hap != -1)[0]
         if len(non_missing) == 0:
-            # All-missing ancestor: use first and last position
+            # All-missing ancestor: use first position and last + 1
             start_positions[i] = positions[0]
-            end_positions[i] = positions[-1]
+            end_positions[i] = positions[-1] + 1
         else:
             start_positions[i] = positions[non_missing[0]]
-            end_positions[i] = positions[non_missing[-1]]
+            # Exclusive end: last site position + 1
+            end_positions[i] = positions[non_missing[-1]] + 1
 
     root = _open_memory_group()
 

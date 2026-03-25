@@ -559,8 +559,109 @@ class TestInferAncestorsFormat:
             hap = gt_out[:, j]
             non_missing = np.where(hap != -1)[0]
             assert len(non_missing) > 0
+            # start_position is inclusive (position of first site)
             assert int(start_pos[j]) == int(positions[non_missing[0]])
-            assert int(end_pos[j]) == int(positions[non_missing[-1]])
+            # end_position is exclusive (last site position + 1)
+            expected_end = int(positions[non_missing[-1]]) + 1
+            assert int(end_pos[j]) == expected_end
+
+    def test_end_position_is_exclusive(self):
+        """end_position should be the position of the next site, not the
+        last site.  This ensures the grouping overlap check (which uses
+        half-open intervals) correctly detects adjacent ancestors that
+        share a boundary site."""
+        # 4 samples, 6 sites — enough to produce at least two ancestors
+        # whose haplotype data is adjacent (one ends where the other begins).
+        gt = _haploid_store(
+            [
+                [0, 1, 0, 1],
+                [1, 0, 0, 1],
+                [0, 1, 1, 0],
+                [1, 0, 1, 0],
+                [0, 0, 1, 1],
+                [1, 1, 0, 0],
+            ],
+            positions=[100, 200, 300, 400, 500, 600],
+            alleles=[["A", "T"]] * 6,
+            anc_states=["A"] * 6,
+        )
+        anc = infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+        positions = np.asarray(anc["variant_position"][:])
+        end_pos = np.asarray(anc["sample_end_position"][:])
+        gt_out = _anc_genotypes(anc)
+
+        for j in range(gt_out.shape[1]):
+            hap = gt_out[:, j]
+            non_missing = np.where(hap != -1)[0]
+            assert len(non_missing) > 0
+            last_idx = non_missing[-1]
+            # Exclusive end: last site position + 1
+            expected_end = int(positions[last_idx]) + 1
+            assert int(end_pos[j]) == expected_end, (
+                f"Ancestor {j}: end_pos should be exclusive "
+                f"(got {int(end_pos[j])}, expected {expected_end})"
+            )
+
+    def test_adjacent_ancestors_overlap_detected(self):
+        """When two ancestors are adjacent (one ends where the other begins
+        at the same site), the exclusive end_position should ensure the
+        grouping algorithm detects them as overlapping."""
+        # Create ancestors where some will be adjacent
+        gt = _haploid_store(
+            [
+                [0, 1, 0, 1, 0, 1],
+                [1, 0, 0, 1, 1, 0],
+                [0, 1, 1, 0, 0, 1],
+                [1, 0, 1, 0, 1, 0],
+                [0, 0, 1, 1, 0, 1],
+                [1, 1, 0, 0, 1, 0],
+            ],
+            positions=[100, 200, 300, 400, 500, 600],
+            alleles=[["A", "T"]] * 6,
+            anc_states=["A"] * 6,
+        )
+        anc = infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+        positions = np.asarray(anc["variant_position"][:])
+        start_pos = np.asarray(anc["sample_start_position"][:])
+        end_pos = np.asarray(anc["sample_end_position"][:])
+        n_anc = len(start_pos)
+
+        # For any pair of ancestors where one's end_pos matches another's
+        # start_pos, the half-open intervals [start, end) should overlap:
+        # i.e., start_b < end_a must be true.
+        for i in range(n_anc):
+            for j in range(n_anc):
+                if i == j:
+                    continue
+                # If ancestor i's last site == ancestor j's first site,
+                # end_pos[i] should be > start_pos[j] (they overlap)
+                if int(end_pos[i]) > int(start_pos[j]) and int(end_pos[j]) > int(
+                    start_pos[i]
+                ):
+                    # Overlapping — good, the grouping will see them
+                    pass
+
+        # More directly: no ancestor should have end_pos == start_pos of
+        # another ancestor at the same genomic position where both have data
+        gt_out = _anc_genotypes(anc)
+        for i in range(n_anc):
+            hap_i = gt_out[:, i]
+            last_site_i = np.where(hap_i != -1)[0][-1]
+            for j in range(n_anc):
+                if i == j:
+                    continue
+                hap_j = gt_out[:, j]
+                first_site_j = np.where(hap_j != -1)[0][0]
+                if last_site_i == first_site_j:
+                    # They share a boundary site — end_pos[i] must be
+                    # strictly greater than start_pos[j] so the overlap
+                    # check succeeds
+                    assert int(end_pos[i]) > int(start_pos[j]), (
+                        f"Ancestors {i} and {j} share boundary site "
+                        f"{positions[last_site_i]}: end_pos[{i}]="
+                        f"{int(end_pos[i])} should be > start_pos[{j}]="
+                        f"{int(start_pos[j])}"
+                    )
 
     def test_output_allele_0_is_ancestral(self):
         # Site 0: alleles=['A','T'], ancestral='A' → output[0]='A'
@@ -801,7 +902,7 @@ class TestInferAncestorsScenarios:
         assert int(anc["call_genotype"][0, 0, 0]) == 1  # real ancestor: derived
         np.testing.assert_array_equal(anc["variant_position"][:], [100])
         np.testing.assert_array_equal(anc["sample_start_position"][:], [100])
-        np.testing.assert_array_equal(anc["sample_end_position"][:], [100])
+        np.testing.assert_array_equal(anc["sample_end_position"][:], [101])
 
     def test_single_site_ancestral_at_index_1(self):
         # alleles=['T','A'], ancestral='A' (idx 1)
@@ -905,8 +1006,9 @@ class TestInferAncestorsScenarios:
             start = int(anc["sample_start_position"][j])
             end = int(anc["sample_end_position"][j])
             # start and end must lie within the same interval
+            # end is exclusive, so end - 1 is the last site position
             in_interval = [
-                s <= start < e and s <= end < e for s, e in intervals.tolist()
+                s <= start < e and s <= end <= e for s, e in intervals.tolist()
             ]
             assert any(in_interval), (
                 f"Ancestor {j} spans [{start}, {end}] but no single interval covers it"
