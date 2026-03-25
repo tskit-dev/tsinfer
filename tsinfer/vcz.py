@@ -853,7 +853,7 @@ class AncestorWriter:
                 start_site_idx = int(local_mask[start_local])
                 end_site_idx = int(local_mask[end_local - 1]) + 1
                 start_pos = int(final_positions[start_site_idx])
-                end_pos = int(final_positions[end_site_idx - 1])
+                end_pos = int(final_positions[end_site_idx - 1]) + 1
                 focal_global = local_mask[item.focal_sites]
                 focal_pos = final_positions[focal_global]
 

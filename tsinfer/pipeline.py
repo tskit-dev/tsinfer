@@ -129,7 +129,7 @@ def _build_jobs_with_metadata(cfg):
             src_end = np.asarray(store["sample_end_position"][:], dtype=np.int32)
         elif len(positions) > 0:
             default_start = int(positions[0])
-            default_end = int(positions[-1])
+            default_end = int(positions[-1]) + 1
             src_start = None
             src_end = None
         else:
