@@ -644,7 +644,7 @@ def _make_cache_for_reader(reader, sample_ids, max_bytes=1024 * 1024):
             seen.add(key)
     cache = ScheduledCache(max_bytes, refcounts, chunk_order)
     cache.register_loader(reader._source_name, reader._do_load_chunk, reader.chunk_bytes)
-    cache.prime()
+    cache.start()
     return cache
 
 
@@ -896,7 +896,7 @@ class TestScheduledCache:
             chunk_order=[("s", 0)],
         )
         cache.register_loader("s", lambda idx: data, chunk_bytes=10)
-        cache.prime()
+        cache.start()
         # get() blocks until prime delivers the chunk
         result = cache.get(("s", 0))
         np.testing.assert_array_equal(result, data)
@@ -910,7 +910,7 @@ class TestScheduledCache:
             chunk_order=[("s", 0), ("s", 1), ("s", 2)],
         )
         cache.register_loader("s", lambda idx: _arr(10), chunk_bytes=10)
-        cache.prime()
+        cache.start()
         # get() on chunk 1 ensures prime has finished
         cache.get(("s", 1))
         # 2 chunks fit (20 <= 25), 3rd would exceed (30 > 25)
@@ -933,7 +933,7 @@ class TestScheduledCache:
             chunk_order=[("s", 0)],
         )
         cache.register_loader("s", loader, chunk_bytes=10)
-        cache.prime()
+        cache.start()
         cache.get(("s", 0))
         result = cache.get(("s", 0))
         assert call_count[0] == 1
@@ -949,7 +949,7 @@ class TestScheduledCache:
             chunk_order=[("s", 0)],
         )
         cache.register_loader("s", lambda idx: _arr(10), chunk_bytes=10)
-        cache.prime()
+        cache.start()
         # get() should block until background prime loads it
         result = cache.get(("s", 0))
         assert result is not None
@@ -963,7 +963,7 @@ class TestScheduledCache:
             chunk_order=[("s", 0), ("s", 1)],
         )
         cache.register_loader("s", lambda idx: _arr(10), chunk_bytes=10)
-        cache.prime()
+        cache.start()
         # Wait for prime to finish loading chunk 0
         cache.get(("s", 0))
 
@@ -991,7 +991,7 @@ class TestScheduledCache:
             chunk_order=[("s", 0)],
         )
         cache.register_loader("s", lambda idx: _arr(10), chunk_bytes=10)
-        cache.prime()
+        cache.start()
         cache.get(("s", 0))  # wait for prime
         cache.record_read(("s", 0))
         assert cache._refcount[("s", 0)] == 2
@@ -1005,7 +1005,7 @@ class TestScheduledCache:
             chunk_order=[("s", 0)],
         )
         cache.register_loader("s", lambda idx: _arr(10), chunk_bytes=10)
-        cache.prime()
+        cache.start()
         cache.get(("s", 0))  # wait for prime
         assert cache.total_bytes == 10
         cache.record_read(("s", 0))
@@ -1020,7 +1020,7 @@ class TestScheduledCache:
             chunk_order=[("s", 0), ("s", 1)],
         )
         cache.register_loader("s", lambda idx: _arr(10), chunk_bytes=10)
-        cache.prime()
+        cache.start()
         cache.get(("s", 1))  # wait for prime to load both
         assert cache.total_bytes == 20
 
@@ -1052,7 +1052,7 @@ class TestScheduledCache:
             chunk_order=[("s", 0), ("s", 1)],
         )
         cache.register_loader("s", loader, chunk_bytes=10)
-        cache.prime()
+        cache.start()
         cache.get(("s", 0))  # wait for prime
         assert 0 in loaded
         assert 1 not in loaded
@@ -1077,7 +1077,7 @@ class TestScheduledCache:
             return _arr(10)
 
         cache.register_loader("s", loader, chunk_bytes=10)
-        cache.prime()
+        cache.start()
         cache.get(("s", 0))  # wait for prime
         # Decrement but don't evict (refcount 2→1)
         cache.record_read(("s", 0))
@@ -1116,7 +1116,7 @@ class TestScheduledCache:
         )
         cache.register_loader("small", loader_small, chunk_bytes=10)
         cache.register_loader("big", loader_big, chunk_bytes=30)
-        cache.prime()  # loads small 0,1,2 (30 bytes); big 0 won't fit
+        cache.start()  # loads small 0,1,2 (30 bytes); big 0 won't fit
         cache.get(("small", 2))  # wait for prime
         assert cache.total_bytes == 30
         assert ("big", 0) not in cache._chunks
@@ -1145,7 +1145,7 @@ class TestScheduledCache:
             chunk_order=[("unknown", 0), ("s", 0)],
         )
         cache.register_loader("s", lambda idx: _arr(10), chunk_bytes=10)
-        cache.prime()
+        cache.start()
         cache.get(("s", 0))  # wait for prime
         # Skipped "unknown", loaded "s"
         assert ("s", 0) in cache._chunks
@@ -1162,7 +1162,7 @@ class TestScheduledCache:
             chunk_order=[("s", 0), ("s", 1)],
         )
         cache.register_loader("s", lambda idx: _arr(10), chunk_bytes=10)
-        cache.prime()
+        cache.start()
         cache.get(("s", 0))  # wait for prime
 
         results = [None, None, None]
@@ -1201,7 +1201,7 @@ class TestScheduledCache:
             chunk_order=[("s", 0), ("s", 1)],
         )
         cache.register_loader("s", lambda idx: _arr(30), chunk_bytes=30)
-        cache.prime()
+        cache.start()
         cache.get(("s", 1))  # wait for prime
         assert cache.total_bytes == 60
         cache.record_read(("s", 0))

@@ -354,6 +354,7 @@ def match(
     num_threads: int | None = None,
     cache_size: int | None = None,
     group_stop: int | None = None,
+    read_workers: int = 2,
     **kwargs,
 ) -> tskit.TreeSequence:
     """
@@ -435,6 +436,7 @@ def match(
         ancestral_alleles,
         cache_size_mb=cache_size,
         schedule=schedule,
+        read_workers=read_workers,
     )
     allele_mapper = reader.allele_mapper
 
@@ -740,6 +742,7 @@ def run(
     progress: bool = False,
     num_threads: int | None = None,
     cache_size: int | None = None,
+    read_workers: int = 2,
     **kwargs,
 ) -> tskit.TreeSequence:
     """
@@ -774,6 +777,7 @@ def run(
             progress=progress,
             num_threads=num_threads,
             cache_size=cache_size,
+            read_workers=read_workers,
             **kwargs,
         )
         ts = post_process(ts, cfg, **kwargs)

@@ -188,6 +188,13 @@ def infer_ancestors_cmd(config, threads, write_threads, force, progress, verbose
     "e.g. --group-stop 2 processes groups 0 and 1. "
     "Requires --workdir for useful resume behavior.",
 )
+@click.option(
+    "--read-workers",
+    type=int,
+    default=2,
+    show_default=True,
+    help="Number of background threads for loading genotype chunks.",
+)
 @_add_options(_runtime_options)
 def match_cmd(
     config,
@@ -195,6 +202,7 @@ def match_cmd(
     keep_intermediates,
     cache_size,
     group_stop,
+    read_workers,
     threads,
     force,
     progress,
@@ -215,6 +223,7 @@ def match_cmd(
         num_threads=threads,
         cache_size=cache_size,
         group_stop=group_stop,
+        read_workers=read_workers,
     )
     ts.dump(str(cfg.match.output))
     logger.info("Match complete: %d nodes, %d edges", ts.num_nodes, ts.num_edges)
@@ -280,14 +289,27 @@ def augment_sites_cmd(config, input_ts, output_path, threads, force, progress, v
     show_default=True,
     help="Genotype chunk cache size in MiB.",
 )
+@click.option(
+    "--read-workers",
+    type=int,
+    default=2,
+    show_default=True,
+    help="Number of background threads for loading genotype chunks.",
+)
 @_add_options(_runtime_options)
-def run_cmd(config, cache_size, threads, force, progress, verbose):
+def run_cmd(config, cache_size, read_workers, threads, force, progress, verbose):
     """Run the full pipeline: infer-ancestors, match, post-process, augment-sites."""
     _setup_logging(verbose)
     cfg = Config.from_toml(config)
     _check_output(cfg.match.output, force)
     logger.info("Running full pipeline")
-    ts = pipeline_run(cfg, progress=progress, num_threads=threads, cache_size=cache_size)
+    ts = pipeline_run(
+        cfg,
+        progress=progress,
+        num_threads=threads,
+        cache_size=cache_size,
+        read_workers=read_workers,
+    )
     ts.dump(str(cfg.match.output))
     logger.info(
         "Pipeline complete: %d nodes, %d edges, %d sites",
