@@ -23,14 +23,16 @@ and infer_ancestors.
 
 from __future__ import annotations
 
+import logging
 import pathlib
 
+import algorithm as alg
 import helpers
 import numpy as np
 import pytest
 import zarr
 
-from tsinfer import ancestors, config, vcz
+from tsinfer import ancestors, config, utils, vcz
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -82,11 +84,6 @@ def _oracle_ancestors(gt_matrix, times):
     Returns list of (time, focal_site_indices, haplotype_array) tuples, sorted by
     descending time, in the same order as _tsinfer.AncestorBuilder.
     """
-    import sys
-
-    sys.path.insert(0, "tests")
-    import algorithm as alg
-
     num_sites, num_haplotypes = gt_matrix.shape
     ab = alg.AncestorBuilder(num_samples=num_haplotypes, max_sites=num_sites)
     for i in range(num_sites):
@@ -222,8 +219,6 @@ class TestComputeInferenceSites:
         np.testing.assert_array_equal(result.positions, [30])
 
     def test_duplicate_positions_logged(self, caplog):
-        import logging
-
         gt = np.zeros((4, 2, 1), dtype=np.int8)
         store = helpers.make_sample_vcz(
             gt,
@@ -1537,7 +1532,6 @@ class TestAtomicWrite:
     def test_final_path_absent_during_write(self, tmp_path, monkeypatch):
         """The final output path must not exist while ancestors are being
         written; only the .tmp path should be present on disk."""
-        import tsinfer.vcz as vcz_mod
 
         fs_path = tmp_path / "ancestors.zarr"
         gt = _haploid_store(
@@ -1547,7 +1541,7 @@ class TestAtomicWrite:
             anc_states=["A", "A"],
         )
 
-        original_finalize = vcz_mod.finalize_ancestor_zarr
+        original_finalize = vcz.finalize_ancestor_zarr
 
         def checking_finalize(*args, **kwargs):
             # During finalization the final path must not yet exist
@@ -1557,7 +1551,7 @@ class TestAtomicWrite:
             assert len(tmp_siblings) == 1
             return original_finalize(*args, **kwargs)
 
-        monkeypatch.setattr(vcz_mod, "finalize_ancestor_zarr", checking_finalize)
+        monkeypatch.setattr(vcz, "finalize_ancestor_zarr", checking_finalize)
 
         fs_cfg = config.AncestorsConfig(name="ancestors", path=fs_path, sources=["src"])
         result = ancestors.infer_ancestors(_src(gt), fs_cfg, _anc_state(gt))
@@ -1568,7 +1562,6 @@ class TestAtomicWrite:
 
     def test_final_path_absent_during_empty_write(self, tmp_path, monkeypatch):
         """Same atomic guarantee for the empty-ancestors code path."""
-        import tsinfer.vcz as vcz_mod
 
         fs_path = tmp_path / "empty.zarr"
         gt = _haploid_store(
@@ -1578,7 +1571,7 @@ class TestAtomicWrite:
             anc_states=["A", "A"],
         )
 
-        original_write_empty = vcz_mod.write_empty_ancestor_vcz
+        original_write_empty = vcz.write_empty_ancestor_vcz
 
         def checking_write_empty(*args, **kwargs):
             result = original_write_empty(*args, **kwargs)
@@ -1587,7 +1580,7 @@ class TestAtomicWrite:
             assert not fs_path.exists(), "Final path appeared before rename"
             return result
 
-        monkeypatch.setattr(vcz_mod, "write_empty_ancestor_vcz", checking_write_empty)
+        monkeypatch.setattr(vcz, "write_empty_ancestor_vcz", checking_write_empty)
 
         fs_cfg = config.AncestorsConfig(name="ancestors", path=fs_path, sources=["src"])
         result = ancestors.infer_ancestors(_src(gt), fs_cfg, _anc_state(gt))
@@ -1647,8 +1640,6 @@ class TestAtomicWrite:
 class TestLogging:
     def test_infer_ancestors_logs_key_messages(self, caplog):
         """Key INFO messages are emitted during ancestor inference."""
-        import logging
-
         gt = _haploid_store(
             [[0, 1], [1, 0]],
             positions=[100, 200],
@@ -1696,26 +1687,20 @@ class TestProgress:
 
 class TestSynchronousExecutor:
     def test_submit_returns_completed_future(self):
-        from tsinfer.utils import SynchronousExecutor
-
-        executor = SynchronousExecutor()
+        executor = utils.SynchronousExecutor()
         future = executor.submit(lambda x, y: x + y, 3, 4)
         assert future.result() == 7
 
     def test_context_manager(self):
-        from tsinfer.utils import SynchronousExecutor
-
-        with SynchronousExecutor() as executor:
+        with utils.SynchronousExecutor() as executor:
             future = executor.submit(sorted, [3, 1, 2])
             assert future.result() == [1, 2, 3]
 
     def test_exception_propagation(self):
-        from tsinfer.utils import SynchronousExecutor
-
         def fail():
             raise ValueError("boom")
 
-        executor = SynchronousExecutor()
+        executor = utils.SynchronousExecutor()
         # SynchronousExecutor executes immediately, so the exception
         # is raised during submit.
         with pytest.raises(ValueError, match="boom"):
