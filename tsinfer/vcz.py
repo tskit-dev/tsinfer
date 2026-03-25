@@ -1318,6 +1318,39 @@ class ScheduledCache:
             return k
         return None
 
+    def _force_evict(self) -> tuple[str, int] | None:
+        """Evict one cached chunk to free memory. Must be called under lock.
+
+        Picks the chunk with the fewest remaining references.  The
+        chunk's ``_refcount`` entry is preserved so it can be reloaded
+        later if needed.  Returns the evicted key, or None if nothing
+        can be evicted.
+        """
+        best_key = None
+        best_refs = float("inf")
+        for k in list(self._chunks):
+            refs = self._refcount.get(k, 0)
+            if refs < best_refs:
+                best_key = k
+                best_refs = refs
+        if best_key is None:
+            return None
+        data = self._chunks.pop(best_key)
+        freed = data.nbytes
+        self._current_bytes -= freed
+        self._total_evictions += 1
+        self._total_evicted_bytes += freed
+        logger.info(
+            "Chunk cache force-evict: source=%s chunk=%d"
+            " freed=%.1f MiB (remaining refs=%d)",
+            best_key[0],
+            best_key[1],
+            freed / (1024 * 1024),
+            self._refcount.get(best_key, 0),
+        )
+        self._condition.notify_all()
+        return best_key
+
     def _worker_loop(self) -> None:
         """Worker: pull chunks from the schedule and load them."""
         while True:
@@ -1332,6 +1365,9 @@ class ScheduledCache:
                         self._cursor += 1
                         self._pending_bytes += est
                         break
+                    # Memory full — force-evict one chunk to make room
+                    if self._force_evict() is not None:
+                        continue
                     self._condition.wait()
                 else:
                     return  # shutdown requested
@@ -1364,7 +1400,13 @@ class ScheduledCache:
     # ----- public interface ------------------------------------------------
 
     def get(self, key: tuple[str, int]) -> np.ndarray:
-        """Return cached chunk, waiting for a worker to load it."""
+        """Return cached chunk, waiting for a worker to load it.
+
+        If workers cannot make progress (e.g. the cursor has passed this
+        chunk after a force-eviction), falls back to loading the chunk
+        synchronously from the calling thread, evicting another chunk
+        first to stay within the memory budget.
+        """
         with self._condition:
             if key in self._chunks:
                 self._hits += 1
@@ -1372,7 +1414,26 @@ class ScheduledCache:
             self._misses += 1
             t_wait = _time.monotonic()
             while key not in self._chunks:
-                self._condition.wait()
+                if not self._condition.wait(timeout=1.0):
+                    if key[0] in self._loaders and key not in self._chunks:
+                        # Evict a chunk to stay within the memory budget
+                        self._force_evict()
+                        loader = self._loaders[key[0]]
+                        logger.warning(
+                            "Chunk cache stall: loading source=%s "
+                            "chunk=%d synchronously",
+                            key[0],
+                            key[1],
+                        )
+                        self._condition.release()
+                        try:
+                            data = loader(key[1])
+                        finally:
+                            self._condition.acquire()
+                        if key not in self._chunks:
+                            self._chunks[key] = data
+                            self._current_bytes += data.nbytes
+                            self._condition.notify_all()
             self._total_wait_time += _time.monotonic() - t_wait
             return self._chunks[key]
 

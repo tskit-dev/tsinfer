@@ -911,12 +911,12 @@ class TestScheduledCache:
         )
         cache.register_loader("s", lambda idx: _arr(10), chunk_bytes=10)
         cache.start()
-        # get() on chunk 1 ensures prime has finished
-        cache.get(("s", 1))
-        # 2 chunks fit (20 <= 25), 3rd would exceed (30 > 25)
-        assert ("s", 0) in cache._chunks
-        assert ("s", 1) in cache._chunks
-        assert ("s", 2) not in cache._chunks
+        # get() on chunk 2 ensures all chunks have been processed
+        cache.get(("s", 2))
+        # Only 2 chunks fit (20 <= 25); the worker force-evicts
+        # to make room for chunk 2, so exactly 2 of 3 are cached.
+        n_cached = sum(1 for k in [("s", 0), ("s", 1), ("s", 2)] if k in cache._chunks)
+        assert n_cached == 2
         assert cache.total_bytes == 20
         cache.shutdown()
 
@@ -1039,7 +1039,8 @@ class TestScheduledCache:
 
     # --- Group 3: read-ahead ---
 
-    def test_readahead_triggers_on_eviction(self):
+    def test_readahead_loads_all_scheduled(self):
+        """Workers force-evict to load all scheduled chunks."""
         loaded = set()
 
         def loader(idx):
@@ -1053,42 +1054,14 @@ class TestScheduledCache:
         )
         cache.register_loader("s", loader, chunk_bytes=10)
         cache.start()
-        cache.get(("s", 0))  # wait for prime
+        # Workers force-evict to load both chunks even though only 1 fits
+        cache.get(("s", 1))
         assert 0 in loaded
-        assert 1 not in loaded
-        # Evict chunk 0 — should trigger readahead for chunk 1
-        cache.record_read(("s", 0))
-        time.sleep(0.2)
         assert 1 in loaded
-        assert ("s", 1) in cache._chunks
-        cache.shutdown()
-
-    def test_readahead_respects_memory_limit(self):
-        """Readahead does not fire when next chunk doesn't fit."""
-        cache = ScheduledCache(
-            max_bytes=15,
-            refcounts={("s", 0): 2, ("s", 1): 1},
-            chunk_order=[("s", 0), ("s", 1)],
-        )
-        loaded = set()
-
-        def loader(idx):
-            loaded.add(idx)
-            return _arr(10)
-
-        cache.register_loader("s", loader, chunk_bytes=10)
-        cache.start()
-        cache.get(("s", 0))  # wait for prime
-        # Decrement but don't evict (refcount 2→1)
-        cache.record_read(("s", 0))
-        assert cache.total_bytes == 10
-        # Readahead should not trigger: 10 + 10 > 15 and chunk 0 still alive
-        time.sleep(0.05)
-        assert 1 not in loaded
         cache.shutdown()
 
     def test_readahead_multi_eviction(self):
-        """Large chunk needs multiple small evictions before it fits."""
+        """Large chunk force-evicts multiple small chunks to fit."""
         loaded = {}
 
         def loader_small(idx):
@@ -1116,25 +1089,12 @@ class TestScheduledCache:
         )
         cache.register_loader("small", loader_small, chunk_bytes=10)
         cache.register_loader("big", loader_big, chunk_bytes=30)
-        cache.start()  # loads small 0,1,2 (30 bytes); big 0 won't fit
-        cache.get(("small", 2))  # wait for prime
-        assert cache.total_bytes == 30
-        assert ("big", 0) not in cache._chunks
-
-        # Evict small 0 → 20 bytes; big needs 30, still doesn't fit
-        cache.record_read(("small", 0))
-        time.sleep(0.1)
-        assert ("big", 0) not in cache._chunks
-
-        # Evict small 1 → 10 bytes; 10 + 30 > 35, still doesn't fit
-        cache.record_read(("small", 1))
-        time.sleep(0.1)
-        assert ("big", 0) not in cache._chunks
-
-        # Evict small 2 → 0 bytes; 0 + 30 <= 35, now it fits
-        cache.record_read(("small", 2))
-        time.sleep(0.2)
+        cache.start()
+        # Workers force-evict small chunks to make room for big
+        cache.get(("big", 0))
         assert ("big", 0) in cache._chunks
+        assert ("big", 0) in loaded
+        cache.shutdown()
         assert cache.total_bytes == 30
         cache.shutdown()
 
@@ -1208,6 +1168,35 @@ class TestScheduledCache:
         assert cache.total_bytes == 30
         cache.record_read(("s", 1))
         assert cache.total_bytes == 0
+
+    # --- Group 7: deadlock prevention ---
+
+    def test_memory_pressure_deadlock(self):
+        """get() falls back to synchronous load when workers are stalled.
+
+        Reproduces the deadlock: cache is full, workers wait for memory,
+        but memory can only be freed after get() returns.
+        """
+        cache = ScheduledCache(
+            max_bytes=10,
+            refcounts={("s", 0): 1, ("s", 1): 1},
+            chunk_order=[("s", 0), ("s", 1)],
+        )
+        cache.register_loader("s", lambda idx: _arr(10), chunk_bytes=10)
+        cache.start()
+
+        # Wait for chunk 0 to be loaded (fills the cache completely)
+        data0 = cache.get(("s", 0))
+        assert data0 is not None
+
+        # Worker can't load chunk 1 (10 + 10 > 10). Worker is stalled.
+        # get() for chunk 1 would deadlock without the fallback.
+        data1 = cache.get(("s", 1))
+        assert data1 is not None
+
+        cache.record_read(("s", 0))
+        cache.record_read(("s", 1))
+        cache.shutdown()
 
 
 # ---------------------------------------------------------------------------
