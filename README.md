@@ -3,6 +3,16 @@
 [![License](https://img.shields.io/github/license/tskit-dev/tsinfer)](https://github.com/tskit-dev/tsinfer/blob/main/LICENSE) [![PyPI version](https://img.shields.io/pypi/v/tsinfer.svg)](https://pypi.org/project/tsinfer/) [![Supported Python Versions](https://img.shields.io/pypi/pyversions/tsinfer.svg)](https://pypi.org/project/tsinfer/) [![Docs Build](https://github.com/tskit-dev/tsinfer/actions/workflows/docs.yml/badge.svg)](https://github.com/tskit-dev/tsinfer/actions/workflows/docs.yml) [![Tests](https://github.com/tskit-dev/tsinfer/actions/workflows/tests.yml/badge.svg)](https://github.com/tskit-dev/tsinfer/actions/workflows/tests.yml) [![codecov](https://codecov.io/gh/tskit-dev/tsinfer/branch/main/graph/badge.svg)](https://codecov.io/gh/tskit-dev/tsinfer)
 
 
+## NOTICE
+
+**WARNING** The main branch on GitHub is a development branch for the 1.0 release.
+It has many changes from the current 0.x series, and is largely incompatible.
+**DO NOT USE THIS CODE** for your research - it is not ready. Please use the 
+released version of tsinfer available from PyPI and conda-forge.
+
+
+## README (to updated once 1.0 stabilises)
+
 Infer whole-genome tree sequences from genetic variation data. Tsinfer implements efficient algorithms to reconstruct ancestral haplotypes and recombination breakpoints, producing succinct tree sequences that capture shared ancestry across the genome. It scales to large cohorts and integrates cleanly with the broader tskit ecosystem for downstream statistics and analysis.
 
 The documentation ([stable](https://tskit.dev/tsinfer/docs/stable/) • [latest](https://tskit.dev/tsinfer/docs/latest/)) contains details of how to use this software, including [installation instructions](https://tskit.dev/tsinfer/docs/stable/installation.html).
