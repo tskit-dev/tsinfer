@@ -1946,7 +1946,8 @@ class HaplotypeReader:
         ancestral_alleles: np.ndarray,
         cache_size_mb: int | None = None,
         schedule: list[tuple[str, str, int]] | None = None,
-        read_workers: int = 1,
+        read_workers: int | None = None,
+        num_threads: int = 0,
     ):
         """
         Parameters
@@ -1964,9 +1965,15 @@ class HaplotypeReader:
             Ordered list of every haplotype read that will be made.
             The cache uses this to compute per-chunk reference counts
             for deterministic eviction and background read-ahead.
-        read_workers : int
+        read_workers : int or None
             Number of background threads that load chunks into the cache.
+            Defaults to ``max(1, num_threads // 2)``.
+        num_threads : int
+            Number of matching threads (used to derive ``read_workers``
+            default).
         """
+        if read_workers is None:
+            read_workers = max(1, num_threads // 2)
         if cache_size_mb is None:
             cache_size_mb = DEFAULT_CACHE_SIZE
         self._positions = np.asarray(positions, dtype=np.int32)
