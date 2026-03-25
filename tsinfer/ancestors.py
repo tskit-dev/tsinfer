@@ -23,11 +23,11 @@ Ancestor generation: builds the ancestor VCZ store from a samples VCZ store.
 from __future__ import annotations
 
 import concurrent.futures
+import dataclasses
 import logging
 import os
+import pathlib
 import time
-from dataclasses import dataclass
-from pathlib import Path
 
 import numcodecs
 import numpy as np
@@ -37,16 +37,9 @@ import zarr
 
 import _tsinfer
 
+from . import config
 from . import grouping as grouping_mod
 from . import vcz as vcz_mod
-from .config import (
-    DEFAULT_GENOTYPE_ENCODING,
-    DEFAULT_NUM_THREADS,
-    DEFAULT_WRITE_THREADS,
-    AncestorsConfig,
-    AncestralState,
-    Source,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +49,7 @@ def _memory_usage_mb():
     return psutil.Process().memory_info().rss / (1024 * 1024)
 
 
-@dataclass
+@dataclasses.dataclass
 class InferenceSites:
     positions: np.ndarray
     alleles: np.ndarray
@@ -128,7 +121,7 @@ def _compute_site_stats(genotype_iter, num_sites, num_haplotypes, progress=False
 
 def compute_inference_sites(
     store: zarr.Group,
-    ancestral_state: AncestralState,
+    ancestral_state: config.AncestralState,
     *,
     include: str | None = None,
     exclude: str | None = None,
@@ -253,7 +246,7 @@ def compute_sequence_intervals(
     return np.array(intervals, dtype=np.int32)
 
 
-@dataclass
+@dataclasses.dataclass
 class Ancestor:
     """
     A single ancestor haplotype, storing only the active fragment.
@@ -537,9 +530,9 @@ def _process_interval(
 
 
 def infer_ancestors(
-    sources: list[Source] | Source,
-    cfg: AncestorsConfig,
-    ancestral_state: AncestralState,
+    sources: list[config.Source] | config.Source,
+    cfg: config.AncestorsConfig,
+    ancestral_state: config.AncestralState,
     progress: bool = False,
     num_threads: int | None = None,
     write_threads: int | None = None,
@@ -556,12 +549,12 @@ def infer_ancestors(
     Ancestors are not sorted by time.
     """
     if num_threads is None:
-        num_threads = DEFAULT_NUM_THREADS
+        num_threads = config.DEFAULT_NUM_THREADS
     if write_threads is None:
-        write_threads = DEFAULT_WRITE_THREADS
+        write_threads = config.DEFAULT_WRITE_THREADS
     if genotype_encoding is None:
-        genotype_encoding = DEFAULT_GENOTYPE_ENCODING
-    if isinstance(sources, Source):
+        genotype_encoding = config.DEFAULT_GENOTYPE_ENCODING
+    if isinstance(sources, config.Source):
         sources = [sources]
 
     t_start = time.monotonic()
@@ -622,7 +615,7 @@ def infer_ancestors(
 
     # Determine the write path: use a PID-suffixed temp path for atomicity
     if cfg.path is not None:
-        final_path = Path(cfg.path)
+        final_path = pathlib.Path(cfg.path)
         if final_path.exists():
             raise FileExistsError(f"Ancestor output path already exists: {final_path}")
         tmp_path = final_path.with_suffix(f".{os.getpid()}.tmp")

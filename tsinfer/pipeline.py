@@ -26,26 +26,15 @@ import collections
 import dataclasses
 import json
 import logging
+import pathlib
 import time as time_
-from pathlib import Path
 
 import numpy as np
 import tqdm
 import tskit
 
+from . import ancestors, config, grouping, matching
 from . import vcz as vcz_mod
-from .ancestors import infer_ancestors
-from .config import (
-    DEFAULT_CACHE_SIZE,
-    DEFAULT_GENOTYPE_ENCODING,
-    DEFAULT_NUM_THREADS,
-    Config,
-)
-from .grouping import (
-    MatchJob,
-    assign_groups,
-)
-from .matching import Matcher, extend_ts, make_root_ts
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +62,7 @@ def _build_jobs_with_metadata(cfg):
 
     # Build MatchJobs directly from VCZ stores, assigning individual IDs
     # in the same pass.
-    jobs: list[MatchJob] = []
+    jobs: list[grouping.MatchJob] = []
     ind_key_to_id: dict[tuple[str, str], int] = {}
     hap_idx = 0
 
@@ -168,7 +157,7 @@ def _build_jobs_with_metadata(cfg):
 
             for p in range(ploidy):
                 jobs.append(
-                    MatchJob(
+                    grouping.MatchJob(
                         haplotype_index=hap_idx,
                         source=source.name,
                         sample_id=sid,
@@ -272,7 +261,7 @@ def _build_jobs_with_metadata(cfg):
     # Assign groups
     logger.info("Computing groups")
     t0 = time_.monotonic()
-    jobs = assign_groups(jobs)
+    jobs = grouping.assign_groups(jobs)
     elapsed = time_.monotonic() - t0
     num_groups = len({j.group for j in jobs})
     logger.info("Computed %d groups in %.2fs", num_groups, elapsed)
@@ -280,7 +269,7 @@ def _build_jobs_with_metadata(cfg):
     return jobs, individual_metadata_rows, population_metadata_rows
 
 
-def compute_groups_json(cfg: Config) -> str:
+def compute_groups_json(cfg: config.Config) -> str:
     """
     Compute haplotype groups and return as a JSON string.
 
@@ -301,10 +290,10 @@ def compute_groups_json(cfg: Config) -> str:
     return json_str
 
 
-def _load_match_jobs(path) -> list[MatchJob]:
+def _load_match_jobs(path) -> list[grouping.MatchJob]:
     """Read a match-jobs JSON file and return a list of MatchJob objects."""
-    records = json.loads(Path(path).read_text())
-    return [MatchJob(**rec) for rec in records]
+    records = json.loads(pathlib.Path(path).read_text())
+    return [grouping.MatchJob(**rec) for rec in records]
 
 
 def _setup_workdir(workdir, cfg):
@@ -315,7 +304,7 @@ def _setup_workdir(workdir, cfg):
              last_completed_group_idx, starting_ts_or_None).
     """
 
-    workdir = Path(workdir)
+    workdir = pathlib.Path(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
     groups_path = workdir / "match-jobs.json"
 
@@ -353,14 +342,14 @@ def _setup_workdir(workdir, cfg):
 
 
 def match(
-    cfg: Config,
+    cfg: config.Config,
     reference_ts: tskit.TreeSequence | None = None,
     progress: bool = False,
     num_threads: int | None = None,
     cache_size: int | None = None,
     group_stop: int | None = None,
     read_workers: int | None = None,
-    match_file: str | Path | None = None,
+    match_file: str | pathlib.Path | None = None,
     **kwargs,
 ) -> tskit.TreeSequence:
     """
@@ -371,9 +360,9 @@ def match(
     sequence is extended with the results.
     """
     if num_threads is None:
-        num_threads = DEFAULT_NUM_THREADS
+        num_threads = config.DEFAULT_NUM_THREADS
     if cache_size is None:
-        cache_size = DEFAULT_CACHE_SIZE
+        cache_size = config.DEFAULT_CACHE_SIZE
     path_compression = kwargs.get("path_compression", cfg.match.path_compression)
 
     # Validate group_stop
@@ -453,7 +442,7 @@ def match(
     if workdir_starting_ts is not None:
         ts = workdir_starting_ts
     else:
-        ts = make_root_ts(
+        ts = matching.make_root_ts(
             seq_len,
             positions,
             seq_intervals,
@@ -500,7 +489,7 @@ def match(
         logger.info("Group %d/%d: %d haplotypes", gi + 1, num_groups, num_in_group)
 
         # Match against current TS (haplotypes read on demand via reader)
-        matcher = Matcher(
+        matcher = matching.Matcher(
             ts,
             positions,
             path_compression=path_compression,
@@ -561,7 +550,7 @@ def match(
         )
 
         # Extend the tree sequence
-        ts = extend_ts(
+        ts = matching.extend_ts(
             ts,
             paired_results=paired_results,
             allele_mapper=allele_mapper,
@@ -569,7 +558,7 @@ def match(
 
         # Write checkpoint to workdir if configured
         if workdir is not None:
-            wd = Path(workdir)
+            wd = pathlib.Path(workdir)
             ts_path = wd / f"group_{group_idx}.trees"
             ts.dump(str(ts_path))
             logger.info("Wrote checkpoint to %s", ts_path)
@@ -594,7 +583,7 @@ def match(
 
 def post_process(
     ts: tskit.TreeSequence,
-    cfg: Config,
+    cfg: config.Config,
     **kwargs,
 ) -> tskit.TreeSequence:
     """
@@ -655,7 +644,7 @@ def _split_ultimate(ts: tskit.TreeSequence) -> tskit.TreeSequence:
 
 def augment_sites(
     ts: tskit.TreeSequence,
-    cfg: Config,
+    cfg: config.Config,
     progress: bool = False,
 ) -> tskit.TreeSequence:
     """
@@ -780,28 +769,28 @@ def augment_sites(
 
 
 def run(
-    cfg: Config,
+    cfg: config.Config,
     progress: bool = False,
     num_threads: int | None = None,
     cache_size: int | None = None,
     genotype_encoding: int | None = None,
     read_workers: int | None = None,
-    match_file: str | Path | None = None,
+    match_file: str | pathlib.Path | None = None,
     **kwargs,
 ) -> tskit.TreeSequence:
     """
     Run the full pipeline: infer_ancestors, match, post_process, augment_sites.
     """
     if num_threads is None:
-        num_threads = DEFAULT_NUM_THREADS
+        num_threads = config.DEFAULT_NUM_THREADS
     if cache_size is None:
-        cache_size = DEFAULT_CACHE_SIZE
+        cache_size = config.DEFAULT_CACHE_SIZE
     if genotype_encoding is None:
-        genotype_encoding = DEFAULT_GENOTYPE_ENCODING
+        genotype_encoding = config.DEFAULT_GENOTYPE_ENCODING
     logger.info("Starting full pipeline")
     anc_cfg = cfg.ancestors[0]
     sources = [cfg.sources[name] for name in anc_cfg.sources]
-    ancestor_store = infer_ancestors(
+    ancestor_store = ancestors.infer_ancestors(
         sources,
         anc_cfg,
         cfg.ancestral_state,
