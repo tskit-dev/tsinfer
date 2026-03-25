@@ -1365,9 +1365,6 @@ class ScheduledCache:
                         self._cursor += 1
                         self._pending_bytes += est
                         break
-                    # Memory full — force-evict one chunk to make room
-                    if self._force_evict() is not None:
-                        continue
                     self._condition.wait()
                 else:
                     return  # shutdown requested
