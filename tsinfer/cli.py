@@ -218,6 +218,12 @@ def infer_ancestors_cmd(
     help="Background threads for loading genotype chunks. "
     "[default: threads/2, minimum 1]",
 )
+@click.option(
+    "--match-file",
+    type=click.Path(),
+    default=None,
+    help="Write per-haplotype match results as JSON lines to this file.",
+)
 @_add_options(_runtime_options)
 def match_cmd(
     config,
@@ -226,6 +232,7 @@ def match_cmd(
     cache_size,
     group_stop,
     read_workers,
+    match_file,
     threads,
     force,
     progress,
@@ -247,6 +254,7 @@ def match_cmd(
         cache_size=cache_size,
         group_stop=group_stop,
         read_workers=read_workers,
+        match_file=match_file,
     )
     ts.dump(str(cfg.match.output))
     logger.info("Match complete: %d nodes, %d edges", ts.num_nodes, ts.num_edges)
@@ -328,12 +336,19 @@ def augment_sites_cmd(config, input_ts, output_path, threads, force, progress, v
     help="Background threads for loading genotype chunks. "
     "[default: threads/2, minimum 1]",
 )
+@click.option(
+    "--match-file",
+    type=click.Path(),
+    default=None,
+    help="Write per-haplotype match results as JSON lines to this file.",
+)
 @_add_options(_runtime_options)
 def run_cmd(
     config,
     cache_size,
     genotype_encoding,
     read_workers,
+    match_file,
     threads,
     force,
     progress,
@@ -351,6 +366,7 @@ def run_cmd(
         cache_size=cache_size,
         genotype_encoding=_ENCODING_NAMES[genotype_encoding],
         read_workers=read_workers,
+        match_file=match_file,
     )
     ts.dump(str(cfg.match.output))
     logger.info(
