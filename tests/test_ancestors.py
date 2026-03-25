@@ -1524,6 +1524,114 @@ class TestFilesystemStore:
         assert reopened["call_genotype"].shape[1] == 0
 
 
+class TestAtomicWrite:
+    """Verify ancestor VCZ is written atomically via tmp path + rename."""
+
+    def test_final_path_absent_during_write(self, tmp_path, monkeypatch):
+        """The final output path must not exist while ancestors are being
+        written; only the .tmp path should be present on disk."""
+        import tsinfer.vcz as vcz_mod
+
+        fs_path = tmp_path / "ancestors.zarr"
+        gt = _haploid_store(
+            [[0, 1, 0, 1], [0, 0, 1, 1]],
+            positions=[100, 200],
+            alleles=[["A", "T"]] * 2,
+            anc_states=["A", "A"],
+        )
+
+        original_finalize = vcz_mod.finalize_ancestor_zarr
+
+        def checking_finalize(*args, **kwargs):
+            # During finalization the final path must not yet exist
+            assert not fs_path.exists(), "Final path appeared before rename"
+            # But a .tmp sibling should be on disk
+            tmp_siblings = list(tmp_path.glob("ancestors.*.tmp"))
+            assert len(tmp_siblings) == 1
+            return original_finalize(*args, **kwargs)
+
+        monkeypatch.setattr(vcz_mod, "finalize_ancestor_zarr", checking_finalize)
+
+        fs_cfg = AncestorsConfig(name="ancestors", path=fs_path, sources=["src"])
+        result = infer_ancestors(_src(gt), fs_cfg, _anc_state(gt))
+
+        # After return, only the final path exists
+        assert fs_path.exists()
+        assert result["call_genotype"].shape[1] > 0
+
+    def test_final_path_absent_during_empty_write(self, tmp_path, monkeypatch):
+        """Same atomic guarantee for the empty-ancestors code path."""
+        import tsinfer.vcz as vcz_mod
+
+        fs_path = tmp_path / "empty.zarr"
+        gt = _haploid_store(
+            [[0, 0], [0, 0]],
+            positions=[100, 200],
+            alleles=[["A", "T"]] * 2,
+            anc_states=["A", "A"],
+        )
+
+        original_write_empty = vcz_mod.write_empty_ancestor_vcz
+
+        def checking_write_empty(*args, **kwargs):
+            result = original_write_empty(*args, **kwargs)
+            # After write_empty returns but before rename, final must
+            # not exist — the store arg should be the tmp path.
+            assert not fs_path.exists(), "Final path appeared before rename"
+            return result
+
+        monkeypatch.setattr(vcz_mod, "write_empty_ancestor_vcz", checking_write_empty)
+
+        fs_cfg = AncestorsConfig(name="ancestors", path=fs_path, sources=["src"])
+        result = infer_ancestors(_src(gt), fs_cfg, _anc_state(gt))
+
+        assert fs_path.exists()
+        assert result["call_genotype"].shape[1] == 0
+
+    def test_raises_if_output_exists(self, tmp_path):
+        """infer_ancestors raises FileExistsError if the output path
+        already exists."""
+        fs_path = tmp_path / "ancestors.zarr"
+        fs_path.mkdir()  # create a directory at the output path
+
+        gt = _haploid_store(
+            [[0, 1], [1, 0]],
+            positions=[100, 200],
+            alleles=[["A", "T"]] * 2,
+            anc_states=["A", "A"],
+        )
+        fs_cfg = AncestorsConfig(name="ancestors", path=fs_path, sources=["src"])
+        with pytest.raises(FileExistsError, match="already exists"):
+            infer_ancestors(_src(gt), fs_cfg, _anc_state(gt))
+
+    def test_no_tmp_left_after_success(self, tmp_path):
+        """After a successful run, no .tmp directories remain."""
+        fs_path = tmp_path / "ancestors.zarr"
+        gt = _haploid_store(
+            [[0, 1, 0, 1], [0, 0, 1, 1]],
+            positions=[100, 200],
+            alleles=[["A", "T"]] * 2,
+            anc_states=["A", "A"],
+        )
+        fs_cfg = AncestorsConfig(name="ancestors", path=fs_path, sources=["src"])
+        infer_ancestors(_src(gt), fs_cfg, _anc_state(gt))
+
+        tmp_siblings = list(tmp_path.glob("*.tmp"))
+        assert tmp_siblings == []
+        assert fs_path.exists()
+
+    def test_in_memory_unaffected(self):
+        """In-memory (path=None) still works without any tmp/rename."""
+        gt = _haploid_store(
+            [[0, 1], [1, 0]],
+            positions=[100, 200],
+            alleles=[["A", "T"]] * 2,
+            anc_states=["A", "A"],
+        )
+        result = infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+        assert result["call_genotype"].shape[1] > 0
+
+
 # ---------------------------------------------------------------------------
 # Logging and progress
 # ---------------------------------------------------------------------------
