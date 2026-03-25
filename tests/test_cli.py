@@ -23,16 +23,16 @@ Tests for the tsinfer CLI (click commands).
 from __future__ import annotations
 
 import os
+import pathlib
 import shutil
 import tempfile
-from pathlib import Path
 
+import helpers
 import numpy as np
 import zarr
 from click.testing import CliRunner
-from helpers import make_sample_vcz
 
-from tsinfer.cli import main
+from tsinfer import cli
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -41,7 +41,7 @@ from tsinfer.cli import main
 
 def _write_sample_vcz_to_disk(tmp_dir: str) -> str:
     """Create a sample VCZ on disk and return its path."""
-    store = make_sample_vcz(
+    store = helpers.make_sample_vcz(
         genotypes=np.array([[[0], [1]], [[1], [0]]], dtype=np.int8),
         positions=np.array([100, 200], dtype=np.int32),
         alleles=np.array([["A", "T"], ["A", "T"]]),
@@ -136,13 +136,13 @@ field = "variant_ancestral_allele"
 class TestMainGroup:
     def test_help(self):
         runner = CliRunner()
-        result = runner.invoke(main, ["--help"])
+        result = runner.invoke(cli.main, ["--help"])
         assert result.exit_code == 0
         assert "tsinfer" in result.output
 
     def test_version(self):
         runner = CliRunner()
-        result = runner.invoke(main, ["--version"])
+        result = runner.invoke(cli.main, ["--version"])
         assert result.exit_code == 0
 
 
@@ -157,7 +157,7 @@ class TestConfigShow:
         with tempfile.TemporaryDirectory() as tmp_dir:
             sample_path = _write_sample_vcz_to_disk(tmp_dir)
             config_path = _write_config(tmp_dir, sample_path)
-            result = runner.invoke(main, ["config", "show", config_path])
+            result = runner.invoke(cli.main, ["config", "show", config_path])
             assert result.exit_code == 0, result.output
             assert "[source.test]" in result.output
             assert "[match]" in result.output
@@ -168,7 +168,7 @@ class TestConfigShow:
         with tempfile.TemporaryDirectory() as tmp_dir:
             sample_path = _write_sample_vcz_to_disk(tmp_dir)
             config_path = _write_config(tmp_dir, sample_path)
-            result = runner.invoke(main, ["config", "show", config_path])
+            result = runner.invoke(cli.main, ["config", "show", config_path])
             assert result.exit_code == 0, result.output
             assert "[[ancestors]]" in result.output
 
@@ -184,7 +184,7 @@ class TestConfigCheck:
         with tempfile.TemporaryDirectory() as tmp_dir:
             sample_path = _write_sample_vcz_to_disk(tmp_dir)
             config_path = _write_config(tmp_dir, sample_path)
-            result = runner.invoke(main, ["config", "check", config_path])
+            result = runner.invoke(cli.main, ["config", "check", config_path])
             assert result.exit_code == 0, result.output
 
     def test_check_missing_source_path(self):
@@ -217,7 +217,7 @@ field = "variant_ancestral_allele"
             config_path = os.path.join(tmp_dir, "config.toml")
             with open(config_path, "w") as f:
                 f.write(config_content)
-            result = runner.invoke(main, ["config", "check", config_path])
+            result = runner.invoke(cli.main, ["config", "check", config_path])
             assert result.exit_code != 0
             assert "does not exist" in result.output
 
@@ -228,7 +228,7 @@ field = "variant_ancestral_allele"
             sample_path = _write_sample_vcz_to_disk(tmp_dir)
             config_path = _write_config(tmp_dir, sample_path)
             # ancestors.vcz does not exist on disk — should still pass
-            result = runner.invoke(main, ["config", "check", config_path])
+            result = runner.invoke(cli.main, ["config", "check", config_path])
             assert result.exit_code == 0, result.output
 
     def test_check_unknown_ancestor_source(self):
@@ -265,7 +265,7 @@ field = "variant_ancestral_allele"
             config_path = os.path.join(tmp_dir, "config.toml")
             with open(config_path, "w") as f:
                 f.write(config_content)
-            result = runner.invoke(main, ["config", "check", config_path])
+            result = runner.invoke(cli.main, ["config", "check", config_path])
             assert result.exit_code != 0
             assert "unknown source" in result.output.lower()
 
@@ -281,10 +281,10 @@ class TestRun:
         with tempfile.TemporaryDirectory() as tmp_dir:
             sample_path = _write_sample_vcz_to_disk(tmp_dir)
             config_path = _write_run_config(tmp_dir, sample_path)
-            result = runner.invoke(main, ["run", config_path])
+            result = runner.invoke(cli.main, ["run", config_path])
             assert result.exit_code == 0, result.output
             output_path = os.path.join(tmp_dir, "out.trees")
-            assert Path(output_path).exists()
+            assert pathlib.Path(output_path).exists()
 
     def test_run_force_overwrites(self):
         runner = CliRunner()
@@ -292,16 +292,16 @@ class TestRun:
             sample_path = _write_sample_vcz_to_disk(tmp_dir)
             config_path = _write_run_config(tmp_dir, sample_path)
             # First run
-            result = runner.invoke(main, ["run", config_path])
+            result = runner.invoke(cli.main, ["run", config_path])
             assert result.exit_code == 0, result.output
             # Second run without --force should fail
-            result = runner.invoke(main, ["run", config_path])
+            result = runner.invoke(cli.main, ["run", config_path])
             assert result.exit_code != 0
             assert "already exists" in result.output
             # Remove ancestor store (user's responsibility) then --force
-            anc_path = Path(tmp_dir) / "ancestors.vcz"
+            anc_path = pathlib.Path(tmp_dir) / "ancestors.vcz"
             shutil.rmtree(anc_path)
-            result = runner.invoke(main, ["run", config_path, "--force"])
+            result = runner.invoke(cli.main, ["run", config_path, "--force"])
             assert result.exit_code == 0, result.output
 
     def test_run_verbose(self):
@@ -309,17 +309,17 @@ class TestRun:
         with tempfile.TemporaryDirectory() as tmp_dir:
             sample_path = _write_sample_vcz_to_disk(tmp_dir)
             config_path = _write_run_config(tmp_dir, sample_path)
-            result = runner.invoke(main, ["run", config_path, "-v"])
+            result = runner.invoke(cli.main, ["run", config_path, "-v"])
             assert result.exit_code == 0, result.output
 
     def test_run_nonexistent_config(self):
         runner = CliRunner()
-        result = runner.invoke(main, ["run", "/nonexistent/config.toml"])
+        result = runner.invoke(cli.main, ["run", "/nonexistent/config.toml"])
         assert result.exit_code != 0
 
     def test_cache_size_in_help(self):
         runner = CliRunner()
-        result = runner.invoke(main, ["run", "--help"])
+        result = runner.invoke(cli.main, ["run", "--help"])
         assert "--cache-size" in result.output
 
     def test_run_with_cache_size(self):
@@ -327,10 +327,10 @@ class TestRun:
         with tempfile.TemporaryDirectory() as tmp_dir:
             sample_path = _write_sample_vcz_to_disk(tmp_dir)
             config_path = _write_run_config(tmp_dir, sample_path)
-            result = runner.invoke(main, ["run", config_path, "--cache-size", "128"])
+            result = runner.invoke(cli.main, ["run", config_path, "--cache-size", "128"])
             assert result.exit_code == 0, result.output
             output_path = os.path.join(tmp_dir, "out.trees")
-            assert Path(output_path).exists()
+            assert pathlib.Path(output_path).exists()
 
 
 # ---------------------------------------------------------------------------
@@ -341,7 +341,7 @@ class TestRun:
 class TestInferAncestors:
     def test_help(self):
         runner = CliRunner()
-        result = runner.invoke(main, ["infer-ancestors", "--help"])
+        result = runner.invoke(cli.main, ["infer-ancestors", "--help"])
         assert result.exit_code == 0
         assert "ancestor" in result.output.lower()
 
@@ -354,13 +354,13 @@ class TestInferAncestors:
 class TestMatch:
     def test_help(self):
         runner = CliRunner()
-        result = runner.invoke(main, ["match", "--help"])
+        result = runner.invoke(cli.main, ["match", "--help"])
         assert result.exit_code == 0
         assert "match" in result.output.lower()
 
     def test_cache_size_in_help(self):
         runner = CliRunner()
-        result = runner.invoke(main, ["match", "--help"])
+        result = runner.invoke(cli.main, ["match", "--help"])
         assert "--cache-size" in result.output
 
 
@@ -372,7 +372,7 @@ class TestMatch:
 class TestPostProcess:
     def test_help(self):
         runner = CliRunner()
-        result = runner.invoke(main, ["post-process", "--help"])
+        result = runner.invoke(cli.main, ["post-process", "--help"])
         assert result.exit_code == 0
 
 
@@ -384,7 +384,7 @@ class TestPostProcess:
 class TestAugmentSites:
     def test_help(self):
         runner = CliRunner()
-        result = runner.invoke(main, ["augment-sites", "--help"])
+        result = runner.invoke(cli.main, ["augment-sites", "--help"])
         assert result.exit_code == 0
         assert "--input" in result.output
         assert "--output" in result.output
@@ -394,7 +394,7 @@ class TestAugmentSites:
         runner = CliRunner()
         with tempfile.TemporaryDirectory() as tmp_dir:
             # Create sample VCZ with 2 inference sites + 1 singleton
-            store = make_sample_vcz(
+            store = helpers.make_sample_vcz(
                 genotypes=np.array(
                     [[[0], [1], [1]], [[0], [0], [1]], [[1], [0], [1]]],
                     dtype=np.int8,
@@ -447,14 +447,14 @@ sources = ["augment"]
                 f.write(config_content)
 
             # Run infer-ancestors + match to produce the input TS
-            result = runner.invoke(main, ["infer-ancestors", config_path])
+            result = runner.invoke(cli.main, ["infer-ancestors", config_path])
             assert result.exit_code == 0, result.output
-            result = runner.invoke(main, ["match", config_path])
+            result = runner.invoke(cli.main, ["match", config_path])
             assert result.exit_code == 0, result.output
 
             # Run augment-sites
             result = runner.invoke(
-                main,
+                cli.main,
                 [
                     "augment-sites",
                     config_path,
@@ -465,7 +465,7 @@ sources = ["augment"]
                 ],
             )
             assert result.exit_code == 0, result.output
-            assert Path(augmented_path).exists()
+            assert pathlib.Path(augmented_path).exists()
 
             import tskit
 
@@ -517,9 +517,9 @@ sources = ["augment"]
                 f.write(config_content)
 
             # Produce the input TS
-            result = runner.invoke(main, ["infer-ancestors", config_path])
+            result = runner.invoke(cli.main, ["infer-ancestors", config_path])
             assert result.exit_code == 0, result.output
-            result = runner.invoke(main, ["match", config_path])
+            result = runner.invoke(cli.main, ["match", config_path])
             assert result.exit_code == 0, result.output
 
             args = [
@@ -531,16 +531,16 @@ sources = ["augment"]
                 augmented_path,
             ]
             # First run
-            result = runner.invoke(main, args)
+            result = runner.invoke(cli.main, args)
             assert result.exit_code == 0, result.output
 
             # Second run without --force should fail
-            result = runner.invoke(main, args)
+            result = runner.invoke(cli.main, args)
             assert result.exit_code != 0
             assert "already exists" in result.output
 
             # With --force should succeed
-            result = runner.invoke(main, args + ["--force"])
+            result = runner.invoke(cli.main, args + ["--force"])
             assert result.exit_code == 0, result.output
 
 
@@ -556,14 +556,17 @@ class TestMatchWorkdirCLI:
         with tempfile.TemporaryDirectory() as tmp_dir:
             sample_path = _write_sample_vcz_to_disk(tmp_dir)
             config_path = _write_run_config(tmp_dir, sample_path)
-            result = runner.invoke(main, ["infer-ancestors", config_path])
+            result = runner.invoke(cli.main, ["infer-ancestors", config_path])
             assert result.exit_code == 0, result.output
             workdir = os.path.join(tmp_dir, "workdir")
-            result = runner.invoke(main, ["match", config_path, "--workdir", workdir])
+            result = runner.invoke(
+                cli.main,
+                ["match", config_path, "--workdir", workdir],
+            )
             assert result.exit_code == 0, result.output
             output_path = os.path.join(tmp_dir, "out.trees")
-            assert Path(output_path).exists()
-            assert Path(workdir, "match-jobs.json").exists()
+            assert pathlib.Path(output_path).exists()
+            assert pathlib.Path(workdir, "match-jobs.json").exists()
 
     def test_match_with_keep_intermediates(self):
         """match --workdir --keep-intermediates retains all .trees files."""
@@ -571,11 +574,11 @@ class TestMatchWorkdirCLI:
         with tempfile.TemporaryDirectory() as tmp_dir:
             sample_path = _write_sample_vcz_to_disk(tmp_dir)
             config_path = _write_run_config(tmp_dir, sample_path)
-            result = runner.invoke(main, ["infer-ancestors", config_path])
+            result = runner.invoke(cli.main, ["infer-ancestors", config_path])
             assert result.exit_code == 0, result.output
             workdir = os.path.join(tmp_dir, "workdir")
             result = runner.invoke(
-                main,
+                cli.main,
                 [
                     "match",
                     config_path,
@@ -585,7 +588,7 @@ class TestMatchWorkdirCLI:
                 ],
             )
             assert result.exit_code == 0, result.output
-            trees_files = list(Path(workdir).glob("group_*.trees"))
+            trees_files = list(pathlib.Path(workdir).glob("group_*.trees"))
             assert len(trees_files) >= 1
 
 
@@ -596,13 +599,16 @@ class TestShowMatchJobs:
         with tempfile.TemporaryDirectory() as tmp_dir:
             sample_path = _write_sample_vcz_to_disk(tmp_dir)
             config_path = _write_run_config(tmp_dir, sample_path)
-            result = runner.invoke(main, ["infer-ancestors", config_path])
+            result = runner.invoke(cli.main, ["infer-ancestors", config_path])
             assert result.exit_code == 0, result.output
             workdir = os.path.join(tmp_dir, "workdir")
-            result = runner.invoke(main, ["match", config_path, "--workdir", workdir])
+            result = runner.invoke(
+                cli.main,
+                ["match", config_path, "--workdir", workdir],
+            )
             assert result.exit_code == 0, result.output
             json_path = os.path.join(workdir, "match-jobs.json")
-            result = runner.invoke(main, ["show-match-jobs", json_path])
+            result = runner.invoke(cli.main, ["show-match-jobs", json_path])
             assert result.exit_code == 0, result.output
             assert "Group" in result.output
             assert "Chunks" in result.output

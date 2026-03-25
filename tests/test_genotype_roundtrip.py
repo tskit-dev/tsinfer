@@ -27,22 +27,12 @@ multi-allelic sites as well.
 
 from __future__ import annotations
 
+import helpers
 import msprime
 import numpy as np
 import pytest
-from helpers import make_sample_vcz, ts_to_sample_vcz
 
-from tsinfer.config import (
-    AncestorsConfig,
-    AncestralState,
-    AugmentSitesConfig,
-    Config,
-    MatchConfig,
-    MatchSourceConfig,
-    PostProcessConfig,
-    Source,
-)
-from tsinfer.pipeline import run
+from tsinfer import config, pipeline
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -50,27 +40,31 @@ from tsinfer.pipeline import run
 
 
 def _anc_state(store):
-    return AncestralState(path=store, field="variant_ancestral_allele")
+    return config.AncestralState(path=store, field="variant_ancestral_allele")
 
 
 def _run_pipeline(sample_store):
     """Build config, run full pipeline, return output tree sequence."""
-    src = Source(path=sample_store, name="test")
-    anc_src = Source(path=None, name="ancestors", sample_time="sample_time")
-    cfg = Config(
+    src = config.Source(path=sample_store, name="test")
+    anc_src = config.Source(path=None, name="ancestors", sample_time="sample_time")
+    cfg = config.Config(
         sources={"test": src, "ancestors": anc_src},
-        ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
-        match=MatchConfig(
+        ancestors=[
+            config.AncestorsConfig(name="ancestors", path=None, sources=["test"])
+        ],
+        match=config.MatchConfig(
             sources={
-                "ancestors": MatchSourceConfig(node_flags=0, create_individuals=False),
-                "test": MatchSourceConfig(),
+                "ancestors": config.MatchSourceConfig(
+                    node_flags=0, create_individuals=False
+                ),
+                "test": config.MatchSourceConfig(),
             },
             output="output.trees",
         ),
-        post_process=PostProcessConfig(),
+        post_process=config.PostProcessConfig(),
         ancestral_state=_anc_state(sample_store),
     )
-    return run(cfg)
+    return pipeline.run(cfg)
 
 
 def _run_pipeline_with_augment(sample_store, augment_store=None, ann_store=None):
@@ -86,28 +80,32 @@ def _run_pipeline_with_augment(sample_store, augment_store=None, ann_store=None)
         augment_store = sample_store
     if ann_store is None:
         ann_store = sample_store
-    src = Source(path=sample_store, name="test")
-    aug_src = Source(path=augment_store, name="augment")
-    anc_src = Source(path=None, name="ancestors", sample_time="sample_time")
-    cfg = Config(
+    src = config.Source(path=sample_store, name="test")
+    aug_src = config.Source(path=augment_store, name="augment")
+    anc_src = config.Source(path=None, name="ancestors", sample_time="sample_time")
+    cfg = config.Config(
         sources={
             "test": src,
             "augment": aug_src,
             "ancestors": anc_src,
         },
-        ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
-        match=MatchConfig(
+        ancestors=[
+            config.AncestorsConfig(name="ancestors", path=None, sources=["test"])
+        ],
+        match=config.MatchConfig(
             sources={
-                "ancestors": MatchSourceConfig(node_flags=0, create_individuals=False),
-                "test": MatchSourceConfig(),
+                "ancestors": config.MatchSourceConfig(
+                    node_flags=0, create_individuals=False
+                ),
+                "test": config.MatchSourceConfig(),
             },
             output="output.trees",
         ),
-        post_process=PostProcessConfig(),
-        augment_sites=AugmentSitesConfig(sources=["augment"]),
+        post_process=config.PostProcessConfig(),
+        augment_sites=config.AugmentSitesConfig(sources=["augment"]),
         ancestral_state=_anc_state(ann_store),
     )
-    return run(cfg)
+    return pipeline.run(cfg)
 
 
 def _check_genotypes(input_store, output_ts, ploidy=1, check_all=False):
@@ -204,7 +202,7 @@ class TestGenotypeRoundtrip:
         alleles = np.array([["A", "T"], ["C", "G"]])
         ancestral = np.array(["A", "C"])
 
-        store = make_sample_vcz(
+        store = helpers.make_sample_vcz(
             genotypes=genotypes,
             positions=positions,
             alleles=alleles,
@@ -228,7 +226,7 @@ class TestGenotypeRoundtrip:
         alleles = np.array([["A", "T"], ["C", "G"], ["T", "A"]])
         ancestral = np.array(["A", "C", "T"])
 
-        store = make_sample_vcz(
+        store = helpers.make_sample_vcz(
             genotypes=genotypes,
             positions=positions,
             alleles=alleles,
@@ -252,7 +250,7 @@ class TestGenotypeRoundtrip:
         alleles = np.array([["A", "T"], ["C", "G"]])
         ancestral = np.array(["T", "G"])
 
-        store = make_sample_vcz(
+        store = helpers.make_sample_vcz(
             genotypes=genotypes,
             positions=positions,
             alleles=alleles,
@@ -271,7 +269,7 @@ class TestGenotypeRoundtrip:
             random_seed=1,
         )
         assert sim_ts.num_sites > 0, "Simulation produced no sites"
-        store = ts_to_sample_vcz(sim_ts)
+        store = helpers.ts_to_sample_vcz(sim_ts)
         ts = _run_pipeline(store)
         _check_genotypes(store, ts, ploidy=1)
 
@@ -284,7 +282,7 @@ class TestGenotypeRoundtrip:
             random_seed=2,
         )
         assert sim_ts.num_sites > 0, "Simulation produced no sites"
-        store = ts_to_sample_vcz(sim_ts)
+        store = helpers.ts_to_sample_vcz(sim_ts)
         ts = _run_pipeline(store)
         _check_genotypes(store, ts, ploidy=2)
 
@@ -297,7 +295,7 @@ class TestGenotypeRoundtrip:
             random_seed=3,
         )
         assert sim_ts.num_sites > 0, "Simulation produced no sites"
-        store = ts_to_sample_vcz(sim_ts)
+        store = helpers.ts_to_sample_vcz(sim_ts)
         ts = _run_pipeline(store)
         _check_genotypes(store, ts, ploidy=1)
 
@@ -310,7 +308,7 @@ class TestGenotypeRoundtrip:
             random_seed=4,
         )
         assert sim_ts.num_sites > 0, "Simulation produced no sites"
-        store = ts_to_sample_vcz(sim_ts)
+        store = helpers.ts_to_sample_vcz(sim_ts)
         ts = _run_pipeline(store)
 
         alleles = store["variant_allele"][:]
@@ -335,7 +333,7 @@ class TestGenotypeRoundtrip:
         )
         if sim_ts.num_sites == 0:
             pytest.skip("Simulation produced no sites with this seed")
-        store = ts_to_sample_vcz(sim_ts)
+        store = helpers.ts_to_sample_vcz(sim_ts)
         ts = _run_pipeline(store)
         _check_genotypes(store, ts, ploidy=1)
 
@@ -361,7 +359,7 @@ class TestAugmentedRoundtrip:
         alleles = np.array([["A", "T"], ["C", "G"], ["A", "T"]])
         ancestral = np.array(["A", "C", "A"])
 
-        store = make_sample_vcz(
+        store = helpers.make_sample_vcz(
             genotypes=genotypes,
             positions=positions,
             alleles=alleles,
@@ -393,7 +391,7 @@ class TestAugmentedRoundtrip:
         alleles = np.array([["A", "T", ""], ["C", "G", "T"], ["A", "T", ""]])
         ancestral = np.array(["A", "C", "A"])
 
-        store = make_sample_vcz(
+        store = helpers.make_sample_vcz(
             genotypes=genotypes,
             positions=positions,
             alleles=alleles,
@@ -428,7 +426,7 @@ class TestAugmentedRoundtrip:
         )
         ancestral = np.array(["A", "C", "A", "C"])
 
-        store = make_sample_vcz(
+        store = helpers.make_sample_vcz(
             genotypes=genotypes,
             positions=positions,
             alleles=alleles,
@@ -457,7 +455,7 @@ class TestAugmentedRoundtrip:
         alleles = np.array([["A", "T"], ["C", "G"], ["A", "T"]])
         ancestral = np.array(["A", "C", "A"])
 
-        store = make_sample_vcz(
+        store = helpers.make_sample_vcz(
             genotypes=genotypes,
             positions=positions,
             alleles=alleles,
@@ -487,7 +485,7 @@ class TestAugmentedRoundtrip:
         alleles = np.array([["A", "T"], ["C", "G"], ["A", "T"]])
         ancestral = np.array(["A", "C", "A"])
 
-        store = make_sample_vcz(
+        store = helpers.make_sample_vcz(
             genotypes=genotypes,
             positions=positions,
             alleles=alleles,
@@ -510,7 +508,7 @@ class TestAugmentedRoundtrip:
         """Sites at duplicate positions within a source are excluded."""
         # 2 inference sites + 2 sites at the same position (200)
         # in the augment source — both should be skipped.
-        main_store = make_sample_vcz(
+        main_store = helpers.make_sample_vcz(
             genotypes=np.array([[[0], [1], [1]], [[1], [0], [1]]], dtype=np.int8),
             positions=np.array([100, 300], dtype=np.int32),
             alleles=np.array([["A", "T"], ["C", "G"]]),
@@ -518,7 +516,7 @@ class TestAugmentedRoundtrip:
             sequence_length=1000,
         )
         # Augment source has a duplicate position at 200
-        aug_store = make_sample_vcz(
+        aug_store = helpers.make_sample_vcz(
             genotypes=np.array([[[0], [1], [0]], [[1], [0], [1]]], dtype=np.int8),
             positions=np.array([200, 200], dtype=np.int32),
             alleles=np.array([["A", "T"], ["C", "G"]]),
@@ -533,7 +531,7 @@ class TestAugmentedRoundtrip:
 
     def test_duplicate_positions_other_sites_kept(self):
         """Non-duplicate sites from a source with some duplicates are kept."""
-        main_store = make_sample_vcz(
+        main_store = helpers.make_sample_vcz(
             genotypes=np.array([[[0], [1], [1]], [[1], [0], [1]]], dtype=np.int8),
             positions=np.array([100, 400], dtype=np.int32),
             alleles=np.array([["A", "T"], ["C", "G"]]),
@@ -541,7 +539,7 @@ class TestAugmentedRoundtrip:
             sequence_length=1000,
         )
         # Augment source: position 200 is duplicated, but 300 is unique
-        aug_store = make_sample_vcz(
+        aug_store = helpers.make_sample_vcz(
             genotypes=np.array(
                 [
                     [[0], [1], [0]],
@@ -556,7 +554,7 @@ class TestAugmentedRoundtrip:
             sequence_length=1000,
         )
         # Combined annotation store covering all positions
-        ann_store = make_sample_vcz(
+        ann_store = helpers.make_sample_vcz(
             genotypes=np.zeros((4, 1, 1), dtype=np.int8),
             positions=np.array([100, 200, 300, 400], dtype=np.int32),
             alleles=np.array([["A", "T"], ["A", "T"], ["A", "G"], ["C", "G"]]),
@@ -594,7 +592,7 @@ class TestAugmentedRoundtrip:
         # Ancestral allele at position 200 is "A" (allele 0), the minority
         ancestral = np.array(["A", "A", "C"])
 
-        store = make_sample_vcz(
+        store = helpers.make_sample_vcz(
             genotypes=genotypes,
             positions=positions,
             alleles=alleles,
@@ -623,7 +621,7 @@ class TestAugmentedRoundtrip:
             random_seed=100,
         )
         assert sim_ts.num_sites > 0, "Simulation produced no sites"
-        store = ts_to_sample_vcz(sim_ts)
+        store = helpers.ts_to_sample_vcz(sim_ts)
         ts = _run_pipeline_with_augment(store)
         # Augmented output should have at least as many sites
         assert ts.num_sites >= 1
@@ -638,7 +636,7 @@ class TestAugmentedRoundtrip:
             random_seed=101,
         )
         assert sim_ts.num_sites > 0, "Simulation produced no sites"
-        store = ts_to_sample_vcz(sim_ts)
+        store = helpers.ts_to_sample_vcz(sim_ts)
 
         ts = _run_pipeline_with_augment(store)
         _check_genotypes(store, ts, ploidy=2, check_all=True)
@@ -654,7 +652,7 @@ class TestAugmentedRoundtrip:
         )
         if sim_ts.num_sites == 0:
             pytest.skip("Simulation produced no sites with this seed")
-        store = ts_to_sample_vcz(sim_ts)
+        store = helpers.ts_to_sample_vcz(sim_ts)
         ts = _run_pipeline_with_augment(store)
         _check_genotypes(store, ts, ploidy=1, check_all=True)
 
@@ -672,7 +670,7 @@ class TestAugmentedRoundtrip:
             random_seed=seed,
         )
         assert sim_ts.num_sites > 0, "Simulation produced no sites"
-        store = ts_to_sample_vcz(sim_ts)
+        store = helpers.ts_to_sample_vcz(sim_ts)
         ts = _run_pipeline_with_augment(store)
 
         gt = store["call_genotype"][:]

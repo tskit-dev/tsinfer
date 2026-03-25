@@ -25,22 +25,12 @@ from __future__ import annotations
 import threading
 import time
 
+import helpers
 import numpy as np
 import pytest
 import zarr
-from helpers import make_sample_vcz
 
-from tsinfer.grouping import MatchJob
-from tsinfer.vcz import (
-    AlleleMapper,
-    HaplotypeReader,
-    ScheduledCache,
-    VCZHaplotypeReader,
-    num_contigs,
-    open_store,
-    resolve_field,
-    sequence_length,
-)
+from tsinfer import config, grouping, vcz
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -51,7 +41,7 @@ from tsinfer.vcz import (
 def sample_store():
     """A small in-memory sample VCZ with 3 sites and 2 diploid samples."""
     gt = np.array([[[0, 1], [1, 0]], [[1, 1], [0, 0]], [[0, 0], [1, 1]]], dtype=np.int8)
-    return make_sample_vcz(
+    return helpers.make_sample_vcz(
         gt,
         positions=[100, 300, 500],
         alleles=[["A", "T"], ["C", "G"], ["A", "C"]],
@@ -66,12 +56,12 @@ def sample_store():
 def _make_annotation_vcz(positions, field_name, values):
     """
     Build a minimal annotation VCZ containing variant_position and one field.
-    Uses make_sample_vcz with dummy genotypes so the _ARRAY_DIMENSIONS attrs
+    Uses helpers.make_sample_vcz with dummy genotypes so the _ARRAY_DIMENSIONS attrs
     are set correctly, then adds the extra field manually.
     """
     n = len(positions)
     gt = np.zeros((n, 1, 1), dtype=np.int8)
-    store = make_sample_vcz(
+    store = helpers.make_sample_vcz(
         gt,
         positions=positions,
         alleles=[["A", "T"]] * n,
@@ -89,7 +79,7 @@ def _make_annotation_vcz(positions, field_name, values):
 
 class TestOpenStore:
     def test_passthrough_zarr_group(self, sample_store):
-        result = open_store(sample_store)
+        result = vcz.open_store(sample_store)
         assert result is sample_store
 
     def test_opens_path_on_disk(self, tmp_path):
@@ -97,7 +87,7 @@ class TestOpenStore:
         store_path = tmp_path / "test.vcz"
         root = zarr.open_group(str(store_path), mode="w", zarr_format=2)
         root.create_array("x", data=np.array([1, 2, 3]))
-        opened = open_store(store_path)
+        opened = vcz.open_store(store_path)
         assert isinstance(opened, zarr.Group)
         np.testing.assert_array_equal(opened["x"][:], [1, 2, 3])
 
@@ -105,7 +95,7 @@ class TestOpenStore:
         store_path = tmp_path / "test.vcz"
         root = zarr.open_group(str(store_path), mode="w", zarr_format=2)
         root.create_array("y", data=np.array([7]))
-        opened = open_store(str(store_path))
+        opened = vcz.open_store(str(store_path))
         assert isinstance(opened, zarr.Group)
 
 
@@ -116,7 +106,7 @@ class TestOpenStore:
 
 class TestResolveFieldNone:
     def test_none_returns_none(self, sample_store):
-        assert resolve_field(sample_store, None, "variant_position", 3) is None
+        assert vcz.resolve_field(sample_store, None, "variant_position", 3) is None
 
 
 # ---------------------------------------------------------------------------
@@ -126,16 +116,16 @@ class TestResolveFieldNone:
 
 class TestResolveFieldString:
     def test_site_mask_from_store(self, sample_store):
-        result = resolve_field(sample_store, "site_mask", "variant_position", 3)
+        result = vcz.resolve_field(sample_store, "site_mask", "variant_position", 3)
         np.testing.assert_array_equal(result, [False, True, False])
 
     def test_sample_time_from_store(self, sample_store):
-        result = resolve_field(sample_store, "sample_time", "sample_id", 2)
+        result = vcz.resolve_field(sample_store, "sample_time", "sample_id", 2)
         np.testing.assert_array_almost_equal(result, [0.0, 1.5])
 
     def test_missing_field_raises(self, sample_store):
         with pytest.raises((KeyError, Exception)):
-            resolve_field(sample_store, "no_such_field", "variant_position", 3)
+            vcz.resolve_field(sample_store, "no_such_field", "variant_position", 3)
 
 
 # ---------------------------------------------------------------------------
@@ -145,17 +135,17 @@ class TestResolveFieldString:
 
 class TestResolveFieldScalar:
     def test_integer_scalar(self, sample_store):
-        result = resolve_field(sample_store, 1, "variant_position", 3)
+        result = vcz.resolve_field(sample_store, 1, "variant_position", 3)
         np.testing.assert_array_equal(result, [1, 1, 1])
         assert len(result) == 3
 
     def test_float_scalar(self, sample_store):
-        result = resolve_field(sample_store, 2.5, "sample_id", 2)
+        result = vcz.resolve_field(sample_store, 2.5, "sample_id", 2)
         np.testing.assert_array_almost_equal(result, [2.5, 2.5])
         assert len(result) == 2
 
     def test_zero_scalar(self, sample_store):
-        result = resolve_field(sample_store, 0, "variant_position", 3)
+        result = vcz.resolve_field(sample_store, 0, "variant_position", 3)
         np.testing.assert_array_equal(result, [0, 0, 0])
 
 
@@ -173,7 +163,7 @@ class TestResolveFieldDictPosition:
             values=[False, True, False],
         )
         spec = {"path": ann, "field": "filter_flag"}
-        result = resolve_field(sample_store, spec, "variant_position", 3)
+        result = vcz.resolve_field(sample_store, spec, "variant_position", 3)
         np.testing.assert_array_equal(result, [False, True, False])
 
     def test_partial_match_fills_missing(self, sample_store):
@@ -184,7 +174,7 @@ class TestResolveFieldDictPosition:
             values=[True, True],
         )
         spec = {"path": ann, "field": "filter_flag"}
-        result = resolve_field(
+        result = vcz.resolve_field(
             sample_store, spec, "variant_position", 3, fill_value=False
         )
         np.testing.assert_array_equal(result, [True, False, True])
@@ -197,7 +187,7 @@ class TestResolveFieldDictPosition:
             values=[True],
         )
         spec = {"path": ann, "field": "flag"}
-        result = resolve_field(
+        result = vcz.resolve_field(
             sample_store, spec, "variant_position", 3, fill_value=False
         )
         np.testing.assert_array_equal(result, [False, False, False])
@@ -209,7 +199,9 @@ class TestResolveFieldDictPosition:
             values=[1.0, 2.0, 3.0],
         )
         spec = {"path": ann, "field": "score"}
-        result = resolve_field(sample_store, spec, "variant_position", 3, fill_value=0.0)
+        result = vcz.resolve_field(
+            sample_store, spec, "variant_position", 3, fill_value=0.0
+        )
         np.testing.assert_array_almost_equal(result, [1.0, 2.0, 3.0])
 
     def test_fill_value_default_is_none(self, sample_store):
@@ -219,7 +211,7 @@ class TestResolveFieldDictPosition:
             values=[True],
         )
         spec = {"path": ann, "field": "flag"}
-        result = resolve_field(sample_store, spec, "variant_position", 3)
+        result = vcz.resolve_field(sample_store, spec, "variant_position", 3)
         # positions 300 and 500 have no match → fill with None
         assert result[1] is None
         assert result[2] is None
@@ -233,7 +225,7 @@ class TestResolveFieldDictPosition:
 class TestResolveFieldDictSampleId:
     def test_all_samples_match(self, sample_store):
         gt = np.zeros((1, 2, 1), dtype=np.int8)
-        ann = make_sample_vcz(
+        ann = helpers.make_sample_vcz(
             gt,
             positions=[1],
             alleles=[["A", "T"]],
@@ -243,13 +235,13 @@ class TestResolveFieldDictSampleId:
             age=np.array([10.0, 20.0]),
         )
         spec = {"path": ann, "field": "age"}
-        result = resolve_field(sample_store, spec, "sample_id", 2, fill_value=0.0)
+        result = vcz.resolve_field(sample_store, spec, "sample_id", 2, fill_value=0.0)
         np.testing.assert_array_almost_equal(result, [10.0, 20.0])
 
     def test_partial_match_fills_missing(self, sample_store):
         # Annotation only has s0
         gt = np.zeros((1, 1, 1), dtype=np.int8)
-        ann = make_sample_vcz(
+        ann = helpers.make_sample_vcz(
             gt,
             positions=[1],
             alleles=[["A", "T"]],
@@ -259,7 +251,7 @@ class TestResolveFieldDictSampleId:
             age=np.array([5.0]),
         )
         spec = {"path": ann, "field": "age"}
-        result = resolve_field(sample_store, spec, "sample_id", 2, fill_value=0.0)
+        result = vcz.resolve_field(sample_store, spec, "sample_id", 2, fill_value=0.0)
         np.testing.assert_array_almost_equal(result, [5.0, 0.0])
 
 
@@ -271,15 +263,15 @@ class TestResolveFieldDictSampleId:
 class TestResolveFieldErrors:
     def test_invalid_type_raises(self, sample_store):
         with pytest.raises(TypeError):
-            resolve_field(sample_store, [1, 2, 3], "variant_position", 3)
+            vcz.resolve_field(sample_store, [1, 2, 3], "variant_position", 3)
 
     def test_dict_missing_path_raises(self, sample_store):
         with pytest.raises(ValueError, match="path"):
-            resolve_field(sample_store, {"field": "x"}, "variant_position", 3)
+            vcz.resolve_field(sample_store, {"field": "x"}, "variant_position", 3)
 
     def test_dict_missing_field_raises(self, sample_store):
         with pytest.raises(ValueError, match="field"):
-            resolve_field(sample_store, {"path": "ann.vcz"}, "variant_position", 3)
+            vcz.resolve_field(sample_store, {"path": "ann.vcz"}, "variant_position", 3)
 
 
 # ---------------------------------------------------------------------------
@@ -289,15 +281,17 @@ class TestResolveFieldErrors:
 
 class TestConvenienceAccessors:
     def test_sequence_length(self, sample_store):
-        assert sequence_length(sample_store) == 1000
+        assert vcz.sequence_length(sample_store) == 1000
 
     def test_num_contigs(self, sample_store):
-        assert num_contigs(sample_store) == 1
+        assert vcz.num_contigs(sample_store) == 1
 
     def test_sequence_length_custom(self):
         gt = np.zeros((1, 1, 1), dtype=np.int8)
-        store = make_sample_vcz(gt, [10], [["A", "T"]], ["A"], sequence_length=999_999)
-        assert sequence_length(store) == 999_999
+        store = helpers.make_sample_vcz(
+            gt, [10], [["A", "T"]], ["A"], sequence_length=999_999
+        )
+        assert vcz.sequence_length(store) == 999_999
 
 
 # ---------------------------------------------------------------------------
@@ -307,12 +301,10 @@ class TestConvenienceAccessors:
 
 def _make_ancestor_and_sample_stores():
     """Build minimal ancestor and sample VCZ stores for HaplotypeReader tests."""
-    from helpers import make_ancestor_vcz
-
     positions = np.array([100, 200, 300], dtype=np.int32)
     # 2 ancestors: a0 = [0, 1, 0], a1 = [1, 0, 1]
     anc_gt = np.array([[[0], [1]], [[1], [0]], [[0], [1]]], dtype=np.int8)
-    anc_store = make_ancestor_vcz(
+    anc_store = helpers.make_ancestor_vcz(
         genotypes=anc_gt,
         positions=positions,
         alleles=np.array([["A", "T"], ["C", "G"], ["A", "C"]]),
@@ -325,17 +317,18 @@ def _make_ancestor_and_sample_stores():
     # sample_0: A, G, C → gt [0, 1, 1]
     # sample_1: T, C, A → gt [1, 0, 0]
     sample_gt = np.array([[[0], [1]], [[1], [0]], [[1], [0]]], dtype=np.int8)
-    from tsinfer.config import Source
 
-    sample_store = make_sample_vcz(
+    sample_store = helpers.make_sample_vcz(
         genotypes=sample_gt,
         positions=positions,
         alleles=np.array([["A", "T"], ["C", "G"], ["A", "C"]]),
         ancestral_state=np.array(["A", "C", "A"]),
         sequence_length=1000,
     )
-    source = Source(path=sample_store, name="test")
-    anc_source = Source(path=anc_store, name="ancestors", sample_time="sample_time")
+    source = config.Source(path=sample_store, name="test")
+    anc_source = config.Source(
+        path=anc_store, name="ancestors", sample_time="sample_time"
+    )
     ancestral_alleles = np.asarray(anc_store["variant_allele"][:])[:, 0]
     return anc_store, sample_store, source, anc_source, positions, ancestral_alleles
 
@@ -346,14 +339,14 @@ class TestHaplotypeReader:
             _make_ancestor_and_sample_stores()
         )
         schedule = [("ancestors", "a0", 0)]
-        reader = HaplotypeReader(
+        reader = vcz.HaplotypeReader(
             {"ancestors": anc_source, "test": source},
             positions,
             anc_alleles,
             schedule=schedule,
         )
         # a0 has genotype [0, 1, 0]
-        job = MatchJob(
+        job = grouping.MatchJob(
             haplotype_index=1,
             source="ancestors",
             sample_id="a0",
@@ -371,14 +364,14 @@ class TestHaplotypeReader:
             _make_ancestor_and_sample_stores()
         )
         schedule = [("ancestors", "a1", 0)]
-        reader = HaplotypeReader(
+        reader = vcz.HaplotypeReader(
             {"ancestors": anc_source, "test": source},
             positions,
             anc_alleles,
             schedule=schedule,
         )
         # a1 has genotype [1, 0, 1]
-        job = MatchJob(
+        job = grouping.MatchJob(
             haplotype_index=2,
             source="ancestors",
             sample_id="a1",
@@ -396,14 +389,14 @@ class TestHaplotypeReader:
             _make_ancestor_and_sample_stores()
         )
         schedule = [("test", "sample_0", 0)]
-        reader = HaplotypeReader(
+        reader = vcz.HaplotypeReader(
             {"ancestors": anc_source, "test": source},
             positions,
             anc_alleles,
             schedule=schedule,
         )
         # sample_0: gt [0, 1, 1] → encoded [0=anc, 1=derived, 1=derived]
-        job = MatchJob(
+        job = grouping.MatchJob(
             haplotype_index=3,
             source="test",
             sample_id="sample_0",
@@ -421,14 +414,14 @@ class TestHaplotypeReader:
             _make_ancestor_and_sample_stores()
         )
         schedule = [("test", "sample_1", 0)]
-        reader = HaplotypeReader(
+        reader = vcz.HaplotypeReader(
             {"ancestors": anc_source, "test": source},
             positions,
             anc_alleles,
             schedule=schedule,
         )
         # sample_1: gt [1, 0, 0] → encoded [1=derived, 0=anc, 0=anc]
-        job = MatchJob(
+        job = grouping.MatchJob(
             haplotype_index=4,
             source="test",
             sample_id="sample_1",
@@ -443,12 +436,9 @@ class TestHaplotypeReader:
 
     def test_missing_genotype_encoded_as_minus_one(self):
         """Missing genotypes (-1 in call_genotype) should encode as -1."""
-        from helpers import make_ancestor_vcz
-
-        from tsinfer.config import Source
 
         positions = np.array([100, 200], dtype=np.int32)
-        anc_store = make_ancestor_vcz(
+        anc_store = helpers.make_ancestor_vcz(
             genotypes=np.array([[[0]], [[0]]], dtype=np.int8),
             positions=positions,
             alleles=np.array([["A", "T"], ["A", "T"]]),
@@ -458,24 +448,26 @@ class TestHaplotypeReader:
         )
         # Sample with missing data at site 0
         sample_gt = np.array([[[-1]], [[0]]], dtype=np.int8)
-        sample_store = make_sample_vcz(
+        sample_store = helpers.make_sample_vcz(
             genotypes=sample_gt,
             positions=positions,
             alleles=np.array([["A", "T"], ["A", "T"]]),
             ancestral_state=np.array(["A", "A"]),
             sequence_length=1000,
         )
-        source = Source(path=sample_store, name="test")
-        anc_source = Source(path=anc_store, name="ancestors", sample_time="sample_time")
+        source = config.Source(path=sample_store, name="test")
+        anc_source = config.Source(
+            path=anc_store, name="ancestors", sample_time="sample_time"
+        )
         anc_alleles = np.asarray(anc_store["variant_allele"][:])[:, 0]
         schedule = [("test", "sample_0", 0)]
-        reader = HaplotypeReader(
+        reader = vcz.HaplotypeReader(
             {"ancestors": anc_source, "test": source},
             positions,
             anc_alleles,
             schedule=schedule,
         )
-        job = MatchJob(
+        job = grouping.MatchJob(
             haplotype_index=2,
             source="test",
             sample_id="sample_0",
@@ -491,12 +483,9 @@ class TestHaplotypeReader:
 
     def test_multiple_sources(self):
         """HaplotypeReader handles multiple source names correctly."""
-        from helpers import make_ancestor_vcz
-
-        from tsinfer.config import Source
 
         positions = np.array([100, 200], dtype=np.int32)
-        anc_store = make_ancestor_vcz(
+        anc_store = helpers.make_ancestor_vcz(
             genotypes=np.array([[[0]], [[0]]], dtype=np.int8),
             positions=positions,
             alleles=np.array([["A", "T"], ["A", "T"]]),
@@ -505,14 +494,14 @@ class TestHaplotypeReader:
             sequence_intervals=np.array([[100, 200]], dtype=np.int32),
         )
         # Two different sample stores
-        store_a = make_sample_vcz(
+        store_a = helpers.make_sample_vcz(
             genotypes=np.array([[[0]], [[1]]], dtype=np.int8),
             positions=positions,
             alleles=np.array([["A", "T"], ["A", "T"]]),
             ancestral_state=np.array(["A", "A"]),
             sequence_length=1000,
         )
-        store_b = make_sample_vcz(
+        store_b = helpers.make_sample_vcz(
             genotypes=np.array([[[1]], [[0]]], dtype=np.int8),
             positions=positions,
             alleles=np.array([["A", "T"], ["A", "T"]]),
@@ -520,17 +509,17 @@ class TestHaplotypeReader:
             sequence_length=1000,
         )
         sources = {
-            "ancestors": Source(
+            "ancestors": config.Source(
                 path=anc_store, name="ancestors", sample_time="sample_time"
             ),
-            "src_a": Source(path=store_a, name="src_a"),
-            "src_b": Source(path=store_b, name="src_b"),
+            "src_a": config.Source(path=store_a, name="src_a"),
+            "src_b": config.Source(path=store_b, name="src_b"),
         }
         anc_alleles = np.asarray(anc_store["variant_allele"][:])[:, 0]
         schedule = [("src_a", "sample_0", 0), ("src_b", "sample_0", 0)]
-        reader = HaplotypeReader(sources, positions, anc_alleles, schedule=schedule)
+        reader = vcz.HaplotypeReader(sources, positions, anc_alleles, schedule=schedule)
 
-        job_a = MatchJob(
+        job_a = grouping.MatchJob(
             haplotype_index=2,
             source="src_a",
             sample_id="sample_0",
@@ -540,7 +529,7 @@ class TestHaplotypeReader:
             end_position=200,
             group=2,
         )
-        job_b = MatchJob(
+        job_b = grouping.MatchJob(
             haplotype_index=3,
             source="src_b",
             sample_id="sample_0",
@@ -561,7 +550,7 @@ class TestHaplotypeReader:
             _make_ancestor_and_sample_stores()
         )
         with pytest.raises(ValueError, match="cannot fit a single chunk"):
-            HaplotypeReader(
+            vcz.HaplotypeReader(
                 {"ancestors": anc_source, "test": source},
                 positions,
                 anc_alleles,
@@ -573,7 +562,7 @@ class TestHaplotypeReader:
         anc_store, sample_store, source, anc_source, positions, anc_alleles = (
             _make_ancestor_and_sample_stores()
         )
-        reader = HaplotypeReader(
+        reader = vcz.HaplotypeReader(
             {"ancestors": anc_source, "test": source},
             positions,
             anc_alleles,
@@ -586,7 +575,7 @@ class TestHaplotypeReader:
         anc_store, sample_store, source, anc_source, positions, anc_alleles = (
             _make_ancestor_and_sample_stores()
         )
-        reader = HaplotypeReader(
+        reader = vcz.HaplotypeReader(
             {"ancestors": anc_source, "test": source},
             positions,
             anc_alleles,
@@ -598,19 +587,19 @@ class TestHaplotypeReader:
         anc_store, sample_store, source, anc_source, positions, anc_alleles = (
             _make_ancestor_and_sample_stores()
         )
-        reader = HaplotypeReader(
+        reader = vcz.HaplotypeReader(
             {"ancestors": anc_source, "test": source},
             positions,
             anc_alleles,
         )
-        assert isinstance(reader.allele_mapper, AlleleMapper)
+        assert isinstance(reader.allele_mapper, vcz.AlleleMapper)
 
     def test_get_num_alleles(self):
         """get_num_alleles returns per-site allele counts."""
         anc_store, sample_store, source, anc_source, positions, anc_alleles = (
             _make_ancestor_and_sample_stores()
         )
-        reader = HaplotypeReader(
+        reader = vcz.HaplotypeReader(
             {"ancestors": anc_source, "test": source},
             positions,
             anc_alleles,
@@ -642,7 +631,7 @@ def _make_cache_for_reader(reader, sample_ids, max_bytes=1024 * 1024):
         if key not in seen:
             chunk_order.append(key)
             seen.add(key)
-    cache = ScheduledCache(max_bytes, refcounts, chunk_order)
+    cache = vcz.ScheduledCache(max_bytes, refcounts, chunk_order)
     cache.register_loader(reader._source_name, reader._do_load_chunk, reader.chunk_bytes)
     cache.start()
     return cache
@@ -652,7 +641,7 @@ class TestVCZHaplotypeReader:
     def test_ancestor_store_direct(self):
         """VCZHaplotypeReader reads ancestor haplotypes correctly."""
         anc_store, _, _, _, positions, anc_alleles = _make_ancestor_and_sample_stores()
-        reader = VCZHaplotypeReader(
+        reader = vcz.VCZHaplotypeReader(
             anc_store,
             positions,
             anc_alleles,
@@ -669,7 +658,7 @@ class TestVCZHaplotypeReader:
         _, sample_store, _, _, positions, anc_alleles = (
             _make_ancestor_and_sample_stores()
         )
-        reader = VCZHaplotypeReader(
+        reader = vcz.VCZHaplotypeReader(
             sample_store,
             positions,
             anc_alleles,
@@ -687,7 +676,7 @@ class TestVCZHaplotypeReader:
         anc_store, sample_store, _, _, positions, anc_alleles = (
             _make_ancestor_and_sample_stores()
         )
-        reader = VCZHaplotypeReader(
+        reader = vcz.VCZHaplotypeReader(
             sample_store,
             positions,
             anc_alleles,
@@ -710,7 +699,7 @@ class TestVCZHaplotypeReader:
         n_samples = 6
         gt = np.zeros((1, n_samples, 1), dtype=np.int8)
         sample_ids = np.array([f"sample_{i}" for i in range(n_samples)])
-        sample_store = make_sample_vcz(
+        sample_store = helpers.make_sample_vcz(
             genotypes=gt,
             positions=positions,
             alleles=np.array([["A", "T"]]),
@@ -727,7 +716,7 @@ class TestVCZHaplotypeReader:
         )
         cg.attrs["_ARRAY_DIMENSIONS"] = ["variants", "samples", "ploidy"]
         anc_alleles = np.array(["A"])
-        reader = VCZHaplotypeReader(
+        reader = vcz.VCZHaplotypeReader(
             sample_store,
             positions,
             anc_alleles,
@@ -756,7 +745,7 @@ class TestVCZHaplotypeReader:
         """Missing genotypes encode as -1."""
         positions = np.array([100, 200], dtype=np.int32)
         gt = np.array([[[-1]], [[0]]], dtype=np.int8)
-        sample_store = make_sample_vcz(
+        sample_store = helpers.make_sample_vcz(
             genotypes=gt,
             positions=positions,
             alleles=np.array([["A", "T"], ["A", "T"]]),
@@ -764,7 +753,7 @@ class TestVCZHaplotypeReader:
             sequence_length=1000,
         )
         anc_alleles = np.array(["A", "A"])
-        reader = VCZHaplotypeReader(
+        reader = vcz.VCZHaplotypeReader(
             sample_store,
             positions,
             anc_alleles,
@@ -782,7 +771,7 @@ class TestVCZHaplotypeReader:
         positions = np.array([100], dtype=np.int32)
         gt = np.array([[[0], [1], [0]]], dtype=np.int8)
         sample_ids = np.array(["sample_0", "sample_1", "sample_2"])
-        sample_store = make_sample_vcz(
+        sample_store = helpers.make_sample_vcz(
             genotypes=gt,
             positions=positions,
             alleles=np.array([["A", "T"]]),
@@ -793,7 +782,7 @@ class TestVCZHaplotypeReader:
         # Select only sample_1
         selection = np.array([1])
         anc_alleles = np.array(["A"])
-        reader = VCZHaplotypeReader(
+        reader = vcz.VCZHaplotypeReader(
             sample_store,
             positions,
             anc_alleles,
@@ -812,7 +801,7 @@ class TestVCZHaplotypeReader:
         positions_src = np.array([100, 200], dtype=np.int32)
         positions_ref = np.array([500, 600], dtype=np.int32)
         gt = np.array([[[0]], [[1]]], dtype=np.int8)
-        sample_store = make_sample_vcz(
+        sample_store = helpers.make_sample_vcz(
             genotypes=gt,
             positions=positions_src,
             alleles=np.array([["A", "T"], ["A", "T"]]),
@@ -820,7 +809,7 @@ class TestVCZHaplotypeReader:
             sequence_length=1000,
         )
         anc_alleles = np.array(["A", "A"])
-        reader = VCZHaplotypeReader(
+        reader = vcz.VCZHaplotypeReader(
             sample_store,
             positions_ref,
             anc_alleles,
@@ -844,7 +833,7 @@ class TestVCZHaplotypeReader:
         gt = np.zeros((6, 1, 1), dtype=np.int8)
         gt[4, 0, 0] = 1  # pos 500
         alleles = np.array([["A", "T"]] * 6)
-        sample_store = make_sample_vcz(
+        sample_store = helpers.make_sample_vcz(
             genotypes=gt,
             positions=positions_src,
             alleles=alleles,
@@ -860,7 +849,7 @@ class TestVCZHaplotypeReader:
         )
         cg.attrs["_ARRAY_DIMENSIONS"] = ["variants", "samples", "ploidy"]
         anc_alleles = np.array(["A"])
-        reader = VCZHaplotypeReader(
+        reader = vcz.VCZHaplotypeReader(
             sample_store,
             positions_ref,
             anc_alleles,
@@ -890,7 +879,7 @@ class TestScheduledCache:
 
     def test_prime_loads_chunks(self):
         data = _arr(10)
-        cache = ScheduledCache(
+        cache = vcz.ScheduledCache(
             max_bytes=100,
             refcounts={("s", 0): 1},
             chunk_order=[("s", 0)],
@@ -904,7 +893,7 @@ class TestScheduledCache:
         cache.shutdown()
 
     def test_prime_fills_to_capacity(self):
-        cache = ScheduledCache(
+        cache = vcz.ScheduledCache(
             max_bytes=25,
             refcounts={("s", 0): 1, ("s", 1): 1, ("s", 2): 1},
             chunk_order=[("s", 0), ("s", 1), ("s", 2)],
@@ -927,7 +916,7 @@ class TestScheduledCache:
             call_count[0] += 1
             return _arr(10)
 
-        cache = ScheduledCache(
+        cache = vcz.ScheduledCache(
             max_bytes=100,
             refcounts={("s", 0): 2},
             chunk_order=[("s", 0)],
@@ -943,7 +932,7 @@ class TestScheduledCache:
 
     def test_get_waits_for_prime(self):
         """get() blocks until prime delivers the chunk."""
-        cache = ScheduledCache(
+        cache = vcz.ScheduledCache(
             max_bytes=100,
             refcounts={("s", 0): 1},
             chunk_order=[("s", 0)],
@@ -957,7 +946,7 @@ class TestScheduledCache:
 
     def test_get_waits_for_readahead(self):
         """get() blocks until readahead delivers the chunk."""
-        cache = ScheduledCache(
+        cache = vcz.ScheduledCache(
             max_bytes=10,
             refcounts={("s", 0): 1, ("s", 1): 1},
             chunk_order=[("s", 0), ("s", 1)],
@@ -985,7 +974,7 @@ class TestScheduledCache:
     # --- Group 2: record_read() ---
 
     def test_record_read_decrements_refcount(self):
-        cache = ScheduledCache(
+        cache = vcz.ScheduledCache(
             max_bytes=100,
             refcounts={("s", 0): 3},
             chunk_order=[("s", 0)],
@@ -999,7 +988,7 @@ class TestScheduledCache:
         cache.shutdown()
 
     def test_record_read_evicts_at_zero(self):
-        cache = ScheduledCache(
+        cache = vcz.ScheduledCache(
             max_bytes=100,
             refcounts={("s", 0): 1},
             chunk_order=[("s", 0)],
@@ -1014,7 +1003,7 @@ class TestScheduledCache:
         cache.shutdown()
 
     def test_record_read_multiple_chunks(self):
-        cache = ScheduledCache(
+        cache = vcz.ScheduledCache(
             max_bytes=100,
             refcounts={("s", 0): 1, ("s", 1): 2},
             chunk_order=[("s", 0), ("s", 1)],
@@ -1046,7 +1035,7 @@ class TestScheduledCache:
             loaded.add(idx)
             return _arr(10)
 
-        cache = ScheduledCache(
+        cache = vcz.ScheduledCache(
             max_bytes=15,
             refcounts={("s", 0): 1, ("s", 1): 1},
             chunk_order=[("s", 0), ("s", 1)],
@@ -1065,7 +1054,7 @@ class TestScheduledCache:
 
     def test_readahead_respects_memory_limit(self):
         """Readahead does not fire when next chunk doesn't fit."""
-        cache = ScheduledCache(
+        cache = vcz.ScheduledCache(
             max_bytes=15,
             refcounts={("s", 0): 2, ("s", 1): 1},
             chunk_order=[("s", 0), ("s", 1)],
@@ -1099,7 +1088,7 @@ class TestScheduledCache:
             loaded[("big", idx)] = True
             return _arr(30)
 
-        cache = ScheduledCache(
+        cache = vcz.ScheduledCache(
             max_bytes=35,
             refcounts={
                 ("small", 0): 1,
@@ -1140,7 +1129,7 @@ class TestScheduledCache:
         cache.shutdown()
 
     def test_readahead_skips_unregistered_source(self):
-        cache = ScheduledCache(
+        cache = vcz.ScheduledCache(
             max_bytes=100,
             refcounts={("unknown", 0): 1, ("s", 0): 1},
             chunk_order=[("unknown", 0), ("s", 0)],
@@ -1157,7 +1146,7 @@ class TestScheduledCache:
 
     def test_concurrent_get_waiters(self):
         """Multiple threads waiting for the same chunk all get it."""
-        cache = ScheduledCache(
+        cache = vcz.ScheduledCache(
             max_bytes=10,
             refcounts={("s", 0): 1, ("s", 1): 3},
             chunk_order=[("s", 0), ("s", 1)],
@@ -1186,7 +1175,7 @@ class TestScheduledCache:
     # --- Group 5: shutdown ---
 
     def test_shutdown(self):
-        cache = ScheduledCache(
+        cache = vcz.ScheduledCache(
             max_bytes=100,
             refcounts={},
             chunk_order=[],
@@ -1196,7 +1185,7 @@ class TestScheduledCache:
     # --- Group 6: bytes tracking ---
 
     def test_total_bytes_tracking(self):
-        cache = ScheduledCache(
+        cache = vcz.ScheduledCache(
             max_bytes=100,
             refcounts={("s", 0): 1, ("s", 1): 1},
             chunk_order=[("s", 0), ("s", 1)],
@@ -1218,7 +1207,7 @@ class TestScheduledCache:
         Reproduces the deadlock: cache is full, workers wait for memory,
         but memory can only be freed after get() returns.
         """
-        cache = ScheduledCache(
+        cache = vcz.ScheduledCache(
             max_bytes=10,
             refcounts={("s", 0): 1, ("s", 1): 1},
             chunk_order=[("s", 0), ("s", 1)],
@@ -1248,7 +1237,7 @@ class TestScheduledCache:
 class TestAlleleMapper:
     def test_basic(self):
         """Ancestral allele is always code 0, first derived is 1."""
-        m = AlleleMapper(2, [["A", "T"], ["C"]])
+        m = vcz.AlleleMapper(2, [["A", "T"], ["C"]])
         assert m.lookup(0, "A") == 0
         assert m.lookup(0, "T") == 1
         # Idempotent
@@ -1260,14 +1249,14 @@ class TestAlleleMapper:
 
     def test_cross_source_distinct_codes(self):
         """Different derived alleles at the same site get distinct codes."""
-        m = AlleleMapper(1, [["A", "T", "G", "C"]])
+        m = vcz.AlleleMapper(1, [["A", "T", "G", "C"]])
         assert m.lookup(0, "T") == 1
         assert m.lookup(0, "G") == 2
         assert m.lookup(0, "C") == 3
         assert m.num_alleles(0) == 4
 
     def test_site_alleles_array(self):
-        m = AlleleMapper(2, [["A", "T"], ["C", "G", "T"]])
+        m = vcz.AlleleMapper(2, [["A", "T"], ["C", "G", "T"]])
         arr = m.site_alleles_array()
         assert arr.shape[0] == 2
         assert arr.shape[1] >= 3  # site 1 has 3 alleles
@@ -1279,20 +1268,20 @@ class TestAlleleMapper:
 
     def test_ancestral_alleles(self):
         """ancestral_alleles returns column 0 of forward map."""
-        m = AlleleMapper(3, [["A", "T"], ["C", "G"], ["G"]])
+        m = vcz.AlleleMapper(3, [["A", "T"], ["C", "G"], ["G"]])
         anc = m.ancestral_alleles()
         assert list(anc) == ["A", "C", "G"]
 
     def test_forward_map_same_as_site_alleles_array(self):
         """forward_map returns the same data as site_alleles_array."""
-        m = AlleleMapper(2, [["A", "T"], ["C", "G", "T"]])
+        m = vcz.AlleleMapper(2, [["A", "T"], ["C", "G", "T"]])
         fm = m.forward_map()
         sa = m.site_alleles_array()
         np.testing.assert_array_equal(fm, sa)
 
     def test_decode_mutations(self):
         """decode_mutations maps codes to correct strings."""
-        m = AlleleMapper(2, [["A", "T"], ["C", "G", "T"]])
+        m = vcz.AlleleMapper(2, [["A", "T"], ["C", "G", "T"]])
         site_ids = np.array([0, 0, 1, 1], dtype=np.int32)
         codes = np.array([0, 1, 1, 2], dtype=np.int8)
         result = m.decode_mutations(site_ids, codes)
@@ -1300,7 +1289,7 @@ class TestAlleleMapper:
 
     def test_encode_mutations(self):
         """encode_mutations maps strings to correct codes."""
-        m = AlleleMapper(2, [["A", "T"], ["C", "G", "T"]])
+        m = vcz.AlleleMapper(2, [["A", "T"], ["C", "G", "T"]])
         site_ids = np.array([0, 0, 1, 1], dtype=np.int32)
         alleles = np.array(["A", "T", "G", "T"])
         result = m.encode_mutations(site_ids, alleles)
@@ -1308,7 +1297,7 @@ class TestAlleleMapper:
 
     def test_encode_decode_roundtrip(self):
         """encode_mutations round-trips with decode_mutations."""
-        m = AlleleMapper(2, [["A", "T"], ["C", "G", "T"]])
+        m = vcz.AlleleMapper(2, [["A", "T"], ["C", "G", "T"]])
         site_ids = np.array([0, 1, 1, 0], dtype=np.int32)
         codes = np.array([1, 0, 2, 0], dtype=np.int8)
         alleles = m.decode_mutations(site_ids, codes)
@@ -1329,7 +1318,7 @@ class TestVariantSelection:
         positions_src = np.array([100, 200, 300, 400, 500], dtype=np.int32)
         gt = np.zeros((5, 2, 1), dtype=np.int8)
         alleles = np.array([["A", "T"]] * 5)
-        store = make_sample_vcz(
+        store = helpers.make_sample_vcz(
             genotypes=gt,
             positions=positions_src,
             alleles=alleles,
@@ -1337,7 +1326,7 @@ class TestVariantSelection:
             sequence_length=1000,
         )
         anc_alleles = np.array(["A", "A"])
-        reader = VCZHaplotypeReader(
+        reader = vcz.VCZHaplotypeReader(
             store,
             positions_ref,
             anc_alleles,
@@ -1356,14 +1345,14 @@ class TestVariantSelection:
         positions_ref = np.array([200], dtype=np.int32)
         positions_src = np.array([100, 200, 300], dtype=np.int32)
         gt = np.zeros((3, 2, 1), dtype=np.int8)
-        store = make_sample_vcz(
+        store = helpers.make_sample_vcz(
             genotypes=gt,
             positions=positions_src,
             alleles=np.array([["A", "T"]] * 3),
             ancestral_state=np.array(["A"] * 3),
             sequence_length=1000,
         )
-        reader = VCZHaplotypeReader(
+        reader = vcz.VCZHaplotypeReader(
             store,
             positions_ref,
             np.array(["A"]),
@@ -1385,7 +1374,7 @@ class TestVariantSelection:
         gt[2, 0, 0] = 1  # pos 300
         gt[6, 0, 0] = 0  # pos 700
         alleles = np.array([["A", "T"]] * 10)
-        store = make_sample_vcz(
+        store = helpers.make_sample_vcz(
             genotypes=gt,
             positions=positions_src,
             alleles=alleles,
@@ -1393,7 +1382,7 @@ class TestVariantSelection:
             sequence_length=2000,
         )
         anc_alleles = np.array(["A", "A"])
-        reader = VCZHaplotypeReader(
+        reader = vcz.VCZHaplotypeReader(
             store,
             positions_ref,
             anc_alleles,
@@ -1409,11 +1398,10 @@ class TestVariantSelection:
 class TestGetSiteAlleles:
     def test_facade_returns_alleles_after_reads(self):
         """get_site_alleles returns correct allele array after reads."""
-        from tsinfer.config import Source
 
         positions = np.array([100, 200], dtype=np.int32)
         # Source A: site 0 has alleles A/T, site 1 has A/G
-        store_a = make_sample_vcz(
+        store_a = helpers.make_sample_vcz(
             genotypes=np.array([[[1]], [[1]]], dtype=np.int8),
             positions=positions,
             alleles=np.array([["A", "T"], ["A", "G"]]),
@@ -1421,7 +1409,7 @@ class TestGetSiteAlleles:
             sequence_length=1000,
         )
         # Source B: site 0 has alleles A/C, site 1 has A/G
-        store_b = make_sample_vcz(
+        store_b = helpers.make_sample_vcz(
             genotypes=np.array([[[1]], [[1]]], dtype=np.int8),
             positions=positions,
             alleles=np.array([["A", "C"], ["A", "G"]]),
@@ -1429,15 +1417,15 @@ class TestGetSiteAlleles:
             sequence_length=1000,
         )
         sources = {
-            "src_a": Source(path=store_a, name="src_a"),
-            "src_b": Source(path=store_b, name="src_b"),
+            "src_a": config.Source(path=store_a, name="src_a"),
+            "src_b": config.Source(path=store_b, name="src_b"),
         }
         anc_alleles = np.array(["A", "A"])
         schedule = [("src_a", "sample_0", 0), ("src_b", "sample_0", 0)]
-        reader = HaplotypeReader(sources, positions, anc_alleles, schedule=schedule)
+        reader = vcz.HaplotypeReader(sources, positions, anc_alleles, schedule=schedule)
 
         # Read from both sources to trigger allele discovery
-        job_a = MatchJob(
+        job_a = grouping.MatchJob(
             haplotype_index=0,
             source="src_a",
             sample_id="sample_0",
@@ -1447,7 +1435,7 @@ class TestGetSiteAlleles:
             end_position=200,
             group=0,
         )
-        job_b = MatchJob(
+        job_b = grouping.MatchJob(
             haplotype_index=1,
             source="src_b",
             sample_id="sample_0",
@@ -1477,23 +1465,20 @@ class TestGetSiteAlleles:
 
 class TestMultiSourceView:
     def _anc_state(self, store):
-        from tsinfer.config import AncestralState
 
-        return AncestralState(path=store, field="variant_ancestral_allele")
+        return config.AncestralState(path=store, field="variant_ancestral_allele")
 
     def test_single_source_positions_and_alleles(self):
-        from tsinfer.config import Source
-        from tsinfer.vcz import MultiSourceView
 
-        store = make_sample_vcz(
+        store = helpers.make_sample_vcz(
             genotypes=np.array([[[0, 1]], [[1, 0]]], dtype=np.int8),
             positions=np.array([100, 200], dtype=np.int32),
             alleles=np.array([["A", "T"], ["C", "G"]]),
             ancestral_state=np.array(["A", "C"]),
             sequence_length=1000,
         )
-        src = Source(path=store, name="s1")
-        view = MultiSourceView(src, self._anc_state(store))
+        src = config.Source(path=store, name="s1")
+        view = vcz.MultiSourceView(src, self._anc_state(store))
 
         assert view.num_sites == 2
         np.testing.assert_array_equal(view.positions, [100, 200])
@@ -1505,10 +1490,8 @@ class TestMultiSourceView:
         assert view.alleles[1, 1] == "G"
 
     def test_multiple_sources_unified_positions(self):
-        from tsinfer.config import Source
-        from tsinfer.vcz import MultiSourceView
 
-        store_a = make_sample_vcz(
+        store_a = helpers.make_sample_vcz(
             genotypes=np.array([[[1]], [[0]]], dtype=np.int8),
             positions=np.array([100, 300], dtype=np.int32),
             alleles=np.array([["A", "T"], ["C", "G"]]),
@@ -1516,7 +1499,7 @@ class TestMultiSourceView:
             sequence_length=1000,
             sample_ids=np.array(["s0"]),
         )
-        store_b = make_sample_vcz(
+        store_b = helpers.make_sample_vcz(
             genotypes=np.array([[[0]], [[1]]], dtype=np.int8),
             positions=np.array([200, 300], dtype=np.int32),
             alleles=np.array([["A", "G"], ["C", "G"]]),
@@ -1527,20 +1510,19 @@ class TestMultiSourceView:
         # Use store_a as ancestral state source (has pos 100, 300)
         # Also need pos 200 from store_b's ancestral state
         # Build combined annotation
-        ann_store = make_sample_vcz(
+        ann_store = helpers.make_sample_vcz(
             genotypes=np.zeros((3, 1, 1), dtype=np.int8),
             positions=np.array([100, 200, 300], dtype=np.int32),
             alleles=np.array([["A", "T"], ["A", "G"], ["C", "G"]]),
             ancestral_state=np.array(["A", "A", "C"]),
             sequence_length=1000,
         )
-        from tsinfer.config import AncestralState
 
-        anc = AncestralState(path=ann_store, field="variant_ancestral_allele")
-        view = MultiSourceView(
+        anc = config.AncestralState(path=ann_store, field="variant_ancestral_allele")
+        view = vcz.MultiSourceView(
             [
-                Source(path=store_a, name="a"),
-                Source(path=store_b, name="b"),
+                config.Source(path=store_a, name="a"),
+                config.Source(path=store_b, name="b"),
             ],
             anc,
         )
@@ -1558,28 +1540,24 @@ class TestMultiSourceView:
         np.testing.assert_array_equal(variants[2].genotypes, [0, 1])
 
     def test_duplicate_positions_excluded(self):
-        from tsinfer.config import Source
-        from tsinfer.vcz import MultiSourceView
 
         # Position 100 appears twice — should be excluded
-        store = make_sample_vcz(
+        store = helpers.make_sample_vcz(
             genotypes=np.array([[[0]], [[1]], [[0]]], dtype=np.int8),
             positions=np.array([100, 100, 200], dtype=np.int32),
             alleles=np.array([["A", "T"], ["A", "T"], ["C", "G"]]),
             ancestral_state=np.array(["A", "A", "C"]),
             sequence_length=1000,
         )
-        src = Source(path=store, name="s1")
-        view = MultiSourceView(src, self._anc_state(store))
+        src = config.Source(path=store, name="s1")
+        view = vcz.MultiSourceView(src, self._anc_state(store))
 
         assert view.num_sites == 1
         np.testing.assert_array_equal(view.positions, [200])
 
     def test_haplotypes_enumeration(self):
-        from tsinfer.config import Source
-        from tsinfer.vcz import MultiSourceView
 
-        store = make_sample_vcz(
+        store = helpers.make_sample_vcz(
             genotypes=np.array([[[0, 1], [1, 0]]], dtype=np.int8),
             positions=np.array([100], dtype=np.int32),
             alleles=np.array([["A", "T"]]),
@@ -1587,8 +1565,8 @@ class TestMultiSourceView:
             sequence_length=1000,
             sample_ids=np.array(["s0", "s1"]),
         )
-        src = Source(path=store, name="s1")
-        view = MultiSourceView(src, self._anc_state(store))
+        src = config.Source(path=store, name="s1")
+        view = vcz.MultiSourceView(src, self._anc_state(store))
 
         haps = view.haplotypes()
         assert len(haps) == 4  # 2 samples * 2 ploidy
@@ -1599,11 +1577,9 @@ class TestMultiSourceView:
         assert view.num_haplotypes == 4
 
     def test_iter_genotypes_single_source(self):
-        from tsinfer.config import Source
-        from tsinfer.vcz import MultiSourceView
 
         # 2 sites, 2 haploid samples
-        store = make_sample_vcz(
+        store = helpers.make_sample_vcz(
             genotypes=np.array([[[0], [1]], [[1], [0]]], dtype=np.int8),
             positions=np.array([100, 200], dtype=np.int32),
             alleles=np.array([["A", "T"], ["C", "G"]]),
@@ -1611,8 +1587,8 @@ class TestMultiSourceView:
             sequence_length=1000,
             sample_ids=np.array(["s0", "s1"]),
         )
-        src = Source(path=store, name="s1")
-        view = MultiSourceView(src, self._anc_state(store))
+        src = config.Source(path=store, name="s1")
+        view = vcz.MultiSourceView(src, self._anc_state(store))
 
         rows = [v.genotypes for v in view.iter_genotypes()]
         assert len(rows) == 2
@@ -1622,10 +1598,8 @@ class TestMultiSourceView:
         np.testing.assert_array_equal(rows[1], [1, 0])
 
     def test_iter_genotypes_subset_positions(self):
-        from tsinfer.config import Source
-        from tsinfer.vcz import MultiSourceView
 
-        store = make_sample_vcz(
+        store = helpers.make_sample_vcz(
             genotypes=np.array([[[0], [1]], [[1], [0]], [[0], [0]]], dtype=np.int8),
             positions=np.array([100, 200, 300], dtype=np.int32),
             alleles=np.array([["A", "T"], ["C", "G"], ["A", "T"]]),
@@ -1633,8 +1607,8 @@ class TestMultiSourceView:
             sequence_length=1000,
             sample_ids=np.array(["s0", "s1"]),
         )
-        src = Source(path=store, name="s1")
-        view = MultiSourceView(src, self._anc_state(store))
+        src = config.Source(path=store, name="s1")
+        view = vcz.MultiSourceView(src, self._anc_state(store))
 
         # Only request positions 100 and 300
         subset = np.array([100, 300], dtype=np.int32)
@@ -1645,10 +1619,8 @@ class TestMultiSourceView:
 
     def test_iter_genotypes_missing_source(self):
         """Sources missing a site contribute -1 arrays."""
-        from tsinfer.config import AncestralState, Source
-        from tsinfer.vcz import MultiSourceView
 
-        store_a = make_sample_vcz(
+        store_a = helpers.make_sample_vcz(
             genotypes=np.array([[[1]]], dtype=np.int8),
             positions=np.array([100], dtype=np.int32),
             alleles=np.array([["A", "T"]]),
@@ -1656,7 +1628,7 @@ class TestMultiSourceView:
             sequence_length=1000,
             sample_ids=np.array(["s0"]),
         )
-        store_b = make_sample_vcz(
+        store_b = helpers.make_sample_vcz(
             genotypes=np.array([[[1]]], dtype=np.int8),
             positions=np.array([200], dtype=np.int32),
             alleles=np.array([["C", "G"]]),
@@ -1664,18 +1636,18 @@ class TestMultiSourceView:
             sequence_length=1000,
             sample_ids=np.array(["s1"]),
         )
-        ann_store = make_sample_vcz(
+        ann_store = helpers.make_sample_vcz(
             genotypes=np.zeros((2, 1, 1), dtype=np.int8),
             positions=np.array([100, 200], dtype=np.int32),
             alleles=np.array([["A", "T"], ["C", "G"]]),
             ancestral_state=np.array(["A", "C"]),
             sequence_length=1000,
         )
-        anc = AncestralState(path=ann_store, field="variant_ancestral_allele")
-        view = MultiSourceView(
+        anc = config.AncestralState(path=ann_store, field="variant_ancestral_allele")
+        view = vcz.MultiSourceView(
             [
-                Source(path=store_a, name="a"),
-                Source(path=store_b, name="b"),
+                config.Source(path=store_a, name="a"),
+                config.Source(path=store_b, name="b"),
             ],
             anc,
         )
@@ -1688,10 +1660,8 @@ class TestMultiSourceView:
         np.testing.assert_array_equal(rows[1], [-1, 1])
 
     def test_sample_selection_respected(self):
-        from tsinfer.config import Source
-        from tsinfer.vcz import MultiSourceView
 
-        store = make_sample_vcz(
+        store = helpers.make_sample_vcz(
             genotypes=np.array([[[0], [1], [1]]], dtype=np.int8),
             positions=np.array([100], dtype=np.int32),
             alleles=np.array([["A", "T"]]),
@@ -1700,8 +1670,8 @@ class TestMultiSourceView:
             sample_ids=np.array(["s0", "s1", "s2"]),
         )
         # Select only s0 and s2
-        src = Source(path=store, name="s1", samples="s0,s2")
-        view = MultiSourceView(src, self._anc_state(store))
+        src = config.Source(path=store, name="s1", samples="s0,s2")
+        view = vcz.MultiSourceView(src, self._anc_state(store))
 
         assert view.num_haplotypes == 2
         rows = [v.genotypes for v in view.iter_genotypes()]
@@ -1710,10 +1680,8 @@ class TestMultiSourceView:
 
     def test_prepare_subset(self):
         """prepare() with a position subset builds mapper for that subset."""
-        from tsinfer.config import Source
-        from tsinfer.vcz import MultiSourceView
 
-        store = make_sample_vcz(
+        store = helpers.make_sample_vcz(
             genotypes=np.array([[[0], [1]], [[1], [0]], [[0], [0]]], dtype=np.int8),
             positions=np.array([100, 200, 300], dtype=np.int32),
             alleles=np.array([["A", "T"], ["C", "G"], ["A", "T"]]),
@@ -1721,8 +1689,8 @@ class TestMultiSourceView:
             sequence_length=1000,
             sample_ids=np.array(["s0", "s1"]),
         )
-        src = Source(path=store, name="s1")
-        view = MultiSourceView(src, self._anc_state(store))
+        src = config.Source(path=store, name="s1")
+        view = vcz.MultiSourceView(src, self._anc_state(store))
 
         # Prepare with subset
         subset = np.array([100, 300], dtype=np.int32)
@@ -1735,27 +1703,23 @@ class TestMultiSourceView:
 
     def test_alleles_before_prepare_raises(self):
         """Accessing alleles before prepare() raises RuntimeError."""
-        from tsinfer.config import Source
-        from tsinfer.vcz import MultiSourceView
 
-        store = make_sample_vcz(
+        store = helpers.make_sample_vcz(
             genotypes=np.array([[[0, 1]]], dtype=np.int8),
             positions=np.array([100], dtype=np.int32),
             alleles=np.array([["A", "T"]]),
             ancestral_state=np.array(["A"]),
             sequence_length=1000,
         )
-        src = Source(path=store, name="s1")
-        view = MultiSourceView(src, self._anc_state(store))
+        src = config.Source(path=store, name="s1")
+        view = vcz.MultiSourceView(src, self._anc_state(store))
 
         with pytest.raises(RuntimeError, match="prepare"):
             _ = view.alleles
 
     def test_positions_in_intervals(self):
-        from tsinfer.config import Source
-        from tsinfer.vcz import MultiSourceView
 
-        store = make_sample_vcz(
+        store = helpers.make_sample_vcz(
             genotypes=np.array([[[0], [1]], [[1], [0]], [[0], [1]]], dtype=np.int8),
             positions=np.array([100, 200, 300], dtype=np.int32),
             alleles=np.array([["A", "T"], ["C", "G"], ["A", "T"]]),
@@ -1763,8 +1727,8 @@ class TestMultiSourceView:
             sequence_length=1000,
             sample_ids=np.array(["s0", "s1"]),
         )
-        src = Source(path=store, name="s1")
-        view = MultiSourceView(src, self._anc_state(store))
+        src = config.Source(path=store, name="s1")
+        view = vcz.MultiSourceView(src, self._anc_state(store))
 
         # Only positions in [150, 350)
         pos = view.positions_in_intervals([[150, 350]])
@@ -1777,10 +1741,8 @@ class TestMultiSourceView:
         np.testing.assert_array_equal(variants[1].genotypes, [0, 1])
 
     def test_filter_positions(self):
-        from tsinfer.config import Source
-        from tsinfer.vcz import MultiSourceView
 
-        store = make_sample_vcz(
+        store = helpers.make_sample_vcz(
             genotypes=np.array([[[0], [1]], [[1], [0]], [[0], [1]]], dtype=np.int8),
             positions=np.array([100, 200, 300], dtype=np.int32),
             alleles=np.array([["A", "T"], ["C", "G"], ["A", "T"]]),
@@ -1788,8 +1750,8 @@ class TestMultiSourceView:
             sequence_length=1000,
             sample_ids=np.array(["s0", "s1"]),
         )
-        src = Source(path=store, name="s1")
-        view = MultiSourceView(src, self._anc_state(store))
+        src = config.Source(path=store, name="s1")
+        view = vcz.MultiSourceView(src, self._anc_state(store))
 
         # Exclude position 200
         pos = view.filter_positions(np.array([200]))
@@ -1800,10 +1762,8 @@ class TestMultiSourceView:
         assert variants[1].position == 300.0
 
     def test_iter_genotypes_sample_identifiers(self):
-        from tsinfer.config import AncestralState, Source
-        from tsinfer.vcz import MultiSourceView
 
-        store_a = make_sample_vcz(
+        store_a = helpers.make_sample_vcz(
             genotypes=np.array([[[0], [1]]], dtype=np.int8),
             positions=np.array([100], dtype=np.int32),
             alleles=np.array([["A", "T"]]),
@@ -1812,9 +1772,9 @@ class TestMultiSourceView:
             sample_ids=np.array(["s0", "s1"]),
         )
         ann_store = store_a
-        anc = AncestralState(path=ann_store, field="variant_ancestral_allele")
-        view = MultiSourceView(
-            [Source(path=store_a, name="src_a")],
+        anc = config.AncestralState(path=ann_store, field="variant_ancestral_allele")
+        view = vcz.MultiSourceView(
+            [config.Source(path=store_a, name="src_a")],
             anc,
         )
 
@@ -1827,10 +1787,8 @@ class TestMultiSourceView:
 
     def test_iter_genotypes_sample_identifiers_missing(self):
         """Unmatched identifiers get -1."""
-        from tsinfer.config import Source
-        from tsinfer.vcz import MultiSourceView
 
-        store = make_sample_vcz(
+        store = helpers.make_sample_vcz(
             genotypes=np.array([[[0], [1]]], dtype=np.int8),
             positions=np.array([100], dtype=np.int32),
             alleles=np.array([["A", "T"]]),
@@ -1838,8 +1796,8 @@ class TestMultiSourceView:
             sequence_length=1000,
             sample_ids=np.array(["s0", "s1"]),
         )
-        src = Source(path=store, name="s1")
-        view = MultiSourceView(src, self._anc_state(store))
+        src = config.Source(path=store, name="s1")
+        view = vcz.MultiSourceView(src, self._anc_state(store))
 
         # Request s0 and a nonexistent sample
         identifiers = [("s1", "s0", 0), ("s1", "nonexistent", 0)]
@@ -1849,10 +1807,8 @@ class TestMultiSourceView:
 
     def test_iter_genotypes_variant_alleles(self):
         """Variant.alleles tuple is correct."""
-        from tsinfer.config import Source
-        from tsinfer.vcz import MultiSourceView
 
-        store = make_sample_vcz(
+        store = helpers.make_sample_vcz(
             genotypes=np.array([[[0], [1]]], dtype=np.int8),
             positions=np.array([100], dtype=np.int32),
             alleles=np.array([["A", "T"]]),
@@ -1860,8 +1816,8 @@ class TestMultiSourceView:
             sequence_length=1000,
             sample_ids=np.array(["s0", "s1"]),
         )
-        src = Source(path=store, name="s1")
-        view = MultiSourceView(src, self._anc_state(store))
+        src = config.Source(path=store, name="s1")
+        view = vcz.MultiSourceView(src, self._anc_state(store))
 
         variants = list(view.iter_genotypes())
         assert len(variants) == 1
@@ -1870,10 +1826,8 @@ class TestMultiSourceView:
 
     def test_positions_in_intervals_and_filter(self):
         """positions_in_intervals and filter_positions compose."""
-        from tsinfer.config import Source
-        from tsinfer.vcz import MultiSourceView
 
-        store = make_sample_vcz(
+        store = helpers.make_sample_vcz(
             genotypes=np.array([[[0]], [[1]], [[0]], [[1]]], dtype=np.int8),
             positions=np.array([100, 200, 300, 400], dtype=np.int32),
             alleles=np.array([["A", "T"], ["C", "G"], ["A", "T"], ["C", "G"]]),
@@ -1881,8 +1835,8 @@ class TestMultiSourceView:
             sequence_length=1000,
             sample_ids=np.array(["s0"]),
         )
-        src = Source(path=store, name="s1")
-        view = MultiSourceView(src, self._anc_state(store))
+        src = config.Source(path=store, name="s1")
+        view = vcz.MultiSourceView(src, self._anc_state(store))
 
         # Interval [150, 450), then exclude 300
         pos = view.positions_in_intervals([[150, 450]])

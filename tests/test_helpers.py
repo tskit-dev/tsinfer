@@ -20,11 +20,11 @@
 Tests for the test data helper functions.
 """
 
+import helpers
 import msprime
 import numpy as np
 import pytest
 import zarr
-from helpers import make_ancestor_vcz, make_sample_vcz, ts_to_sample_vcz
 
 # ---------------------------------------------------------------------------
 # Shared minimal fixtures
@@ -40,7 +40,7 @@ _GT_DIPLOID = np.array([[[0, 1], [1, 0]], [[1, 1], [0, 0]]], dtype=np.int8)
 
 
 def _minimal_sample_vcz(**kwargs):
-    return make_sample_vcz(
+    return helpers.make_sample_vcz(
         _GT_DIPLOID, _POSITIONS, _ALLELES_2, _ANC_STATE, _SEQ_LEN, **kwargs
     )
 
@@ -85,7 +85,7 @@ class TestMakeSampleVcz:
 
     def test_missing_encoded_as_minus_one(self):
         gt = np.array([[[-1, 1], [0, 0]]], dtype=np.int8)
-        vcz = make_sample_vcz(gt, [100], [["A", "T"]], ["A"], 1000)
+        vcz = helpers.make_sample_vcz(gt, [100], [["A", "T"]], ["A"], 1000)
         assert vcz["call_genotype"][0, 0, 0] == -1
         assert "call_genotype_mask" not in vcz
 
@@ -128,7 +128,7 @@ class TestMakeSampleVcz:
         assert list(ids) == ["sample_0", "sample_1"]
 
     def test_sample_id_custom(self):
-        vcz = make_sample_vcz(
+        vcz = helpers.make_sample_vcz(
             _GT_DIPLOID,
             _POSITIONS,
             _ALLELES_2,
@@ -140,12 +140,12 @@ class TestMakeSampleVcz:
 
     def test_haploid(self):
         gt = np.array([[[0], [1]], [[1], [0]]], dtype=np.int8)
-        vcz = make_sample_vcz(gt, _POSITIONS, _ALLELES_2, _ANC_STATE, _SEQ_LEN)
+        vcz = helpers.make_sample_vcz(gt, _POSITIONS, _ALLELES_2, _ANC_STATE, _SEQ_LEN)
         assert vcz["call_genotype"].shape == (2, 2, 1)
 
     def test_single_site(self):
         gt = np.array([[[0, 1]]], dtype=np.int8)
-        vcz = make_sample_vcz(gt, [100], [["A", "T"]], ["A"], 1000)
+        vcz = helpers.make_sample_vcz(gt, [100], [["A", "T"]], ["A"], 1000)
         assert vcz["call_genotype"].shape == (1, 1, 2)
         assert vcz["variant_position"][:][0] == 100
 
@@ -159,7 +159,7 @@ class TestMakeSampleVcz:
     def test_three_alleles(self):
         gt = np.array([[[0, 1], [2, 0]]], dtype=np.int8)
         alleles = np.array([["A", "T", "C"]])
-        vcz = make_sample_vcz(gt, [100], alleles, ["A"], 1000)
+        vcz = helpers.make_sample_vcz(gt, [100], alleles, ["A"], 1000)
         assert vcz["variant_allele"].shape == (1, 3)
 
 
@@ -178,7 +178,9 @@ def _make_two_ancestor_vcz():
     times = np.array([2.0, 1.0])
     focal = np.array([[300, -2], [300, -2]], dtype=np.int32)
     intervals = np.array([[0, 1000]], dtype=np.int32)
-    return make_ancestor_vcz(genotypes, positions, alleles, times, focal, intervals)
+    return helpers.make_ancestor_vcz(
+        genotypes, positions, alleles, times, focal, intervals
+    )
 
 
 class TestMakeAncestorVcz:
@@ -248,7 +250,7 @@ class TestMakeAncestorVcz:
         times = np.array([1.0])
         focal = np.array([[20, -2]], dtype=np.int32)
         intervals = np.array([[0, 100]], dtype=np.int32)
-        vcz = make_ancestor_vcz(gt, pos, alleles, times, focal, intervals)
+        vcz = helpers.make_ancestor_vcz(gt, pos, alleles, times, focal, intervals)
         assert vcz["sample_start_position"][:][0] == 10
         assert vcz["sample_end_position"][:][0] == 31
 
@@ -259,7 +261,7 @@ class TestMakeAncestorVcz:
         times = np.array([1.0])
         focal = np.array([[20, 30]], dtype=np.int32)
         intervals = np.array([[0, 100]], dtype=np.int32)
-        vcz = make_ancestor_vcz(gt, pos, alleles, times, focal, intervals)
+        vcz = helpers.make_ancestor_vcz(gt, pos, alleles, times, focal, intervals)
         fp = vcz["sample_focal_positions"][:]
         assert fp[0, 0] == 20
         assert fp[0, 1] == 30
@@ -278,35 +280,35 @@ def _sim_ts(n=4, seq_len=10_000, seed=1):
 class TestTsToSampleVcz:
     def test_returns_zarr_group(self):
         ts = _sim_ts()
-        assert isinstance(ts_to_sample_vcz(ts), zarr.Group)
+        assert isinstance(helpers.ts_to_sample_vcz(ts), zarr.Group)
 
     def test_call_genotype_shape_diploid(self):
         ts = _sim_ts(n=4)
-        vcz = ts_to_sample_vcz(ts)
+        vcz = helpers.ts_to_sample_vcz(ts)
         num_sites = ts.num_sites
         num_individuals = ts.num_individuals
         assert vcz["call_genotype"].shape == (num_sites, num_individuals, 2)
 
     def test_positions_match_ts(self):
         ts = _sim_ts()
-        vcz = ts_to_sample_vcz(ts)
+        vcz = helpers.ts_to_sample_vcz(ts)
         expected = np.array([int(s.position) for s in ts.sites()], dtype=np.int32)
         np.testing.assert_array_equal(vcz["variant_position"][:], expected)
 
     def test_contig_length_matches_ts(self):
         ts = _sim_ts(seq_len=50_000)
-        vcz = ts_to_sample_vcz(ts)
+        vcz = helpers.ts_to_sample_vcz(ts)
         assert vcz["contig_length"][:][0] == 50_000
 
     def test_sample_ids_tsk_prefix(self):
         ts = _sim_ts(n=3)
-        vcz = ts_to_sample_vcz(ts)
+        vcz = helpers.ts_to_sample_vcz(ts)
         ids = list(vcz["sample_id"][:])
         assert ids == ["tsk_0", "tsk_1", "tsk_2"]
 
     def test_ancestral_allele_ref(self):
         ts = _sim_ts()
-        vcz = ts_to_sample_vcz(ts, ancestral_allele="REF")
+        vcz = helpers.ts_to_sample_vcz(ts, ancestral_allele="REF")
         anc = vcz["variant_ancestral_allele"][:]
         alleles = vcz["variant_allele"][:]
         for i in range(len(anc)):
@@ -314,7 +316,7 @@ class TestTsToSampleVcz:
 
     def test_ancestral_allele_ancestral(self):
         ts = _sim_ts()
-        vcz = ts_to_sample_vcz(ts, ancestral_allele="ANCESTRAL")
+        vcz = helpers.ts_to_sample_vcz(ts, ancestral_allele="ANCESTRAL")
         anc = vcz["variant_ancestral_allele"][:]
         expected = np.array([s.ancestral_state for s in ts.sites()])
         np.testing.assert_array_equal(anc, expected)
@@ -322,16 +324,16 @@ class TestTsToSampleVcz:
     def test_no_sites_raises(self):
         ts = msprime.sim_ancestry(2, sequence_length=1000, random_seed=1)
         with pytest.raises(ValueError, match="no sites"):
-            ts_to_sample_vcz(ts)
+            helpers.ts_to_sample_vcz(ts)
 
     def test_custom_contig_id(self):
         ts = _sim_ts()
-        vcz = ts_to_sample_vcz(ts, contig_id="chr1")
+        vcz = helpers.ts_to_sample_vcz(ts, contig_id="chr1")
         assert vcz["contig_id"][:][0] == "chr1"
 
     def test_genotypes_consistent_with_ts(self):
         ts = _sim_ts(n=2)
-        vcz = ts_to_sample_vcz(ts)
+        vcz = helpers.ts_to_sample_vcz(ts)
         gt = vcz["call_genotype"][:]
         for s_idx, variant in enumerate(ts.variants()):
             # tskit gives flat haplotypes; reshape to (num_individuals, ploidy)
