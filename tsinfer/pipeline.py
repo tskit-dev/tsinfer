@@ -360,6 +360,7 @@ def match(
     cache_size: int | None = None,
     group_stop: int | None = None,
     read_workers: int | None = None,
+    match_file: str | Path | None = None,
     **kwargs,
 ) -> tskit.TreeSequence:
     """
@@ -470,6 +471,7 @@ def match(
     )
 
     # 6. Match loop — process groups in order
+    match_fh = open(match_file, "w") if match_file is not None else None
     num_groups = len(sorted_groups)
     total_haps = len(jobs)
     completed_haps = 0
@@ -507,14 +509,46 @@ def match(
         )
         job_list = [job for _, job in group_jobs]
         match_iter = matcher.match(job_list, reader, num_threads=num_threads)
+        pbar = None
         if progress:
-            match_iter = tqdm.tqdm(
-                match_iter,
+            pbar = tqdm.tqdm(
                 total=len(job_list),
                 desc=f"Group {gi + 1}/{num_groups}",
                 unit="haplotypes",
             )
-        paired_results = sorted(match_iter, key=lambda pair: pair[0].haplotype_index)
+        results = []
+        for job, result in match_iter:
+            if match_fh is not None:
+                doc = {
+                    "group": group_idx,
+                    "haplotype_index": job.haplotype_index,
+                    "source": job.source,
+                    "sample_id": job.sample_id,
+                    "ploidy_index": job.ploidy_index,
+                    "time": job.time,
+                    "path": [
+                        {
+                            "left": s.left,
+                            "right": s.right,
+                            "parent": s.parent,
+                        }
+                        for s in result.path
+                    ],
+                    "mutations": [
+                        {
+                            "position": m.position,
+                            "derived_state": m.derived_state,
+                        }
+                        for m in result.mutations
+                    ],
+                }
+                match_fh.write(json.dumps(doc) + "\n")
+            results.append((job, result))
+            if pbar is not None:
+                pbar.update(1)
+        if pbar is not None:
+            pbar.close()
+        paired_results = sorted(results, key=lambda pair: pair[0].haplotype_index)
 
         completed_haps += num_in_group
         logger.info(
@@ -546,6 +580,8 @@ def match(
                     prev_path.unlink()
             prev_written_group = group_idx
 
+    if match_fh is not None:
+        match_fh.close()
     reader.shutdown()
     logger.info(
         "Match complete: %d nodes, %d individuals",
@@ -750,6 +786,7 @@ def run(
     cache_size: int | None = None,
     genotype_encoding: int | None = None,
     read_workers: int | None = None,
+    match_file: str | Path | None = None,
     **kwargs,
 ) -> tskit.TreeSequence:
     """
@@ -788,6 +825,7 @@ def run(
             num_threads=num_threads,
             cache_size=cache_size,
             read_workers=read_workers,
+            match_file=match_file,
             **kwargs,
         )
         ts = post_process(ts, cfg, **kwargs)
