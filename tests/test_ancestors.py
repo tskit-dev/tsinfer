@@ -54,7 +54,6 @@ def _cfg(
     max_gap_length=500_000,
     samples_chunk_size=1000,
     variants_chunk_size=1000,
-    genotype_encoding=0,
 ):
     return AncestorsConfig(
         name="ancestors",
@@ -63,7 +62,6 @@ def _cfg(
         max_gap_length=max_gap_length,
         samples_chunk_size=samples_chunk_size,
         variants_chunk_size=variants_chunk_size,
-        genotype_encoding=genotype_encoding,
     )
 
 
@@ -944,7 +942,7 @@ class TestInferAncestorsScenarios:
             alleles=[["A", "T"]],
             anc_states=["A"],
         )
-        anc = infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+        anc = infer_ancestors(_src(gt), _cfg(), _anc_state(gt), genotype_encoding=0)
         # non_missing = 3, derived = 1 → valid inference site
         # No virtual root; just the real ancestor.
         assert anc["call_genotype"].shape[1] == 1
@@ -1624,8 +1622,8 @@ class TestOneBitEncoding:
             alleles=[["A", "T"]] * 4,
             anc_states=["A", "A", "A", "A"],
         )
-        anc_8bit = infer_ancestors(_src(gt), _cfg(genotype_encoding=0), _anc_state(gt))
-        anc_1bit = infer_ancestors(_src(gt), _cfg(genotype_encoding=1), _anc_state(gt))
+        anc_8bit = infer_ancestors(_src(gt), _cfg(), _anc_state(gt), genotype_encoding=0)
+        anc_1bit = infer_ancestors(_src(gt), _cfg(), _anc_state(gt), genotype_encoding=1)
         self._compare_ancestors(anc_8bit, anc_1bit)
 
     def test_one_bit_multi_interval(self):
@@ -1638,10 +1636,16 @@ class TestOneBitEncoding:
             seq_len=1_000_000,
         )
         anc_8bit = infer_ancestors(
-            _src(gt), _cfg(max_gap_length=500_000, genotype_encoding=0), _anc_state(gt)
+            _src(gt),
+            _cfg(max_gap_length=500_000),
+            _anc_state(gt),
+            genotype_encoding=0,
         )
         anc_1bit = infer_ancestors(
-            _src(gt), _cfg(max_gap_length=500_000, genotype_encoding=1), _anc_state(gt)
+            _src(gt),
+            _cfg(max_gap_length=500_000),
+            _anc_state(gt),
+            genotype_encoding=1,
         )
         self._compare_ancestors(anc_8bit, anc_1bit)
 
@@ -1654,10 +1658,18 @@ class TestOneBitEncoding:
             anc_states=["A", "A", "A", "A"],
         )
         anc_sync = infer_ancestors(
-            _src(gt), _cfg(genotype_encoding=0), _anc_state(gt), num_threads=0
+            _src(gt),
+            _cfg(),
+            _anc_state(gt),
+            num_threads=0,
+            genotype_encoding=0,
         )
         anc_threaded = infer_ancestors(
-            _src(gt), _cfg(genotype_encoding=1), _anc_state(gt), num_threads=3
+            _src(gt),
+            _cfg(),
+            _anc_state(gt),
+            num_threads=3,
+            genotype_encoding=1,
         )
         self._compare_ancestors(anc_sync, anc_threaded)
 
@@ -1681,10 +1693,10 @@ class TestOneBitEncoding:
             anc_states=["A"] * n_sites,
         )
         anc_8bit = infer_ancestors(
-            _src(store), _cfg(genotype_encoding=0), _anc_state(store)
+            _src(store), _cfg(), _anc_state(store), genotype_encoding=0
         )
         anc_1bit = infer_ancestors(
-            _src(store), _cfg(genotype_encoding=1), _anc_state(store)
+            _src(store), _cfg(), _anc_state(store), genotype_encoding=1
         )
         self._compare_ancestors(anc_8bit, anc_1bit)
 
@@ -1697,9 +1709,15 @@ class TestOneBitEncoding:
             anc_states=["A", "A", "A", "A"],
         )
         anc_8bit = infer_ancestors(
-            _src(gt), _cfg(samples_chunk_size=1, genotype_encoding=0), _anc_state(gt)
+            _src(gt),
+            _cfg(samples_chunk_size=1),
+            _anc_state(gt),
+            genotype_encoding=0,
         )
         anc_1bit = infer_ancestors(
-            _src(gt), _cfg(samples_chunk_size=1, genotype_encoding=1), _anc_state(gt)
+            _src(gt),
+            _cfg(samples_chunk_size=1),
+            _anc_state(gt),
+            genotype_encoding=1,
         )
         self._compare_ancestors(anc_8bit, anc_1bit)

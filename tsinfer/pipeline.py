@@ -35,7 +35,12 @@ import tskit
 
 from . import vcz as vcz_mod
 from .ancestors import infer_ancestors
-from .config import DEFAULT_CACHE_SIZE, DEFAULT_NUM_THREADS, Config
+from .config import (
+    DEFAULT_CACHE_SIZE,
+    DEFAULT_GENOTYPE_ENCODING,
+    DEFAULT_NUM_THREADS,
+    Config,
+)
 from .grouping import (
     MatchJob,
     assign_groups,
@@ -354,7 +359,7 @@ def match(
     num_threads: int | None = None,
     cache_size: int | None = None,
     group_stop: int | None = None,
-    read_workers: int = 2,
+    read_workers: int | None = None,
     **kwargs,
 ) -> tskit.TreeSequence:
     """
@@ -366,6 +371,8 @@ def match(
     """
     if num_threads is None:
         num_threads = DEFAULT_NUM_THREADS
+    if read_workers is None:
+        read_workers = max(1, num_threads // 2)
     if cache_size is None:
         cache_size = DEFAULT_CACHE_SIZE
     path_compression = kwargs.get("path_compression", cfg.match.path_compression)
@@ -742,7 +749,8 @@ def run(
     progress: bool = False,
     num_threads: int | None = None,
     cache_size: int | None = None,
-    read_workers: int = 2,
+    genotype_encoding: int | None = None,
+    read_workers: int | None = None,
     **kwargs,
 ) -> tskit.TreeSequence:
     """
@@ -752,6 +760,8 @@ def run(
         num_threads = DEFAULT_NUM_THREADS
     if cache_size is None:
         cache_size = DEFAULT_CACHE_SIZE
+    if genotype_encoding is None:
+        genotype_encoding = DEFAULT_GENOTYPE_ENCODING
     logger.info("Starting full pipeline")
     anc_cfg = cfg.ancestors[0]
     sources = [cfg.sources[name] for name in anc_cfg.sources]
@@ -761,6 +771,7 @@ def run(
         cfg.ancestral_state,
         progress=progress,
         num_threads=num_threads,
+        genotype_encoding=genotype_encoding,
     )
 
     original_path = anc_cfg.path

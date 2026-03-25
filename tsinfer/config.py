@@ -129,7 +129,6 @@ class AncestorsConfig:
     max_gap_length: int = DEFAULT_MAX_GAP_LENGTH
     samples_chunk_size: int = DEFAULT_SAMPLES_CHUNK_SIZE
     variants_chunk_size: int = DEFAULT_VARIANTS_CHUNK_SIZE
-    genotype_encoding: int = DEFAULT_GENOTYPE_ENCODING
     compressor: str = DEFAULT_COMPRESSOR  # blosc cname: zstd, lz4, lz4hc, etc.
     compression_level: int = DEFAULT_COMPRESSION_LEVEL
 
@@ -240,8 +239,6 @@ class Config:
             lines.append(f"  path = {anc.path}")
             lines.append(f"  sources = {anc.sources}")
             lines.append(f"  max_gap_length = {anc.max_gap_length}")
-            enc = "one_bit" if anc.genotype_encoding == 1 else "eight_bit"
-            lines.append(f"  genotype_encoding = {enc}")
             lines.append("")
 
         lines.append("[match]")
@@ -368,7 +365,6 @@ _KNOWN_ANCESTORS_KEYS = {
     "max_gap_length",
     "samples_chunk_size",
     "variants_chunk_size",
-    "genotype_encoding",
     "compressor",
     "compression_level",
 }
@@ -447,15 +443,6 @@ def _parse_one_ancestor(entry: dict) -> AncestorsConfig:
     _check_unknown_keys("ancestors", entry, _KNOWN_ANCESTORS_KEYS)
     try:
         name = entry.get("name", "ancestors")
-        genotype_encoding = entry.get("genotype_encoding", DEFAULT_GENOTYPE_ENCODING)
-        if isinstance(genotype_encoding, str):
-            _encoding_names = {"eight_bit": 0, "one_bit": 1}
-            if genotype_encoding.lower() not in _encoding_names:
-                raise ValueError(
-                    f"[ancestors] genotype_encoding must be 'eight_bit' or "
-                    f"'one_bit'; got '{genotype_encoding}'"
-                )
-            genotype_encoding = _encoding_names[genotype_encoding.lower()]
         return AncestorsConfig(
             name=str(name),
             path=_resolve_path(entry["path"]),
@@ -467,7 +454,6 @@ def _parse_one_ancestor(entry: dict) -> AncestorsConfig:
             variants_chunk_size=int(
                 entry.get("variants_chunk_size", DEFAULT_VARIANTS_CHUNK_SIZE)
             ),
-            genotype_encoding=int(genotype_encoding),
             compressor=str(entry.get("compressor", DEFAULT_COMPRESSOR)),
             compression_level=int(
                 entry.get("compression_level", DEFAULT_COMPRESSION_LEVEL)

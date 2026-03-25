@@ -1946,7 +1946,7 @@ class HaplotypeReader:
         ancestral_alleles: np.ndarray,
         cache_size_mb: int | None = None,
         schedule: list[tuple[str, str, int]] | None = None,
-        read_workers: int = 2,
+        read_workers: int = 1,
     ):
         """
         Parameters
