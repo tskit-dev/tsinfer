@@ -22,23 +22,22 @@ Matching engine: Matcher, grouping algorithm, and tree sequence extension.
 
 from __future__ import annotations
 
+import concurrent.futures as cf
+import dataclasses
 import logging
 import time as time_
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
 
 import numpy as np
 import tskit
 
 import _tsinfer
 
-from .grouping import MatchJob
-from .vcz import AlleleMapper
+from . import grouping, vcz
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
+@dataclasses.dataclass
 class PathSegment:
     """One edge in the copying path: the haplotype copies from *parent*
     over the genomic interval ``[left, right)``."""
@@ -48,7 +47,7 @@ class PathSegment:
     parent: int  # node id in the reference tree sequence
 
 
-@dataclass
+@dataclasses.dataclass
 class Mutation:
     """A single mutation placed by the matching HMM."""
 
@@ -56,7 +55,7 @@ class Mutation:
     derived_state: int  # allele index (typically 1)
 
 
-@dataclass
+@dataclasses.dataclass
 class MatchResult:
     """The output of matching a single haplotype against the reference panel."""
 
@@ -68,7 +67,7 @@ def _tsb_from_ts(
     ts: tskit.TreeSequence,
     num_sites: int,
     positions: np.ndarray,
-    allele_mapper: AlleleMapper,
+    allele_mapper: vcz.AlleleMapper,
     num_alleles: np.ndarray | None = None,
 ):
     """Restore a _tsinfer.TreeSequenceBuilder from a tskit.TreeSequence.
@@ -141,7 +140,7 @@ def make_root_ts(
     sequence_length: float,
     positions: np.ndarray,  # (num_sites,) int32
     sequence_intervals: np.ndarray,  # (n_intervals, 2) int32
-    allele_mapper: AlleleMapper,
+    allele_mapper: vcz.AlleleMapper,
     max_time: float = 0.0,
     individuals: list[dict] | None = None,
     populations: list[dict] | None = None,
@@ -224,7 +223,7 @@ class Matcher:
         self,
         ts: tskit.TreeSequence,
         positions: np.ndarray,  # (num_sites,) int32 — inference site positions
-        allele_mapper: AlleleMapper,
+        allele_mapper: vcz.AlleleMapper,
         path_compression: bool = True,
         num_alleles: np.ndarray | None = None,
     ):
@@ -330,19 +329,19 @@ class Matcher:
             Maximum worker threads (default 1 — sequential).
         """
         jobs = sorted(jobs, key=lambda j: j.haplotype_index if j is not None else -1)
-        with ThreadPoolExecutor(max_workers=max(1, num_threads)) as executor:
+        with cf.ThreadPoolExecutor(max_workers=max(1, num_threads)) as executor:
             futures = {
                 executor.submit(self._match_one, job, reader): job for job in jobs
             }
-            for future in as_completed(futures):
+            for future in cf.as_completed(futures):
                 yield future.result()
 
 
 def extend_ts(
     ts: tskit.TreeSequence,
     *,
-    paired_results: list[tuple[MatchJob, MatchResult]],
-    allele_mapper: AlleleMapper,
+    paired_results: list[tuple[grouping.MatchJob, MatchResult]],
+    allele_mapper: vcz.AlleleMapper,
 ) -> tskit.TreeSequence:
     """
     Extend ts with the match results for one group.

@@ -22,9 +22,9 @@ Configuration dataclasses and TOML loading for the tsinfer pipeline.
 
 from __future__ import annotations
 
+import dataclasses
+import pathlib
 import tomllib
-from dataclasses import dataclass, field
-from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Field specification type
@@ -54,7 +54,7 @@ DEFAULT_CACHE_SIZE = 256  # MiB
 DEFAULT_CLI_THREADS = 1
 
 
-def _resolve_path(p: str | Path | None) -> str | Path | None:
+def _resolve_path(p: str | pathlib.Path | None) -> str | pathlib.Path | None:
     """Return *p* as-is (string or Path).
 
     Remote URLs (containing ``://``) are returned unchanged as strings.
@@ -84,7 +84,7 @@ def _resolve_field_spec(spec: FieldSpec) -> FieldSpec:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclasses.dataclass
 class Source:
     """
     A named, configured view over a VCZ store.
@@ -97,7 +97,7 @@ class Source:
     sample_time is metadata (not filtering) and uses a FieldSpec.
     """
 
-    path: str | Path
+    path: str | pathlib.Path
     name: str = ""
     include: str | None = None
     exclude: str | None = None
@@ -111,20 +111,20 @@ class Source:
             raise ValueError("Source must have a non-empty name")
 
 
-@dataclass
+@dataclasses.dataclass
 class AncestralState:
     """Specifies where to read the ancestral allele for each variant position."""
 
-    path: str | Path
+    path: str | pathlib.Path
     field: str
 
 
-@dataclass
+@dataclasses.dataclass
 class AncestorsConfig:
     """Configuration for the infer_ancestors step."""
 
     name: str
-    path: str | Path
+    path: str | pathlib.Path
     sources: list[str]
     max_gap_length: int = DEFAULT_MAX_GAP_LENGTH
     samples_chunk_size: int = DEFAULT_SAMPLES_CHUNK_SIZE
@@ -133,7 +133,7 @@ class AncestorsConfig:
     compression_level: int = DEFAULT_COMPRESSION_LEVEL
 
 
-@dataclass
+@dataclasses.dataclass
 class MatchSourceConfig:
     """Per-source parameters for the match step."""
 
@@ -141,19 +141,19 @@ class MatchSourceConfig:
     create_individuals: bool = True
 
 
-@dataclass
+@dataclasses.dataclass
 class MatchConfig:
     """Configuration for the match step."""
 
     sources: dict[str, MatchSourceConfig]
-    output: str | Path
+    output: str | pathlib.Path
     path_compression: bool = True
-    reference_ts: str | Path | None = None
-    workdir: str | Path | None = None
+    reference_ts: str | pathlib.Path | None = None
+    workdir: str | pathlib.Path | None = None
     keep_intermediates: bool = False
 
 
-@dataclass
+@dataclasses.dataclass
 class PostProcessConfig:
     """Configuration for the post_process step."""
 
@@ -161,14 +161,14 @@ class PostProcessConfig:
     erase_flanks: bool = True
 
 
-@dataclass
+@dataclasses.dataclass
 class AugmentSitesConfig:
     """Configuration for the augment_sites step."""
 
     sources: list[str]
 
 
-@dataclass
+@dataclasses.dataclass
 class IndividualMetadataConfig:
     """
     Declares how to populate tskit individual metadata from VCZ arrays.
@@ -177,11 +177,11 @@ class IndividualMetadataConfig:
     population: VCZ array name whose unique values become tskit populations.
     """
 
-    fields: dict[str, str] = field(default_factory=dict)
+    fields: dict[str, str] = dataclasses.field(default_factory=dict)
     population: str | None = None
 
 
-@dataclass
+@dataclasses.dataclass
 class Config:
     """
     Full pipeline configuration. Constructed directly or via Config.from_toml().
@@ -287,11 +287,11 @@ class Config:
             if name in ancestor_names:
                 continue  # ancestor paths are outputs, not inputs
             if src.path is not None:
-                p = Path(str(src.path))
+                p = pathlib.Path(str(src.path))
                 if not p.exists():
                     errors.append(f"Source '{name}' path does not exist: {src.path}")
             if isinstance(src.sample_time, dict) and "path" in src.sample_time:
-                if not Path(str(src.sample_time["path"])).exists():
+                if not pathlib.Path(str(src.sample_time["path"])).exists():
                     errors.append(
                         f"Source '{name}' sample_time path does not "
                         f"exist: {src.sample_time['path']}"
@@ -307,13 +307,13 @@ class Config:
                     )
 
         if self.match.reference_ts is not None:
-            p = Path(str(self.match.reference_ts))
+            p = pathlib.Path(str(self.match.reference_ts))
             if not p.exists():
                 errors.append(
                     f"Match reference_ts path does not exist: {self.match.reference_ts}"
                 )
 
-        p = Path(str(self.ancestral_state.path))
+        p = pathlib.Path(str(self.ancestral_state.path))
         if not p.exists():
             errors.append(
                 f"Ancestral state path does not exist: {self.ancestral_state.path}"
@@ -322,7 +322,7 @@ class Config:
         return errors
 
     @classmethod
-    def from_toml(cls, path: str | Path) -> Config:
+    def from_toml(cls, path: str | pathlib.Path) -> Config:
         """Load and parse a TOML config file."""
         with open(path, "rb") as f:
             raw = tomllib.load(f)

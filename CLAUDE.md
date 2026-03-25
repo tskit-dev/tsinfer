@@ -69,14 +69,32 @@ Sample VCZ → `infer_ancestors` → Ancestor VCZ → `match` → raw `tskit.Tre
 
 ## Code Style
 
-- Prefer tuples over dataclasses when returning multiple values
-- Use explicit `None` comparisons: `if x is not None` not `if x`
+- Do not be overly defensive - defend only against circumstances that can
+  occur within the current codebase.
+- Prefer dataclasses over tuples when returning multiple values.
+- Use explicit `None` comparisons: `if x is not None` not `if x`.
+- Zarr v3 is now used (dependency: `zarr>=3`).
+- Import all modules at the top of the file unless compelling reason otherwise.
+- Prefer importing a module and using module.function instead of
+  using ``from module import function``. This applies to intra-package
+  imports too: use ``from . import config`` then ``config.X``, not
+  ``from .config import X``. Exceptions: ``from typing import ...`` is
+  acceptable; ``from .X import Y`` is acceptable in ``__init__.py`` for
+  defining the public API. Use ``import concurrent.futures as cf``.
+- Use idiomatic pathlib.Path operations instead of os.path operations.
+- When a parameter has a computed default derived from another parameter,
+  compute it once at the point of use (the leaf function), not at every
+  layer in the call chain. Pass `None` through intermediate layers.
+- Use PEP 604 union syntax: `int | None`, not `Optional[int]`.
+- One `logger = logging.getLogger(__name__)` per module at top level.
+
+## Tool use
+
 - Use `uv run` for all Python tooling (never bare `python -m`)
-- Zarr v3 is now used (dependency: `zarr>=3`)
-- Import all modules at the top of the file unless compelling reason otherwise
 
 ## Testing
 
+- Organise tests in classes, not flat functions. Use pytest fixtures for setup.
 - Test helpers are in `tests/helpers.py` (e.g., `make_sample_vcz`, `make_ancestor_vcz`)
 - `tests/algorithm.py` contains Python reference implementations used to verify C code
 - `msprime` is used to simulate test data

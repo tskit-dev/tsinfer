@@ -41,13 +41,13 @@ Low-level utilities for reading and writing VCZ (VCF Zarr) stores.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import math
+import pathlib
 import queue
 import threading
 import time as _time
-from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -56,7 +56,7 @@ from vcztools.retrieval import variant_chunk_iter
 from vcztools.samples import parse_samples
 from zarr.core.dtype.npy.string import VariableLengthUTF8
 
-from .config import DEFAULT_ANCESTOR_WRITE_THREADS, DEFAULT_CACHE_SIZE
+from . import config
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +64,7 @@ _VLEN_STR = VariableLengthUTF8()
 _ZARR_FORMAT = 2
 
 
-@dataclass
+@dataclasses.dataclass
 class Variant:
     """A single variant yielded by ``MultiSourceView.iter_genotypes``."""
 
@@ -78,15 +78,15 @@ class Variant:
 # ---------------------------------------------------------------------------
 
 
-def open_group(store: str | Path | None = None) -> zarr.Group:
+def open_group(store: str | pathlib.Path | None = None) -> zarr.Group:
     """
     Open a writable zarr Group.
 
     Parameters
     ----------
-    store : str, Path, or None
+    store : str, pathlib.Path, or None
         - ``None`` → in-memory store (MemoryStore).
-        - ``str`` / ``Path`` → filesystem-backed store at that path.
+        - ``str`` / ``pathlib.Path`` → filesystem-backed store at that path.
     """
     if store is None:
         return zarr.open_group(
@@ -95,12 +95,12 @@ def open_group(store: str | Path | None = None) -> zarr.Group:
     return zarr.open_group(str(store), mode="w", zarr_format=_ZARR_FORMAT)
 
 
-def open_store(path_or_group: str | Path | zarr.Group) -> zarr.Group:
+def open_store(path_or_group: str | pathlib.Path | zarr.Group) -> zarr.Group:
     """
     Return a zarr Group for the given path, URL, or existing Group.
 
     - zarr.Group  → returned unchanged (in-memory or already-open store)
-    - str / Path  → opened with ``zarr.open(..., mode="r")``
+    - str / pathlib.Path  → opened with ``zarr.open(..., mode="r")``
     """
     if isinstance(path_or_group, zarr.Group):
         return path_or_group
@@ -465,7 +465,7 @@ def _build_output_alleles(alleles, anc_indices, num_sites):
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclasses.dataclass
 class _WorkItem:
     """Work item for the worker thread pool."""
 
@@ -615,7 +615,7 @@ class ActiveChunkRegistry:
             return bufs
 
 
-@dataclass
+@dataclasses.dataclass
 class PipelineStats:
     """Timing statistics collected across all threads of an AncestorWriter."""
 
@@ -688,7 +688,7 @@ class AncestorWriter:
         if num_threads is None:
             num_threads = 0
         if write_threads is None:
-            write_threads = DEFAULT_ANCESTOR_WRITE_THREADS
+            write_threads = config.DEFAULT_ANCESTOR_WRITE_THREADS
         self._root = zarr_root
         self._num_sites = num_sites
         self._chunk_size = chunk_size
@@ -2010,7 +2010,7 @@ class HaplotypeReader:
         """
         Parameters
         ----------
-        sources : dict[str, Source]
+        sources : dict[str, config.Source]
             All sources to read from (including ancestor sources).
         positions : np.ndarray
             Reference variant positions (the coordinate system).
@@ -2033,7 +2033,7 @@ class HaplotypeReader:
         if read_workers is None:
             read_workers = max(1, num_threads // 2)
         if cache_size_mb is None:
-            cache_size_mb = DEFAULT_CACHE_SIZE
+            cache_size_mb = config.DEFAULT_CACHE_SIZE
         self._positions = np.asarray(positions, dtype=np.int32)
         self._ancestral_alleles = ancestral_alleles
         self._sources = sources
@@ -2205,7 +2205,7 @@ def write_empty_ancestor_vcz(
     ----------
     seq_intervals : array-like
         Sequence interval array to write.
-    store : str, Path, or None
+    store : str, pathlib.Path, or None
         Backing store — ``None`` for in-memory, or a filesystem path.
     contig_id : str
         Contig name for vcztools compatibility.
@@ -2325,9 +2325,7 @@ class MultiSourceView:
     ):
         from functools import reduce
 
-        from .config import Source
-
-        if isinstance(sources, Source):
+        if isinstance(sources, config.Source):
             sources = [sources]
 
         n_sources = len(sources)

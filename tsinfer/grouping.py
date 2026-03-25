@@ -26,7 +26,6 @@ from __future__ import annotations
 import dataclasses
 import logging
 import time as time_
-from dataclasses import dataclass
 
 import numba
 import numpy as np
@@ -35,7 +34,7 @@ logging.getLogger("numba").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
-@dataclass
+@dataclasses.dataclass
 class MatchJob:
     """One row of the compute-groups output — one per haplotype."""
 

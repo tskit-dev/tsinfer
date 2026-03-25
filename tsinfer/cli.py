@@ -37,25 +37,14 @@ from __future__ import annotations
 import collections
 import json
 import logging
+import pathlib
 import sys
 import warnings
-from pathlib import Path
 
 import click
 import tskit
 
-from .ancestors import infer_ancestors
-from .config import (
-    DEFAULT_CACHE_SIZE,
-    DEFAULT_CLI_THREADS,
-    DEFAULT_GENOTYPE_ENCODING,
-    DEFAULT_WRITE_THREADS,
-    Config,
-)
-from .pipeline import augment_sites as pipeline_augment_sites
-from .pipeline import match as pipeline_match
-from .pipeline import post_process as pipeline_post_process
-from .pipeline import run as pipeline_run
+from . import ancestors, config, pipeline
 
 logger = logging.getLogger(__name__)
 
@@ -78,9 +67,9 @@ def _setup_logging(verbose: int) -> None:
     logging.getLogger("numcodecs").setLevel(max(level, logging.WARNING))
 
 
-def _check_output(path: str | Path, force: bool) -> None:
+def _check_output(path: str | pathlib.Path, force: bool) -> None:
     """Raise click.ClickException if output exists and --force is not set."""
-    p = Path(path)
+    p = pathlib.Path(path)
     if p.exists() and not force:
         raise click.ClickException(
             f"Output file '{p}' already exists. Use --force to overwrite."
@@ -97,12 +86,14 @@ def main():
 # Shared options
 # ---------------------------------------------------------------------------
 
-_config_arg = click.argument("config", metavar="CONFIG", type=click.Path(exists=True))
+_config_arg = click.argument(
+    "config_path", metavar="CONFIG", type=click.Path(exists=True)
+)
 
 _runtime_options = [
     click.option(
         "--threads",
-        default=DEFAULT_CLI_THREADS,
+        default=config.DEFAULT_CLI_THREADS,
         show_default=True,
         help="Worker threads.",
     ),
@@ -127,7 +118,9 @@ def _add_options(options):
 
 
 _ENCODING_NAMES = {"one-bit": 1, "eight-bit": 0}
-_DEFAULT_ENCODING_NAME = "one-bit" if DEFAULT_GENOTYPE_ENCODING == 1 else "eight-bit"
+_DEFAULT_ENCODING_NAME = (
+    "one-bit" if config.DEFAULT_GENOTYPE_ENCODING == 1 else "eight-bit"
+)
 
 
 @main.command("infer-ancestors")
@@ -135,7 +128,7 @@ _DEFAULT_ENCODING_NAME = "one-bit" if DEFAULT_GENOTYPE_ENCODING == 1 else "eight
 @_add_options(_runtime_options)
 @click.option(
     "--write-threads",
-    default=DEFAULT_WRITE_THREADS,
+    default=config.DEFAULT_WRITE_THREADS,
     show_default=True,
     help="Writer threads for Zarr I/O.",
 )
@@ -149,7 +142,7 @@ _DEFAULT_ENCODING_NAME = "one-bit" if DEFAULT_GENOTYPE_ENCODING == 1 else "eight
     "eight-bit is required when genotypes contain missing data.",
 )
 def infer_ancestors_cmd(
-    config,
+    config_path,
     threads,
     write_threads,
     genotype_encoding,
@@ -159,7 +152,7 @@ def infer_ancestors_cmd(
 ):
     """Build the ancestor VCZ store from the samples VCZ."""
     _setup_logging(verbose)
-    cfg = Config.from_toml(config)
+    cfg = config.Config.from_toml(config_path)
     if progress and threads <= 0:
         warnings.warn(
             "--progress has no effect without --threads; "
@@ -172,7 +165,7 @@ def infer_ancestors_cmd(
         "Inferring ancestors from sources: %s",
         ", ".join(f"'{name}'" for name in anc_cfg.sources),
     )
-    infer_ancestors(
+    ancestors.infer_ancestors(
         sources,
         anc_cfg,
         cfg.ancestral_state,
@@ -199,7 +192,7 @@ def infer_ancestors_cmd(
 )
 @click.option(
     "--cache-size",
-    default=DEFAULT_CACHE_SIZE,
+    default=config.DEFAULT_CACHE_SIZE,
     show_default=True,
     help="Genotype chunk cache size in MiB.",
 )
@@ -226,7 +219,7 @@ def infer_ancestors_cmd(
 )
 @_add_options(_runtime_options)
 def match_cmd(
-    config,
+    config_path,
     workdir,
     keep_intermediates,
     cache_size,
@@ -240,14 +233,14 @@ def match_cmd(
 ):
     """Run the unified match loop (ancestors + samples)."""
     _setup_logging(verbose)
-    cfg = Config.from_toml(config)
+    cfg = config.Config.from_toml(config_path)
     if workdir is not None:
         cfg.match.workdir = workdir
     if keep_intermediates:
         cfg.match.keep_intermediates = True
     _check_output(cfg.match.output, force)
     logger.info("Running match")
-    ts = pipeline_match(
+    ts = pipeline.match(
         cfg,
         progress=progress,
         num_threads=threads,
@@ -270,13 +263,13 @@ def match_cmd(
     help="Input tree sequence file.",
 )
 @_add_options(_runtime_options)
-def post_process_cmd(config, input_ts, threads, force, progress, verbose):
+def post_process_cmd(config_path, input_ts, threads, force, progress, verbose):
     """Post-process a matched tree sequence."""
     _setup_logging(verbose)
-    cfg = Config.from_toml(config)
+    cfg = config.Config.from_toml(config_path)
     ts = tskit.load(input_ts)
     logger.info("Post-processing %s (%d nodes)", input_ts, ts.num_nodes)
-    ts = pipeline_post_process(ts, cfg)
+    ts = pipeline.post_process(ts, cfg)
     output = str(cfg.match.output)
     _check_output(output, force)
     ts.dump(output)
@@ -300,14 +293,16 @@ def post_process_cmd(config, input_ts, threads, force, progress, verbose):
     help="Output tree sequence file.",
 )
 @_add_options(_runtime_options)
-def augment_sites_cmd(config, input_ts, output_path, threads, force, progress, verbose):
+def augment_sites_cmd(
+    config_path, input_ts, output_path, threads, force, progress, verbose
+):
     """Place non-inference sites onto a tree sequence using parsimony."""
     _setup_logging(verbose)
-    cfg = Config.from_toml(config)
+    cfg = config.Config.from_toml(config_path)
     ts = tskit.load(input_ts)
     _check_output(output_path, force)
     logger.info("Augmenting sites on %s (%d sites)", input_ts, ts.num_sites)
-    ts = pipeline_augment_sites(ts, cfg, progress=progress)
+    ts = pipeline.augment_sites(ts, cfg, progress=progress)
     ts.dump(str(output_path))
     logger.info("Augment complete: %d sites", ts.num_sites)
 
@@ -316,7 +311,7 @@ def augment_sites_cmd(config, input_ts, output_path, threads, force, progress, v
 @_config_arg
 @click.option(
     "--cache-size",
-    default=DEFAULT_CACHE_SIZE,
+    default=config.DEFAULT_CACHE_SIZE,
     show_default=True,
     help="Genotype chunk cache size in MiB.",
 )
@@ -344,7 +339,7 @@ def augment_sites_cmd(config, input_ts, output_path, threads, force, progress, v
 )
 @_add_options(_runtime_options)
 def run_cmd(
-    config,
+    config_path,
     cache_size,
     genotype_encoding,
     read_workers,
@@ -356,10 +351,10 @@ def run_cmd(
 ):
     """Run the full pipeline: infer-ancestors, match, post-process, augment-sites."""
     _setup_logging(verbose)
-    cfg = Config.from_toml(config)
+    cfg = config.Config.from_toml(config_path)
     _check_output(cfg.match.output, force)
     logger.info("Running full pipeline")
-    ts = pipeline_run(
+    ts = pipeline.run(
         cfg,
         progress=progress,
         num_threads=threads,
@@ -386,7 +381,7 @@ def run_cmd(
 @click.argument("json_file", metavar="JSON_FILE", type=click.Path(exists=True))
 def show_match_jobs_cmd(json_file):
     """Show a histogram of match-jobs group sizes."""
-    records = json.loads(Path(json_file).read_text())
+    records = json.loads(pathlib.Path(json_file).read_text())
 
     group_intervals: dict[int, list[float]] = collections.defaultdict(list)
     group_chunks: dict[int, set[tuple[str, int]]] = collections.defaultdict(set)
@@ -434,17 +429,17 @@ def config_group():
 
 @config_group.command("show")
 @_config_arg
-def config_show(config):
+def config_show(config_path):
     """Print the resolved config with defaults filled in."""
-    cfg = Config.from_toml(config)
+    cfg = config.Config.from_toml(config_path)
     click.echo(cfg.format())
 
 
 @config_group.command("check")
 @_config_arg
-def config_check(config):
+def config_check(config_path):
     """Validate the config and verify all input paths exist."""
-    cfg = Config.from_toml(config)
+    cfg = config.Config.from_toml(config_path)
     errors = cfg.validate()
     if errors:
         for err in errors:

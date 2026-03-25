@@ -324,28 +324,29 @@ class TestAncestorBuilder:
             ab.make_ancestor([0], np.zeros(100, dtype=np.int8))
 
 
-def test_uninitialised():
-    for _, cls in inspect.getmembers(_tsinfer):
-        if (
-            isinstance(cls, type)
-            and not issubclass(cls, Exception)
-            and not issubclass(cls, tuple)
-        ):
-            methods = []
-            attributes = []
-            for name, value in inspect.getmembers(cls):
-                if not name.startswith("__"):
-                    if inspect.isdatadescriptor(value):
-                        attributes.append(name)
-                    else:
-                        methods.append(name)
-            uninitialised = cls.__new__(cls)
-            for attr in attributes:
-                with pytest.raises((SystemError, ValueError)):
-                    getattr(uninitialised, attr)
-                with pytest.raises((SystemError, ValueError, AttributeError)):
-                    setattr(uninitialised, attr, None)
-            for method_name in methods:
-                method = getattr(uninitialised, method_name)
-                with pytest.raises((SystemError, ValueError)):
-                    method()
+class TestUninitialised:
+    def test_uninitialised(self):
+        for _, cls in inspect.getmembers(_tsinfer):
+            if (
+                isinstance(cls, type)
+                and not issubclass(cls, Exception)
+                and not issubclass(cls, tuple)
+            ):
+                methods = []
+                attributes = []
+                for name, value in inspect.getmembers(cls):
+                    if not name.startswith("__"):
+                        if inspect.isdatadescriptor(value):
+                            attributes.append(name)
+                        else:
+                            methods.append(name)
+                uninitialised = cls.__new__(cls)
+                for attr in attributes:
+                    with pytest.raises((SystemError, ValueError)):
+                        getattr(uninitialised, attr)
+                    with pytest.raises((SystemError, ValueError, AttributeError)):
+                        setattr(uninitialised, attr, None)
+                for method_name in methods:
+                    method = getattr(uninitialised, method_name)
+                    with pytest.raises((SystemError, ValueError)):
+                        method()
