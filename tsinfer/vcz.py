@@ -46,7 +46,6 @@ import math
 import queue
 import threading
 import time as _time
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -1227,16 +1226,17 @@ def finalize_ancestor_zarr(root, focal_positions_acc, compressor=None):
 
 
 class ScheduledCache:
-    """Schedule-driven chunk cache keyed by (source_name, chunk_index).
+    """Schedule-driven chunk cache with a pool of read workers.
 
     Requires a full read schedule at construction: a refcount per chunk
     (how many haplotype reads will use it) and the order chunks will first
     be needed.
 
-    ``prime()`` fills the cache in a background thread at startup.
-    Chunks are evicted when their refcount reaches zero, and the next
-    needed chunk is loaded in the background.  ``get()`` never triggers
-    a load — it returns cached data or waits for readahead to deliver it.
+    A pool of background worker threads autonomously loads chunks in
+    schedule order, blocking when the memory budget is full.  Chunks are
+    evicted when their refcount reaches zero, freeing space for workers.
+    ``get()`` never triggers a load — it returns cached data or waits
+    for a worker to deliver it.
     """
 
     def __init__(
@@ -1244,25 +1244,26 @@ class ScheduledCache:
         max_bytes: int,
         refcounts: dict[tuple[str, int], int],
         chunk_order: list[tuple[str, int]],
+        num_workers: int = 1,
     ):
         self._max_bytes = max_bytes
         self._chunks: dict[tuple[str, int], np.ndarray] = {}
         self._current_bytes = 0
+        self._pending_bytes = 0
         self._refcount = dict(refcounts)
         self._chunk_order = chunk_order
         self._cursor = 0
         self._condition = threading.Condition()
         self._loaders: dict[str, Any] = {}
         self._chunk_bytes: dict[str, int] = {}
-        self._readahead_executor = ThreadPoolExecutor(max_workers=1)
-        self._readahead_key: tuple[str, int] | None = None
-        self._priming = False
+        self._shutdown = False
+        self._num_workers = num_workers
+        self._workers: list[threading.Thread] = []
         self._hits = 0
         self._misses = 0
         self._total_load_time = 0.0
         self._total_wait_time = 0.0
-        self._total_readahead_loads = 0
-        self._total_prime_loads = 0
+        self._total_loads = 0
         self._total_evictions = 0
         self._total_evicted_bytes = 0
         self._t_start = _time.monotonic()
@@ -1277,6 +1278,17 @@ class ScheduledCache:
         self._loaders[source_name] = load_fn
         self._chunk_bytes[source_name] = chunk_bytes
 
+    def start(self) -> None:
+        """Start the read worker pool."""
+        for i in range(self._num_workers):
+            t = threading.Thread(
+                target=self._worker_loop,
+                name=f"cache-worker-{i}",
+                daemon=True,
+            )
+            t.start()
+            self._workers.append(t)
+
     def _cache_state_summary(self) -> str:
         """Return a brief snapshot of cached chunks and their refcounts.
 
@@ -1288,35 +1300,7 @@ class ScheduledCache:
             parts.append(f"{src}:{idx}(ref={ref})")
         return "[" + ", ".join(parts) + "]"
 
-    # ----- internal loading ------------------------------------------------
-
-    def _load_chunk(self, key: tuple[str, int]) -> np.ndarray:
-        """Load a chunk via the registered loader and insert into cache.
-
-        Caller must ensure there is room (``_current_bytes + size <= _max_bytes``).
-        Notifies any ``get()`` waiters after insertion.
-        """
-        t_load = _time.monotonic()
-        data = self._loaders[key[0]](key[1])
-        load_elapsed = _time.monotonic() - t_load
-        with self._condition:
-            self._chunks[key] = data
-            self._current_bytes += data.nbytes
-            self._total_load_time += load_elapsed
-            state = self._cache_state_summary()
-            self._condition.notify_all()
-        logger.info(
-            "Chunk cache load: source=%s chunk=%d size=%.1f MiB"
-            " load=%.3fs (total: %.1f MiB, %d entries)",
-            key[0],
-            key[1],
-            data.nbytes / (1024 * 1024),
-            load_elapsed,
-            self._current_bytes / (1024 * 1024),
-            len(self._chunks),
-        )
-        logger.debug("Chunk cache state: %s", state)
-        return data
+    # ----- worker pool -----------------------------------------------------
 
     def _advance_cursor(self) -> tuple[str, int] | None:
         """Advance cursor past cached/unneeded chunks, return next needed key.
@@ -1334,10 +1318,53 @@ class ScheduledCache:
             return k
         return None
 
+    def _worker_loop(self) -> None:
+        """Worker: pull chunks from the schedule and load them."""
+        while True:
+            with self._condition:
+                while not self._shutdown:
+                    key = self._advance_cursor()
+                    if key is None:
+                        return  # schedule exhausted
+                    est = self._chunk_bytes.get(key[0], 0)
+                    committed = self._current_bytes + self._pending_bytes + est
+                    if committed <= self._max_bytes:
+                        self._cursor += 1
+                        self._pending_bytes += est
+                        break
+                    self._condition.wait()
+                else:
+                    return  # shutdown requested
+
+            t_load = _time.monotonic()
+            data = self._loaders[key[0]](key[1])
+            load_elapsed = _time.monotonic() - t_load
+
+            with self._condition:
+                self._chunks[key] = data
+                self._current_bytes += data.nbytes
+                self._pending_bytes -= est
+                self._total_load_time += load_elapsed
+                self._total_loads += 1
+                state = self._cache_state_summary()
+                self._condition.notify_all()
+
+            logger.info(
+                "Chunk cache load: source=%s chunk=%d size=%.1f MiB"
+                " load=%.3fs (total: %.1f MiB, %d entries)",
+                key[0],
+                key[1],
+                data.nbytes / (1024 * 1024),
+                load_elapsed,
+                self._current_bytes / (1024 * 1024),
+                len(self._chunks),
+            )
+            logger.debug("Chunk cache state: %s", state)
+
     # ----- public interface ------------------------------------------------
 
     def get(self, key: tuple[str, int]) -> np.ndarray:
-        """Return cached chunk, waiting for readahead if necessary."""
+        """Return cached chunk, waiting for a worker to load it."""
         with self._condition:
             if key in self._chunks:
                 self._hits += 1
@@ -1352,8 +1379,8 @@ class ScheduledCache:
     def record_read(self, key: tuple[str, int]) -> None:
         """Record that one haplotype was read from *key*.
 
-        When the refcount reaches zero the chunk is evicted and
-        readahead is attempted for the next needed chunk.
+        When the refcount reaches zero the chunk is evicted, freeing
+        memory for workers to load the next chunks.
         """
         evicted = False
         freed = 0
@@ -1371,6 +1398,8 @@ class ScheduledCache:
                     self._total_evicted_bytes += freed
                     evicted = True
             state = self._cache_state_summary()
+            if evicted:
+                self._condition.notify_all()
         if evicted:
             logger.info(
                 "Chunk cache evict (refcount=0): source=%s chunk=%d"
@@ -1382,8 +1411,6 @@ class ScheduledCache:
                 len(self._chunks),
             )
             logger.debug("Chunk cache state: %s", state)
-            if not self._priming:
-                self._schedule_readahead()
         else:
             logger.debug(
                 "Chunk cache read: source=%s chunk=%d refcount=%d",
@@ -1391,30 +1418,6 @@ class ScheduledCache:
                 key[1],
                 remaining,
             )
-
-    def prime(self) -> None:
-        """Start filling the cache in the background thread."""
-        self._priming = True
-        self._readahead_executor.submit(self._do_prime)
-
-    def _do_prime(self) -> None:
-        """Background worker: load chunks until cache is full."""
-        try:
-            while True:
-                with self._condition:
-                    next_key = self._advance_cursor()
-                    if next_key is None:
-                        break
-                    est = self._chunk_bytes.get(next_key[0], 0)
-                    if self._current_bytes + est > self._max_bytes:
-                        break
-                    self._cursor += 1
-                self._load_chunk(next_key)
-                self._total_prime_loads += 1
-        finally:
-            with self._condition:
-                self._priming = False
-            self._schedule_readahead()
 
     def log_state(self) -> None:
         """Log an info-level summary of current cache state."""
@@ -1429,52 +1432,19 @@ class ScheduledCache:
             ready_haps,
         )
 
-    # ----- background read-ahead ------------------------------------------
-
-    def _schedule_readahead(self) -> None:
-        """Submit background load for the next needed chunk, if room."""
-        with self._condition:
-            if self._priming:
-                return
-            if self._readahead_key is not None:
-                return
-            next_key = self._advance_cursor()
-            if next_key is None:
-                return
-            est = self._chunk_bytes.get(next_key[0], 0)
-            if self._current_bytes + est > self._max_bytes:
-                return
-            self._readahead_key = next_key
-            self._cursor += 1
-        logger.info(
-            "Chunk cache readahead submit: source=%s chunk=%d",
-            next_key[0],
-            next_key[1],
-        )
-        self._readahead_executor.submit(self._do_readahead, next_key)
-
-    def _do_readahead(self, key: tuple[str, int]) -> None:
-        """Background worker: load one chunk, then try the next."""
-        try:
-            self._load_chunk(key)
-            self._total_readahead_loads += 1
-        finally:
-            with self._condition:
-                self._readahead_key = None
-            self._schedule_readahead()
-
     def shutdown(self) -> None:
-        """Shut down the read-ahead executor and log summary stats."""
-        self._readahead_executor.shutdown(wait=True)
+        """Stop workers and log summary stats."""
+        with self._condition:
+            self._shutdown = True
+            self._condition.notify_all()
+        for t in self._workers:
+            t.join(timeout=10)
         wall = _time.monotonic() - self._t_start
-        total_loads = self._total_prime_loads + self._total_readahead_loads
         logger.info(
-            "Chunk cache summary: %d loads (prime=%d readahead=%d)"
+            "Chunk cache summary: %d loads"
             " %d evictions, %d hits, %d misses,"
             " load_time=%.1fs wait_time=%.1fs wall=%.1fs",
-            total_loads,
-            self._total_prime_loads,
-            self._total_readahead_loads,
+            self._total_loads,
             self._total_evictions,
             self._hits,
             self._misses,
@@ -1976,6 +1946,7 @@ class HaplotypeReader:
         ancestral_alleles: np.ndarray,
         cache_size_mb: int | None = None,
         schedule: list[tuple[str, str, int]] | None = None,
+        read_workers: int = 2,
     ):
         """
         Parameters
@@ -1993,6 +1964,8 @@ class HaplotypeReader:
             Ordered list of every haplotype read that will be made.
             The cache uses this to compute per-chunk reference counts
             for deterministic eviction and background read-ahead.
+        read_workers : int
+            Number of background threads that load chunks into the cache.
         """
         if cache_size_mb is None:
             cache_size_mb = DEFAULT_CACHE_SIZE
@@ -2084,11 +2057,13 @@ class HaplotypeReader:
                 chunk_order.append(key)
                 seen.add(key)
 
-        self._cache = ScheduledCache(max_bytes, refcounts, chunk_order)
+        self._cache = ScheduledCache(
+            max_bytes, refcounts, chunk_order, num_workers=read_workers
+        )
         for name, reader in self._readers.items():
             reader._cache = self._cache
             self._cache.register_loader(name, reader._do_load_chunk, reader.chunk_bytes)
-        self._cache.prime()
+        self._cache.start()
 
         self._readers_lock = threading.Lock()
 
