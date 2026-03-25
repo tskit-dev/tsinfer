@@ -1245,6 +1245,8 @@ class ScheduledCache:
         self._lock = threading.Lock()
         self._pending: dict[tuple[str, int], threading.Event] = {}
         self._loaders: dict[str, Any] = {}
+        self._chunk_bytes: dict[str, int] = {}
+        self._pending_bytes = 0
         self._readahead_executor = ThreadPoolExecutor(max_workers=1)
         self._readahead_pending: set[tuple[str, int]] = set()
         self._hits = 0
@@ -1262,9 +1264,11 @@ class ScheduledCache:
         self,
         source_name: str,
         load_fn,
+        chunk_bytes: int = 0,
     ) -> None:
         """Register a loader ``load_fn(chunk_idx) -> ndarray`` for a source."""
         self._loaders[source_name] = load_fn
+        self._chunk_bytes[source_name] = chunk_bytes
 
     # ----- public interface used by VCZHaplotypeReader ---------------------
 
@@ -1431,17 +1435,21 @@ class ScheduledCache:
                 if k[0] not in self._loaders:
                     self._cursor += 1
                     continue
-                if self._current_bytes >= self._max_bytes:
+                committed = self._current_bytes + self._pending_bytes
+                if committed >= self._max_bytes:
                     logger.debug(
                         "Chunk cache readahead skipped (at capacity):"
-                        " source=%s chunk=%d cached=%.1f MiB limit=%.1f MiB",
+                        " source=%s chunk=%d cached=%.1f MiB"
+                        " pending=%.1f MiB limit=%.1f MiB",
                         k[0],
                         k[1],
                         self._current_bytes / (1024 * 1024),
+                        self._pending_bytes / (1024 * 1024),
                         self._max_bytes / (1024 * 1024),
                     )
                     return
                 self._readahead_pending.add(k)
+                self._pending_bytes += self._chunk_bytes.get(k[0], 0)
                 next_key = k
                 self._cursor += 1
                 break
@@ -1454,6 +1462,17 @@ class ScheduledCache:
             )
             self._readahead_executor.submit(self._do_readahead, next_key)
 
+    def prime(self) -> None:
+        """Submit readahead tasks to fill available memory at startup."""
+        while True:
+            with self._lock:
+                committed = self._current_bytes + self._pending_bytes
+                at_capacity = committed >= self._max_bytes
+                cursor_done = self._cursor >= len(self._chunk_order)
+            if at_capacity or cursor_done:
+                break
+            self._try_readahead()
+
     def _do_readahead(self, key: tuple[str, int]) -> None:
         """Background read-ahead worker.  Chains the next readahead on completion."""
         try:
@@ -1461,6 +1480,7 @@ class ScheduledCache:
         finally:
             with self._lock:
                 self._readahead_pending.discard(key)
+                self._pending_bytes -= self._chunk_bytes.get(key[0], 0)
             self._try_readahead()
 
     def shutdown(self) -> None:
@@ -2085,8 +2105,8 @@ class HaplotypeReader:
         self._cache = ScheduledCache(max_bytes, refcounts, chunk_order)
         for name, reader in self._readers.items():
             reader._cache = self._cache
-            self._cache.register_loader(name, reader._do_load_chunk)
-        self._cache._try_readahead()
+            self._cache.register_loader(name, reader._do_load_chunk, reader.chunk_bytes)
+        self._cache.prime()
 
         self._readers_lock = threading.Lock()
 
