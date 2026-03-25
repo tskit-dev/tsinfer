@@ -19,29 +19,17 @@
 """
 Tier 2 end-to-end tests for the tsinfer pipeline: match, post_process, run.
 
-Uses ts_to_sample_vcz(msprime_ts) to create synthetic inputs and verifies
+Uses helpers.ts_to_sample_vcz(msprime_ts) to create synthetic inputs and verifies
 the pipeline produces valid tree sequences.
 """
 
 from __future__ import annotations
 
+import helpers
 import msprime
 import numpy as np
-from helpers import make_sample_vcz, ts_to_sample_vcz
 
-from tsinfer.ancestors import infer_ancestors
-from tsinfer.config import (
-    AncestorsConfig,
-    AncestralState,
-    AugmentSitesConfig,
-    Config,
-    IndividualMetadataConfig,
-    MatchConfig,
-    MatchSourceConfig,
-    PostProcessConfig,
-    Source,
-)
-from tsinfer.pipeline import augment_sites, compute_groups_json, match, post_process, run
+from tsinfer import ancestors, config, pipeline
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -71,22 +59,28 @@ def _simulate(
 
 def _anc_state(store):
     """Return an AncestralState pointing at the store's own ancestral allele field."""
-    return AncestralState(path=store, field="variant_ancestral_allele")
+    return config.AncestralState(path=store, field="variant_ancestral_allele")
 
 
 def _make_config(sample_store, ancestor_store):
     """Build a Config suitable for match() from in-memory stores."""
-    src = Source(path=sample_store, name="test")
-    anc_src = Source(path=ancestor_store, name="ancestors", sample_time="sample_time")
-    return Config(
+    src = config.Source(path=sample_store, name="test")
+    anc_src = config.Source(
+        path=ancestor_store, name="ancestors", sample_time="sample_time"
+    )
+    return config.Config(
         sources={"test": src, "ancestors": anc_src},
         ancestors=[
-            AncestorsConfig(name="ancestors", path=ancestor_store, sources=["test"])
+            config.AncestorsConfig(
+                name="ancestors", path=ancestor_store, sources=["test"]
+            )
         ],
-        match=MatchConfig(
+        match=config.MatchConfig(
             sources={
-                "ancestors": MatchSourceConfig(node_flags=0, create_individuals=False),
-                "test": MatchSourceConfig(),
+                "ancestors": config.MatchSourceConfig(
+                    node_flags=0, create_individuals=False
+                ),
+                "test": config.MatchSourceConfig(),
             },
             output="output.trees",
         ),
@@ -96,15 +90,19 @@ def _make_config(sample_store, ancestor_store):
 
 def _make_config_for_run(sample_store):
     """Build a Config suitable for run() from in-memory sample store."""
-    src = Source(path=sample_store, name="test")
-    anc_src = Source(path=None, name="ancestors", sample_time="sample_time")
-    return Config(
+    src = config.Source(path=sample_store, name="test")
+    anc_src = config.Source(path=None, name="ancestors", sample_time="sample_time")
+    return config.Config(
         sources={"test": src, "ancestors": anc_src},
-        ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
-        match=MatchConfig(
+        ancestors=[
+            config.AncestorsConfig(name="ancestors", path=None, sources=["test"])
+        ],
+        match=config.MatchConfig(
             sources={
-                "ancestors": MatchSourceConfig(node_flags=0, create_individuals=False),
-                "test": MatchSourceConfig(),
+                "ancestors": config.MatchSourceConfig(
+                    node_flags=0, create_individuals=False
+                ),
+                "test": config.MatchSourceConfig(),
             },
             output="output.trees",
         ),
@@ -114,13 +112,13 @@ def _make_config_for_run(sample_store):
 
 def _infer_and_match(sim_ts):
     """Helper: simulate → sample VCZ → infer ancestors → match → return output ts."""
-    sample_store = ts_to_sample_vcz(sim_ts)
-    anc_cfg = AncestorsConfig(name="ancestors", path=None, sources=["test"])
-    ancestor_store = infer_ancestors(
-        Source(path=sample_store, name="test"), anc_cfg, _anc_state(sample_store)
+    sample_store = helpers.ts_to_sample_vcz(sim_ts)
+    anc_cfg = config.AncestorsConfig(name="ancestors", path=None, sources=["test"])
+    ancestor_store = ancestors.infer_ancestors(
+        config.Source(path=sample_store, name="test"), anc_cfg, _anc_state(sample_store)
     )
     cfg = _make_config(sample_store, ancestor_store)
-    return match(cfg)
+    return pipeline.match(cfg)
 
 
 # ---------------------------------------------------------------------------
@@ -165,19 +163,21 @@ class TestMatch:
 
     def test_hand_constructed_simple(self):
         """Match with a hand-constructed 2-site, 2-sample VCZ."""
-        sample_store = make_sample_vcz(
+        sample_store = helpers.make_sample_vcz(
             genotypes=np.array([[[0], [1]], [[1], [0]]], dtype=np.int8),
             positions=np.array([100, 200], dtype=np.int32),
             alleles=np.array([["A", "T"], ["A", "T"]]),
             ancestral_state=np.array(["A", "A"]),
             sequence_length=1000,
         )
-        anc_cfg = AncestorsConfig(name="ancestors", path=None, sources=["test"])
-        ancestor_store = infer_ancestors(
-            Source(path=sample_store, name="test"), anc_cfg, _anc_state(sample_store)
+        anc_cfg = config.AncestorsConfig(name="ancestors", path=None, sources=["test"])
+        ancestor_store = ancestors.infer_ancestors(
+            config.Source(path=sample_store, name="test"),
+            anc_cfg,
+            _anc_state(sample_store),
         )
         cfg = _make_config(sample_store, ancestor_store)
-        out_ts = match(cfg)
+        out_ts = pipeline.match(cfg)
         assert out_ts.num_nodes > 0
         assert out_ts.num_sites == 2
 
@@ -191,86 +191,96 @@ class TestPostProcess:
     def test_simplify_reduces_nodes(self):
         sim_ts = _simulate(num_samples=6, random_seed=10)
         matched_ts = _infer_and_match(sim_ts)
-        cfg = Config(
+        cfg = config.Config(
             sources={
-                "test": Source(path=None, name="test"),
-                "ancestors": Source(
+                "test": config.Source(path=None, name="test"),
+                "ancestors": config.Source(
                     path=None, name="ancestors", sample_time="sample_time"
                 ),
             },
-            ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
-            match=MatchConfig(
+            ancestors=[
+                config.AncestorsConfig(name="ancestors", path=None, sources=["test"])
+            ],
+            match=config.MatchConfig(
                 sources={
-                    "ancestors": MatchSourceConfig(
+                    "ancestors": config.MatchSourceConfig(
                         node_flags=0, create_individuals=False
                     ),
-                    "test": MatchSourceConfig(),
+                    "test": config.MatchSourceConfig(),
                 },
                 output="out.trees",
             ),
-            post_process=PostProcessConfig(split_ultimate=False, erase_flanks=False),
-            ancestral_state=AncestralState(
+            post_process=config.PostProcessConfig(
+                split_ultimate=False, erase_flanks=False
+            ),
+            ancestral_state=config.AncestralState(
                 path="dummy", field="variant_ancestral_allele"
             ),
         )
-        pp_ts = post_process(matched_ts, cfg)
+        pp_ts = pipeline.post_process(matched_ts, cfg)
         # Simplify should remove unused nodes
         assert pp_ts.num_nodes <= matched_ts.num_nodes
 
     def test_no_post_process_config_returns_unchanged(self):
         sim_ts = _simulate(num_samples=4, random_seed=11)
         matched_ts = _infer_and_match(sim_ts)
-        cfg = Config(
+        cfg = config.Config(
             sources={
-                "test": Source(path=None, name="test"),
-                "ancestors": Source(
+                "test": config.Source(path=None, name="test"),
+                "ancestors": config.Source(
                     path=None, name="ancestors", sample_time="sample_time"
                 ),
             },
-            ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
-            match=MatchConfig(
+            ancestors=[
+                config.AncestorsConfig(name="ancestors", path=None, sources=["test"])
+            ],
+            match=config.MatchConfig(
                 sources={
-                    "ancestors": MatchSourceConfig(
+                    "ancestors": config.MatchSourceConfig(
                         node_flags=0, create_individuals=False
                     ),
-                    "test": MatchSourceConfig(),
+                    "test": config.MatchSourceConfig(),
                 },
                 output="out.trees",
             ),
             post_process=None,
-            ancestral_state=AncestralState(
+            ancestral_state=config.AncestralState(
                 path="dummy", field="variant_ancestral_allele"
             ),
         )
-        pp_ts = post_process(matched_ts, cfg)
+        pp_ts = pipeline.post_process(matched_ts, cfg)
         assert pp_ts.num_nodes == matched_ts.num_nodes
 
     def test_erase_flanks(self):
         sim_ts = _simulate(num_samples=6, random_seed=12)
         matched_ts = _infer_and_match(sim_ts)
-        cfg = Config(
+        cfg = config.Config(
             sources={
-                "test": Source(path=None, name="test"),
-                "ancestors": Source(
+                "test": config.Source(path=None, name="test"),
+                "ancestors": config.Source(
                     path=None, name="ancestors", sample_time="sample_time"
                 ),
             },
-            ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
-            match=MatchConfig(
+            ancestors=[
+                config.AncestorsConfig(name="ancestors", path=None, sources=["test"])
+            ],
+            match=config.MatchConfig(
                 sources={
-                    "ancestors": MatchSourceConfig(
+                    "ancestors": config.MatchSourceConfig(
                         node_flags=0, create_individuals=False
                     ),
-                    "test": MatchSourceConfig(),
+                    "test": config.MatchSourceConfig(),
                 },
                 output="out.trees",
             ),
-            post_process=PostProcessConfig(split_ultimate=False, erase_flanks=True),
-            ancestral_state=AncestralState(
+            post_process=config.PostProcessConfig(
+                split_ultimate=False, erase_flanks=True
+            ),
+            ancestral_state=config.AncestralState(
                 path="dummy", field="variant_ancestral_allele"
             ),
         )
-        pp_ts = post_process(matched_ts, cfg)
+        pp_ts = pipeline.post_process(matched_ts, cfg)
         assert pp_ts.num_nodes > 0
 
 
@@ -282,46 +292,50 @@ class TestPostProcess:
 class TestRun:
     def test_full_pipeline_haploid(self):
         sim_ts = _simulate(num_samples=4, random_seed=20)
-        sample_store = ts_to_sample_vcz(sim_ts)
+        sample_store = helpers.ts_to_sample_vcz(sim_ts)
         cfg = _make_config_for_run(sample_store)
-        out_ts = run(cfg)
+        out_ts = pipeline.run(cfg)
         assert out_ts.num_nodes > 0
         assert out_ts.num_sites > 0
 
     def test_full_pipeline_diploid(self):
         sim_ts = _simulate(num_samples=4, ploidy=2, random_seed=21)
-        sample_store = ts_to_sample_vcz(sim_ts)
+        sample_store = helpers.ts_to_sample_vcz(sim_ts)
         cfg = _make_config_for_run(sample_store)
-        out_ts = run(cfg)
+        out_ts = pipeline.run(cfg)
         assert out_ts.num_nodes > 0
         assert out_ts.num_individuals > 0
 
     def test_full_pipeline_with_post_process(self):
         sim_ts = _simulate(num_samples=6, random_seed=22)
-        sample_store = ts_to_sample_vcz(sim_ts)
-        src = Source(path=sample_store, name="test")
-        anc_src = Source(path=None, name="ancestors", sample_time="sample_time")
-        cfg = Config(
+        sample_store = helpers.ts_to_sample_vcz(sim_ts)
+        src = config.Source(path=sample_store, name="test")
+        anc_src = config.Source(path=None, name="ancestors", sample_time="sample_time")
+        cfg = config.Config(
             sources={"test": src, "ancestors": anc_src},
-            ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
-            match=MatchConfig(
+            ancestors=[
+                config.AncestorsConfig(name="ancestors", path=None, sources=["test"])
+            ],
+            match=config.MatchConfig(
                 sources={
-                    "ancestors": MatchSourceConfig(
+                    "ancestors": config.MatchSourceConfig(
                         node_flags=0, create_individuals=False
                     ),
-                    "test": MatchSourceConfig(),
+                    "test": config.MatchSourceConfig(),
                 },
                 output="output.trees",
             ),
-            post_process=PostProcessConfig(split_ultimate=False, erase_flanks=True),
+            post_process=config.PostProcessConfig(
+                split_ultimate=False, erase_flanks=True
+            ),
             ancestral_state=_anc_state(sample_store),
         )
-        out_ts = run(cfg)
+        out_ts = pipeline.run(cfg)
         assert out_ts.num_nodes > 0
 
     def test_hand_constructed(self):
         """Full pipeline with a hand-constructed sample VCZ."""
-        sample_store = make_sample_vcz(
+        sample_store = helpers.make_sample_vcz(
             genotypes=np.array([[[0], [1]], [[1], [0]]], dtype=np.int8),
             positions=np.array([100, 200], dtype=np.int32),
             alleles=np.array([["A", "T"], ["A", "T"]]),
@@ -329,7 +343,7 @@ class TestRun:
             sequence_length=1000,
         )
         cfg = _make_config_for_run(sample_store)
-        out_ts = run(cfg)
+        out_ts = pipeline.run(cfg)
         assert out_ts.num_nodes > 0
         assert out_ts.num_sites == 2
 
@@ -342,7 +356,7 @@ class TestRun:
 class TestNodeMetadata:
     def test_nodes_have_metadata(self):
         """Nodes should have metadata with source and sample_id."""
-        sample_store = make_sample_vcz(
+        sample_store = helpers.make_sample_vcz(
             genotypes=np.array([[[0], [1]], [[1], [0]]], dtype=np.int8),
             positions=np.array([100, 200], dtype=np.int32),
             alleles=np.array([["A", "T"], ["A", "T"]]),
@@ -350,7 +364,7 @@ class TestNodeMetadata:
             sequence_length=1000,
         )
         cfg = _make_config_for_run(sample_store)
-        out_ts = run(cfg)
+        out_ts = pipeline.run(cfg)
         # At least some nodes should have metadata
         has_metadata = False
         for node in out_ts.nodes():
@@ -361,7 +375,7 @@ class TestNodeMetadata:
 
     def test_ancestor_nodes_have_source(self):
         """Ancestor nodes should have source='ancestors'."""
-        sample_store = make_sample_vcz(
+        sample_store = helpers.make_sample_vcz(
             genotypes=np.array([[[0], [1]], [[1], [0]]], dtype=np.int8),
             positions=np.array([100, 200], dtype=np.int32),
             alleles=np.array([["A", "T"], ["A", "T"]]),
@@ -369,7 +383,7 @@ class TestNodeMetadata:
             sequence_length=1000,
         )
         cfg = _make_config_for_run(sample_store)
-        out_ts = run(cfg)
+        out_ts = pipeline.run(cfg)
         ancestor_found = False
         for node in out_ts.nodes():
             if node.metadata and node.metadata.get("source") == "ancestors":
@@ -380,7 +394,7 @@ class TestNodeMetadata:
 
     def test_sample_nodes_have_ploidy_index(self):
         """Sample nodes should have ploidy_index in metadata."""
-        sample_store = make_sample_vcz(
+        sample_store = helpers.make_sample_vcz(
             genotypes=np.array([[[0], [1]], [[1], [0]]], dtype=np.int8),
             positions=np.array([100, 200], dtype=np.int32),
             alleles=np.array([["A", "T"], ["A", "T"]]),
@@ -388,7 +402,7 @@ class TestNodeMetadata:
             sequence_length=1000,
         )
         cfg = _make_config_for_run(sample_store)
-        out_ts = run(cfg)
+        out_ts = pipeline.run(cfg)
         sample_found = False
         for node in out_ts.nodes():
             md = node.metadata
@@ -408,33 +422,35 @@ class TestNodeMetadata:
 class TestIndividualMetadata:
     def test_individual_metadata_fields(self):
         """Individual metadata should contain fields from config."""
-        sample_store = make_sample_vcz(
+        sample_store = helpers.make_sample_vcz(
             genotypes=np.array([[[0], [1]], [[1], [0]]], dtype=np.int8),
             positions=np.array([100, 200], dtype=np.int32),
             alleles=np.array([["A", "T"], ["A", "T"]]),
             ancestral_state=np.array(["A", "A"]),
             sequence_length=1000,
         )
-        src = Source(path=sample_store, name="test")
-        anc_src = Source(path=None, name="ancestors", sample_time="sample_time")
-        cfg = Config(
+        src = config.Source(path=sample_store, name="test")
+        anc_src = config.Source(path=None, name="ancestors", sample_time="sample_time")
+        cfg = config.Config(
             sources={"test": src, "ancestors": anc_src},
-            ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
-            match=MatchConfig(
+            ancestors=[
+                config.AncestorsConfig(name="ancestors", path=None, sources=["test"])
+            ],
+            match=config.MatchConfig(
                 sources={
-                    "ancestors": MatchSourceConfig(
+                    "ancestors": config.MatchSourceConfig(
                         node_flags=0, create_individuals=False
                     ),
-                    "test": MatchSourceConfig(),
+                    "test": config.MatchSourceConfig(),
                 },
                 output="output.trees",
             ),
-            individual_metadata=IndividualMetadataConfig(
+            individual_metadata=config.IndividualMetadataConfig(
                 fields={"sample_id": "sample_id"},
             ),
             ancestral_state=_anc_state(sample_store),
         )
-        out_ts = run(cfg)
+        out_ts = pipeline.run(cfg)
         assert out_ts.num_individuals > 0
         for ind in out_ts.individuals():
             if ind.metadata:
@@ -442,7 +458,7 @@ class TestIndividualMetadata:
 
     def test_population_assignment(self):
         """Individuals should be assigned to populations from config."""
-        sample_store = make_sample_vcz(
+        sample_store = helpers.make_sample_vcz(
             genotypes=np.array([[[0], [1]], [[1], [0]]], dtype=np.int8),
             positions=np.array([100, 200], dtype=np.int32),
             alleles=np.array([["A", "T"], ["A", "T"]]),
@@ -450,26 +466,28 @@ class TestIndividualMetadata:
             sequence_length=1000,
             sample_population=np.array(["pop_A", "pop_B"]),
         )
-        src = Source(path=sample_store, name="test")
-        anc_src = Source(path=None, name="ancestors", sample_time="sample_time")
-        cfg = Config(
+        src = config.Source(path=sample_store, name="test")
+        anc_src = config.Source(path=None, name="ancestors", sample_time="sample_time")
+        cfg = config.Config(
             sources={"test": src, "ancestors": anc_src},
-            ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
-            match=MatchConfig(
+            ancestors=[
+                config.AncestorsConfig(name="ancestors", path=None, sources=["test"])
+            ],
+            match=config.MatchConfig(
                 sources={
-                    "ancestors": MatchSourceConfig(
+                    "ancestors": config.MatchSourceConfig(
                         node_flags=0, create_individuals=False
                     ),
-                    "test": MatchSourceConfig(),
+                    "test": config.MatchSourceConfig(),
                 },
                 output="output.trees",
             ),
-            individual_metadata=IndividualMetadataConfig(
+            individual_metadata=config.IndividualMetadataConfig(
                 population="sample_population",
             ),
             ancestral_state=_anc_state(sample_store),
         )
-        out_ts = run(cfg)
+        out_ts = pipeline.run(cfg)
         assert out_ts.num_populations > 0
         # Check population metadata
         pop_names = [pop.metadata.get("name") for pop in out_ts.populations()]
@@ -477,7 +495,7 @@ class TestIndividualMetadata:
 
     def test_no_individual_metadata_config(self):
         """Without individual_metadata config, no individual metadata is set."""
-        sample_store = make_sample_vcz(
+        sample_store = helpers.make_sample_vcz(
             genotypes=np.array([[[0], [1]], [[1], [0]]], dtype=np.int8),
             positions=np.array([100, 200], dtype=np.int32),
             alleles=np.array([["A", "T"], ["A", "T"]]),
@@ -485,7 +503,7 @@ class TestIndividualMetadata:
             sequence_length=1000,
         )
         cfg = _make_config_for_run(sample_store)
-        out_ts = run(cfg)
+        out_ts = pipeline.run(cfg)
         # No individual metadata config → no individual metadata schema
         assert out_ts.num_populations == 0
 
@@ -501,10 +519,10 @@ class TestPipelineLogging:
         import logging
 
         sim_ts = _simulate(num_samples=4, random_seed=30)
-        sample_store = ts_to_sample_vcz(sim_ts)
+        sample_store = helpers.ts_to_sample_vcz(sim_ts)
         cfg = _make_config_for_run(sample_store)
         with caplog.at_level(logging.INFO, logger="tsinfer"):
-            run(cfg)
+            pipeline.run(cfg)
 
         messages = caplog.text
         assert "Starting full pipeline" in messages
@@ -515,14 +533,16 @@ class TestPipelineLogging:
         import logging
 
         sim_ts = _simulate(num_samples=4, random_seed=31)
-        sample_store = ts_to_sample_vcz(sim_ts)
-        anc_cfg = AncestorsConfig(name="ancestors", path=None, sources=["test"])
-        ancestor_store = infer_ancestors(
-            Source(path=sample_store, name="test"), anc_cfg, _anc_state(sample_store)
+        sample_store = helpers.ts_to_sample_vcz(sim_ts)
+        anc_cfg = config.AncestorsConfig(name="ancestors", path=None, sources=["test"])
+        ancestor_store = ancestors.infer_ancestors(
+            config.Source(path=sample_store, name="test"),
+            anc_cfg,
+            _anc_state(sample_store),
         )
         cfg = _make_config(sample_store, ancestor_store)
         with caplog.at_level(logging.INFO, logger="tsinfer.pipeline"):
-            match(cfg)
+            pipeline.match(cfg)
 
         assert "Match:" in caplog.text
 
@@ -531,21 +551,23 @@ class TestPipelineProgress:
     def test_run_with_progress(self):
         """run(progress=True) does not crash."""
         sim_ts = _simulate(num_samples=4, random_seed=32)
-        sample_store = ts_to_sample_vcz(sim_ts)
+        sample_store = helpers.ts_to_sample_vcz(sim_ts)
         cfg = _make_config_for_run(sample_store)
-        out_ts = run(cfg, progress=True)
+        out_ts = pipeline.run(cfg, progress=True)
         assert out_ts.num_nodes > 0
 
     def test_match_with_progress(self):
         """match(progress=True) does not crash."""
         sim_ts = _simulate(num_samples=4, random_seed=33)
-        sample_store = ts_to_sample_vcz(sim_ts)
-        anc_cfg = AncestorsConfig(name="ancestors", path=None, sources=["test"])
-        ancestor_store = infer_ancestors(
-            Source(path=sample_store, name="test"), anc_cfg, _anc_state(sample_store)
+        sample_store = helpers.ts_to_sample_vcz(sim_ts)
+        anc_cfg = config.AncestorsConfig(name="ancestors", path=None, sources=["test"])
+        ancestor_store = ancestors.infer_ancestors(
+            config.Source(path=sample_store, name="test"),
+            anc_cfg,
+            _anc_state(sample_store),
         )
         cfg = _make_config(sample_store, ancestor_store)
-        out_ts = match(cfg, progress=True)
+        out_ts = pipeline.match(cfg, progress=True)
         assert out_ts.num_nodes > 0
 
 
@@ -560,13 +582,15 @@ class TestComputeGroupsJson:
         import json
 
         sim_ts = _simulate(num_samples=4, random_seed=40)
-        sample_store = ts_to_sample_vcz(sim_ts)
-        anc_cfg = AncestorsConfig(name="ancestors", path=None, sources=["test"])
-        ancestor_store = infer_ancestors(
-            Source(path=sample_store, name="test"), anc_cfg, _anc_state(sample_store)
+        sample_store = helpers.ts_to_sample_vcz(sim_ts)
+        anc_cfg = config.AncestorsConfig(name="ancestors", path=None, sources=["test"])
+        ancestor_store = ancestors.infer_ancestors(
+            config.Source(path=sample_store, name="test"),
+            anc_cfg,
+            _anc_state(sample_store),
         )
         cfg = _make_config(sample_store, ancestor_store)
-        records = json.loads(compute_groups_json(cfg))
+        records = json.loads(pipeline.compute_groups_json(cfg))
         assert isinstance(records, list)
         assert len(records) > 0
 
@@ -575,13 +599,15 @@ class TestComputeGroupsJson:
         import json
 
         sim_ts = _simulate(num_samples=4, random_seed=41)
-        sample_store = ts_to_sample_vcz(sim_ts)
-        anc_cfg = AncestorsConfig(name="ancestors", path=None, sources=["test"])
-        ancestor_store = infer_ancestors(
-            Source(path=sample_store, name="test"), anc_cfg, _anc_state(sample_store)
+        sample_store = helpers.ts_to_sample_vcz(sim_ts)
+        anc_cfg = config.AncestorsConfig(name="ancestors", path=None, sources=["test"])
+        ancestor_store = ancestors.infer_ancestors(
+            config.Source(path=sample_store, name="test"),
+            anc_cfg,
+            _anc_state(sample_store),
         )
         cfg = _make_config(sample_store, ancestor_store)
-        records = json.loads(compute_groups_json(cfg))
+        records = json.loads(pipeline.compute_groups_json(cfg))
         rec0 = records[0]
         assert rec0["haplotype_index"] == 0
         assert rec0["group"] == 0
@@ -593,13 +619,15 @@ class TestComputeGroupsJson:
         import json
 
         sim_ts = _simulate(num_samples=6, random_seed=42)
-        sample_store = ts_to_sample_vcz(sim_ts)
-        anc_cfg = AncestorsConfig(name="ancestors", path=None, sources=["test"])
-        ancestor_store = infer_ancestors(
-            Source(path=sample_store, name="test"), anc_cfg, _anc_state(sample_store)
+        sample_store = helpers.ts_to_sample_vcz(sim_ts)
+        anc_cfg = config.AncestorsConfig(name="ancestors", path=None, sources=["test"])
+        ancestor_store = ancestors.infer_ancestors(
+            config.Source(path=sample_store, name="test"),
+            anc_cfg,
+            _anc_state(sample_store),
         )
         cfg = _make_config(sample_store, ancestor_store)
-        records = json.loads(compute_groups_json(cfg))
+        records = json.loads(pipeline.compute_groups_json(cfg))
         all_indices = {r["haplotype_index"] for r in records}
         assert all_indices == set(range(len(records)))
 
@@ -607,19 +635,21 @@ class TestComputeGroupsJson:
         """compute_groups_json with a hand-constructed VCZ."""
         import json
 
-        sample_store = make_sample_vcz(
+        sample_store = helpers.make_sample_vcz(
             genotypes=np.array([[[0], [1]], [[1], [0]]], dtype=np.int8),
             positions=np.array([100, 200], dtype=np.int32),
             alleles=np.array([["A", "T"], ["A", "T"]]),
             ancestral_state=np.array(["A", "A"]),
             sequence_length=1000,
         )
-        anc_cfg = AncestorsConfig(name="ancestors", path=None, sources=["test"])
-        ancestor_store = infer_ancestors(
-            Source(path=sample_store, name="test"), anc_cfg, _anc_state(sample_store)
+        anc_cfg = config.AncestorsConfig(name="ancestors", path=None, sources=["test"])
+        ancestor_store = ancestors.infer_ancestors(
+            config.Source(path=sample_store, name="test"),
+            anc_cfg,
+            _anc_state(sample_store),
         )
         cfg = _make_config(sample_store, ancestor_store)
-        records = json.loads(compute_groups_json(cfg))
+        records = json.loads(pipeline.compute_groups_json(cfg))
         assert len(records) > 0
         expected_keys = {
             "haplotype_index",
@@ -648,13 +678,15 @@ class TestComputeGroupsJson:
         import pandas as pd
 
         sim_ts = _simulate(num_samples=4, random_seed=45)
-        sample_store = ts_to_sample_vcz(sim_ts)
-        anc_cfg = AncestorsConfig(name="ancestors", path=None, sources=["test"])
-        ancestor_store = infer_ancestors(
-            Source(path=sample_store, name="test"), anc_cfg, _anc_state(sample_store)
+        sample_store = helpers.ts_to_sample_vcz(sim_ts)
+        anc_cfg = config.AncestorsConfig(name="ancestors", path=None, sources=["test"])
+        ancestor_store = ancestors.infer_ancestors(
+            config.Source(path=sample_store, name="test"),
+            anc_cfg,
+            _anc_state(sample_store),
         )
         cfg = _make_config(sample_store, ancestor_store)
-        json_str = compute_groups_json(cfg)
+        json_str = pipeline.compute_groups_json(cfg)
         df = pd.read_json(io.StringIO(json_str))
         assert len(df) > 0
         expected_cols = {
@@ -681,10 +713,12 @@ class TestComputeGroupsJson:
 class TestWorkdir:
     def _setup(self, random_seed=50):
         sim_ts = _simulate(num_samples=4, random_seed=random_seed)
-        sample_store = ts_to_sample_vcz(sim_ts)
-        anc_cfg = AncestorsConfig(name="ancestors", path=None, sources=["test"])
-        ancestor_store = infer_ancestors(
-            Source(path=sample_store, name="test"), anc_cfg, _anc_state(sample_store)
+        sample_store = helpers.ts_to_sample_vcz(sim_ts)
+        anc_cfg = config.AncestorsConfig(name="ancestors", path=None, sources=["test"])
+        ancestor_store = ancestors.infer_ancestors(
+            config.Source(path=sample_store, name="test"),
+            anc_cfg,
+            _anc_state(sample_store),
         )
         cfg = _make_config(sample_store, ancestor_store)
         return cfg
@@ -698,7 +732,7 @@ class TestWorkdir:
         cfg.match.workdir = str(workdir)
         cfg.match.keep_intermediates = True
 
-        out_ts = match(cfg)
+        out_ts = pipeline.match(cfg)
         assert out_ts.num_nodes > 0
 
         assert (workdir / "match-jobs.json").exists()
@@ -715,7 +749,7 @@ class TestWorkdir:
         cfg.match.workdir = str(workdir)
         cfg.match.keep_intermediates = True
 
-        ts1 = match(cfg)
+        ts1 = pipeline.match(cfg)
 
         # Find the group files and delete the last one to force re-run
         trees_files = sorted(workdir.glob("group_*.trees"))
@@ -723,7 +757,7 @@ class TestWorkdir:
         if len(trees_files) > 1:
             trees_files[-1].unlink()
 
-            ts2 = match(cfg)
+            ts2 = pipeline.match(cfg)
             assert ts2.num_nodes == ts1.num_nodes
             assert ts2.num_edges == ts1.num_edges
 
@@ -734,13 +768,13 @@ class TestWorkdir:
         cfg.match.workdir = str(workdir)
         cfg.match.keep_intermediates = True
 
-        ts1 = match(cfg)
+        ts1 = pipeline.match(cfg)
 
         trees_files = sorted(workdir.glob("group_*.trees"))
         if len(trees_files) >= 3:
             # Remove a middle file to create a gap
             trees_files[1].unlink()
-            ts2 = match(cfg)
+            ts2 = pipeline.match(cfg)
             assert ts2.num_nodes == ts1.num_nodes
             assert ts2.num_edges == ts1.num_edges
 
@@ -750,7 +784,7 @@ class TestWorkdir:
         workdir = tmp_path / "wd"
         cfg.match.workdir = str(workdir)
 
-        match(cfg)
+        pipeline.match(cfg)
 
         trees_files = list(workdir.glob("group_*.trees"))
         assert len(trees_files) == 1
@@ -762,7 +796,7 @@ class TestWorkdir:
         cfg.match.workdir = str(workdir)
         cfg.match.keep_intermediates = True
 
-        match(cfg)
+        pipeline.match(cfg)
 
         trees_files = list(workdir.glob("group_*.trees"))
         # Should have more than 1 if there are multiple groups
@@ -774,7 +808,7 @@ class TestWorkdir:
         cfg = self._setup()
         assert cfg.match.workdir is None
 
-        match(cfg)
+        pipeline.match(cfg)
         assert list(tmp_path.glob("*.trees")) == []
         assert list(tmp_path.glob("match-jobs.json")) == []
 
@@ -789,8 +823,8 @@ class TestWorkdir:
         cfg.match.workdir = str(workdir)
         cfg.match.keep_intermediates = True
 
-        partial_ts = match(cfg, group_stop=1)
-        full_ts = match(self._setup())
+        partial_ts = pipeline.match(cfg, group_stop=1)
+        full_ts = pipeline.match(self._setup())
 
         assert partial_ts.num_nodes > 0
         assert partial_ts.num_nodes < full_ts.num_nodes
@@ -822,10 +856,10 @@ class TestWorkdir:
         cfg.match.workdir = str(workdir)
         cfg.match.keep_intermediates = True
 
-        match(cfg, group_stop=1)
+        pipeline.match(cfg, group_stop=1)
 
-        resumed_ts = match(cfg)
-        full_ts = match(self._setup())
+        resumed_ts = pipeline.match(cfg)
+        full_ts = pipeline.match(self._setup())
 
         assert resumed_ts.num_nodes == full_ts.num_nodes
         assert resumed_ts.num_edges == full_ts.num_edges
@@ -835,13 +869,13 @@ class TestWorkdir:
         import json
 
         base_cfg = self._setup()
-        full_ts = match(base_cfg)
+        full_ts = pipeline.match(base_cfg)
 
         # Determine number of groups
         workdir_probe = tmp_path / "probe"
         base_cfg.match.workdir = str(workdir_probe)
         base_cfg.match.keep_intermediates = True
-        match(base_cfg)
+        pipeline.match(base_cfg)
         groups_json = json.loads((workdir_probe / "match-jobs.json").read_text())
         num_groups = max(r["group"] for r in groups_json) + 1
 
@@ -851,8 +885,8 @@ class TestWorkdir:
             cfg.match.workdir = str(wd)
             cfg.match.keep_intermediates = True
 
-            match(cfg, group_stop=g)
-            resumed_ts = match(cfg)
+            pipeline.match(cfg, group_stop=g)
+            resumed_ts = pipeline.match(cfg)
 
             assert resumed_ts.num_nodes == full_ts.num_nodes
             assert resumed_ts.num_edges == full_ts.num_edges
@@ -862,13 +896,13 @@ class TestWorkdir:
         import json
 
         base_cfg = self._setup()
-        full_ts = match(base_cfg)
+        full_ts = pipeline.match(base_cfg)
 
         # Determine number of groups
         workdir_probe = tmp_path / "probe"
         base_cfg.match.workdir = str(workdir_probe)
         base_cfg.match.keep_intermediates = True
-        match(base_cfg)
+        pipeline.match(base_cfg)
         groups_json = json.loads((workdir_probe / "match-jobs.json").read_text())
         num_groups = max(r["group"] for r in groups_json) + 1
 
@@ -878,9 +912,9 @@ class TestWorkdir:
         cfg.match.keep_intermediates = True
 
         for g in range(1, num_groups + 1):
-            match(cfg, group_stop=g)
+            pipeline.match(cfg, group_stop=g)
 
-        final_ts = match(cfg)
+        final_ts = pipeline.match(cfg)
 
         assert final_ts.num_nodes == full_ts.num_nodes
         assert final_ts.num_edges == full_ts.num_edges
@@ -891,8 +925,8 @@ class TestWorkdir:
         workdir = tmp_path / "wd"
         cfg.match.workdir = str(workdir)
 
-        big_stop_ts = match(cfg, group_stop=9999)
-        full_ts = match(self._setup())
+        big_stop_ts = pipeline.match(cfg, group_stop=9999)
+        full_ts = pipeline.match(self._setup())
 
         assert big_stop_ts.num_nodes == full_ts.num_nodes
         assert big_stop_ts.num_edges == full_ts.num_edges
@@ -902,27 +936,29 @@ class TestWorkdir:
         import pytest
 
         with pytest.raises(ValueError, match="keep_intermediates requires workdir"):
-            Config(
+            config.Config(
                 sources={
-                    "test": Source(path="dummy", name="test"),
-                    "ancestors": Source(
+                    "test": config.Source(path="dummy", name="test"),
+                    "ancestors": config.Source(
                         path="dummy", name="ancestors", sample_time="sample_time"
                     ),
                 },
                 ancestors=[
-                    AncestorsConfig(name="ancestors", path="dummy", sources=["test"])
+                    config.AncestorsConfig(
+                        name="ancestors", path="dummy", sources=["test"]
+                    )
                 ],
-                match=MatchConfig(
+                match=config.MatchConfig(
                     sources={
-                        "ancestors": MatchSourceConfig(
+                        "ancestors": config.MatchSourceConfig(
                             node_flags=0, create_individuals=False
                         ),
-                        "test": MatchSourceConfig(),
+                        "test": config.MatchSourceConfig(),
                     },
                     output="out.trees",
                     keep_intermediates=True,
                 ),
-                ancestral_state=AncestralState(
+                ancestral_state=config.AncestralState(
                     path="dummy", field="variant_ancestral_allele"
                 ),
             )
@@ -935,22 +971,26 @@ class TestWorkdir:
 
 def _run_pipeline_no_augment(sample_store):
     """Run the full pipeline (no augment) and return (ts, sample_store)."""
-    src = Source(path=sample_store, name="test")
-    anc_src = Source(path=None, name="ancestors", sample_time="sample_time")
-    cfg = Config(
+    src = config.Source(path=sample_store, name="test")
+    anc_src = config.Source(path=None, name="ancestors", sample_time="sample_time")
+    cfg = config.Config(
         sources={"test": src, "ancestors": anc_src},
-        ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
-        match=MatchConfig(
+        ancestors=[
+            config.AncestorsConfig(name="ancestors", path=None, sources=["test"])
+        ],
+        match=config.MatchConfig(
             sources={
-                "ancestors": MatchSourceConfig(node_flags=0, create_individuals=False),
-                "test": MatchSourceConfig(),
+                "ancestors": config.MatchSourceConfig(
+                    node_flags=0, create_individuals=False
+                ),
+                "test": config.MatchSourceConfig(),
             },
             output="output.trees",
         ),
-        post_process=PostProcessConfig(split_ultimate=False, erase_flanks=True),
+        post_process=config.PostProcessConfig(split_ultimate=False, erase_flanks=True),
         ancestral_state=_anc_state(sample_store),
     )
-    return run(cfg), cfg
+    return pipeline.run(cfg), cfg
 
 
 class TestAugmentSites:
@@ -984,7 +1024,7 @@ class TestAugmentSites:
             return main_store, sing_store
 
         # Build main store (non-singletons)
-        main_store = ts_to_sample_vcz(ts)
+        main_store = helpers.ts_to_sample_vcz(ts)
 
         # Build singleton-only store with same samples
         all_positions = np.array(
@@ -999,7 +1039,7 @@ class TestAugmentSites:
     def _make_hand_constructed_stores(self):
         """Hand-construct stores for testing augment_sites."""
         # Main store: 2 sites (non-singletons)
-        main_store = make_sample_vcz(
+        main_store = helpers.make_sample_vcz(
             genotypes=np.array([[[0], [1], [1]], [[1], [0], [1]]], dtype=np.int8),
             positions=np.array([100, 300], dtype=np.int32),
             alleles=np.array([["A", "T"], ["C", "G"]]),
@@ -1007,7 +1047,7 @@ class TestAugmentSites:
             sequence_length=1000,
         )
         # Singleton store: 1 site
-        sing_store = make_sample_vcz(
+        sing_store = helpers.make_sample_vcz(
             genotypes=np.array([[[0], [0], [1]]], dtype=np.int8),
             positions=np.array([200], dtype=np.int32),
             alleles=np.array([["A", "G"]]),
@@ -1015,7 +1055,7 @@ class TestAugmentSites:
             sequence_length=1000,
         )
         # Combined annotation store covering all positions
-        ann_store = make_sample_vcz(
+        ann_store = helpers.make_sample_vcz(
             genotypes=np.zeros((3, 1, 1), dtype=np.int8),
             positions=np.array([100, 200, 300], dtype=np.int32),
             alleles=np.array([["A", "T"], ["A", "G"], ["C", "G"]]),
@@ -1034,28 +1074,30 @@ class TestAugmentSites:
         original_num_sites = ts.num_sites
 
         # Augment with singleton store
-        cfg = Config(
+        cfg = config.Config(
             sources={
-                "test": Source(path=main_store, name="test"),
-                "singletons": Source(path=sing_store, name="singletons"),
-                "ancestors": Source(
+                "test": config.Source(path=main_store, name="test"),
+                "singletons": config.Source(path=sing_store, name="singletons"),
+                "ancestors": config.Source(
                     path=None, name="ancestors", sample_time="sample_time"
                 ),
             },
-            ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
-            match=MatchConfig(
+            ancestors=[
+                config.AncestorsConfig(name="ancestors", path=None, sources=["test"])
+            ],
+            match=config.MatchConfig(
                 sources={
-                    "ancestors": MatchSourceConfig(
+                    "ancestors": config.MatchSourceConfig(
                         node_flags=0, create_individuals=False
                     ),
-                    "test": MatchSourceConfig(),
+                    "test": config.MatchSourceConfig(),
                 },
                 output="output.trees",
             ),
-            augment_sites=AugmentSitesConfig(sources=["singletons"]),
+            augment_sites=config.AugmentSitesConfig(sources=["singletons"]),
             ancestral_state=_anc_state(ann_store),
         )
-        aug_ts = augment_sites(ts, cfg)
+        aug_ts = pipeline.augment_sites(ts, cfg)
         assert aug_ts.num_sites > original_num_sites
         # Position 200 should now be present
         aug_positions = set(aug_ts.sites_position)
@@ -1067,28 +1109,30 @@ class TestAugmentSites:
         ts, _ = _run_pipeline_no_augment(main_store)
 
         # Create a source that has the SAME positions as the main store
-        cfg = Config(
+        cfg = config.Config(
             sources={
-                "test": Source(path=main_store, name="test"),
-                "same": Source(path=main_store, name="same"),
-                "ancestors": Source(
+                "test": config.Source(path=main_store, name="test"),
+                "same": config.Source(path=main_store, name="same"),
+                "ancestors": config.Source(
                     path=None, name="ancestors", sample_time="sample_time"
                 ),
             },
-            ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
-            match=MatchConfig(
+            ancestors=[
+                config.AncestorsConfig(name="ancestors", path=None, sources=["test"])
+            ],
+            match=config.MatchConfig(
                 sources={
-                    "ancestors": MatchSourceConfig(
+                    "ancestors": config.MatchSourceConfig(
                         node_flags=0, create_individuals=False
                     ),
-                    "test": MatchSourceConfig(),
+                    "test": config.MatchSourceConfig(),
                 },
                 output="output.trees",
             ),
-            augment_sites=AugmentSitesConfig(sources=["same"]),
+            augment_sites=config.AugmentSitesConfig(sources=["same"]),
             ancestral_state=_anc_state(ann_store),
         )
-        aug_ts = augment_sites(ts, cfg)
+        aug_ts = pipeline.augment_sites(ts, cfg)
         # No new sites should be added
         assert aug_ts.num_sites == ts.num_sites
 
@@ -1098,7 +1142,7 @@ class TestAugmentSites:
         ts, _ = _run_pipeline_no_augment(main_store)
 
         # Create a singleton store with a site outside the intervals
-        far_store = make_sample_vcz(
+        far_store = helpers.make_sample_vcz(
             genotypes=np.array([[[0], [0], [1]]], dtype=np.int8),
             positions=np.array([999_999], dtype=np.int32),
             alleles=np.array([["A", "G"]]),
@@ -1106,28 +1150,30 @@ class TestAugmentSites:
             sequence_length=1_000_000,
         )
 
-        cfg = Config(
+        cfg = config.Config(
             sources={
-                "test": Source(path=main_store, name="test"),
-                "far": Source(path=far_store, name="far"),
-                "ancestors": Source(
+                "test": config.Source(path=main_store, name="test"),
+                "far": config.Source(path=far_store, name="far"),
+                "ancestors": config.Source(
                     path=None, name="ancestors", sample_time="sample_time"
                 ),
             },
-            ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
-            match=MatchConfig(
+            ancestors=[
+                config.AncestorsConfig(name="ancestors", path=None, sources=["test"])
+            ],
+            match=config.MatchConfig(
                 sources={
-                    "ancestors": MatchSourceConfig(
+                    "ancestors": config.MatchSourceConfig(
                         node_flags=0, create_individuals=False
                     ),
-                    "test": MatchSourceConfig(),
+                    "test": config.MatchSourceConfig(),
                 },
                 output="output.trees",
             ),
-            augment_sites=AugmentSitesConfig(sources=["far"]),
+            augment_sites=config.AugmentSitesConfig(sources=["far"]),
             ancestral_state=_anc_state(main_store),
         )
-        aug_ts = augment_sites(ts, cfg)
+        aug_ts = pipeline.augment_sites(ts, cfg)
         # The far site should be outside intervals, so no new sites
         assert aug_ts.num_sites == ts.num_sites
 
@@ -1136,34 +1182,36 @@ class TestAugmentSites:
         main_store, _, _ = self._make_hand_constructed_stores()
         ts, _ = _run_pipeline_no_augment(main_store)
 
-        cfg = Config(
+        cfg = config.Config(
             sources={
-                "test": Source(path=main_store, name="test"),
-                "ancestors": Source(
+                "test": config.Source(path=main_store, name="test"),
+                "ancestors": config.Source(
                     path=None, name="ancestors", sample_time="sample_time"
                 ),
             },
-            ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
-            match=MatchConfig(
+            ancestors=[
+                config.AncestorsConfig(name="ancestors", path=None, sources=["test"])
+            ],
+            match=config.MatchConfig(
                 sources={
-                    "ancestors": MatchSourceConfig(
+                    "ancestors": config.MatchSourceConfig(
                         node_flags=0, create_individuals=False
                     ),
-                    "test": MatchSourceConfig(),
+                    "test": config.MatchSourceConfig(),
                 },
                 output="output.trees",
             ),
-            augment_sites=AugmentSitesConfig(sources=[]),
+            augment_sites=config.AugmentSitesConfig(sources=[]),
             ancestral_state=_anc_state(main_store),
         )
-        aug_ts = augment_sites(ts, cfg)
+        aug_ts = pipeline.augment_sites(ts, cfg)
         assert aug_ts.num_sites == ts.num_sites
         assert aug_ts.num_nodes == ts.num_nodes
 
     def test_sample_mapping_diploid(self):
         """Correct mapping for diploid data."""
         # 2 non-singleton sites for inference, 3 diploid samples
-        main_store = make_sample_vcz(
+        main_store = helpers.make_sample_vcz(
             genotypes=np.array(
                 [[[0, 0], [1, 0], [1, 1]], [[1, 1], [0, 0], [1, 0]]], dtype=np.int8
             ),
@@ -1173,7 +1221,7 @@ class TestAugmentSites:
             sequence_length=1000,
         )
         # Extra site at position 200, same 3 diploid samples
-        extra_store = make_sample_vcz(
+        extra_store = helpers.make_sample_vcz(
             genotypes=np.array([[[0, 0], [0, 0], [1, 0]]], dtype=np.int8),
             positions=np.array([200], dtype=np.int32),
             alleles=np.array([["A", "T"]]),
@@ -1181,7 +1229,7 @@ class TestAugmentSites:
             sequence_length=1000,
         )
         # Combined annotation store
-        ann_store = make_sample_vcz(
+        ann_store = helpers.make_sample_vcz(
             genotypes=np.zeros((3, 1, 1), dtype=np.int8),
             positions=np.array([100, 200, 300], dtype=np.int32),
             alleles=np.array([["A", "T"], ["A", "T"], ["C", "G"]]),
@@ -1191,35 +1239,37 @@ class TestAugmentSites:
 
         ts, _ = _run_pipeline_no_augment(main_store)
 
-        cfg = Config(
+        cfg = config.Config(
             sources={
-                "test": Source(path=main_store, name="test"),
-                "extra": Source(path=extra_store, name="extra"),
-                "ancestors": Source(
+                "test": config.Source(path=main_store, name="test"),
+                "extra": config.Source(path=extra_store, name="extra"),
+                "ancestors": config.Source(
                     path=None, name="ancestors", sample_time="sample_time"
                 ),
             },
-            ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
-            match=MatchConfig(
+            ancestors=[
+                config.AncestorsConfig(name="ancestors", path=None, sources=["test"])
+            ],
+            match=config.MatchConfig(
                 sources={
-                    "ancestors": MatchSourceConfig(
+                    "ancestors": config.MatchSourceConfig(
                         node_flags=0, create_individuals=False
                     ),
-                    "test": MatchSourceConfig(),
+                    "test": config.MatchSourceConfig(),
                 },
                 output="output.trees",
             ),
-            augment_sites=AugmentSitesConfig(sources=["extra"]),
+            augment_sites=config.AugmentSitesConfig(sources=["extra"]),
             ancestral_state=_anc_state(ann_store),
         )
 
-        aug_ts = augment_sites(ts, cfg)
+        aug_ts = pipeline.augment_sites(ts, cfg)
         assert aug_ts.num_sites > ts.num_sites
         assert 200.0 in set(aug_ts.sites_position)
 
     def test_multiallelic(self):
         """Multi-allelic sites are placed correctly."""
-        main_store = make_sample_vcz(
+        main_store = helpers.make_sample_vcz(
             genotypes=np.array([[[0], [1], [1]], [[1], [0], [1]]], dtype=np.int8),
             positions=np.array([100, 300], dtype=np.int32),
             alleles=np.array([["A", "T"], ["C", "G"]]),
@@ -1227,7 +1277,7 @@ class TestAugmentSites:
             sequence_length=1000,
         )
         # Multi-allelic site at position 200
-        multi_store = make_sample_vcz(
+        multi_store = helpers.make_sample_vcz(
             genotypes=np.array([[[0], [1], [2]]], dtype=np.int8),
             positions=np.array([200], dtype=np.int32),
             alleles=np.array([["A", "T", "G"]]),
@@ -1235,7 +1285,7 @@ class TestAugmentSites:
             sequence_length=1000,
         )
         # Combined annotation store
-        ann_store = make_sample_vcz(
+        ann_store = helpers.make_sample_vcz(
             genotypes=np.zeros((3, 1, 1), dtype=np.int8),
             positions=np.array([100, 200, 300], dtype=np.int32),
             alleles=np.array([["A", "T"], ["A", "T"], ["C", "G"]]),
@@ -1245,42 +1295,44 @@ class TestAugmentSites:
 
         ts, _ = _run_pipeline_no_augment(main_store)
 
-        cfg = Config(
+        cfg = config.Config(
             sources={
-                "test": Source(path=main_store, name="test"),
-                "multi": Source(path=multi_store, name="multi"),
-                "ancestors": Source(
+                "test": config.Source(path=main_store, name="test"),
+                "multi": config.Source(path=multi_store, name="multi"),
+                "ancestors": config.Source(
                     path=None, name="ancestors", sample_time="sample_time"
                 ),
             },
-            ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
-            match=MatchConfig(
+            ancestors=[
+                config.AncestorsConfig(name="ancestors", path=None, sources=["test"])
+            ],
+            match=config.MatchConfig(
                 sources={
-                    "ancestors": MatchSourceConfig(
+                    "ancestors": config.MatchSourceConfig(
                         node_flags=0, create_individuals=False
                     ),
-                    "test": MatchSourceConfig(),
+                    "test": config.MatchSourceConfig(),
                 },
                 output="output.trees",
             ),
-            augment_sites=AugmentSitesConfig(sources=["multi"]),
+            augment_sites=config.AugmentSitesConfig(sources=["multi"]),
             ancestral_state=_anc_state(ann_store),
         )
-        aug_ts = augment_sites(ts, cfg)
+        aug_ts = pipeline.augment_sites(ts, cfg)
         assert aug_ts.num_sites > ts.num_sites
         site = aug_ts.site(position=200.0)
         assert len(site.mutations) > 0
 
     def test_run_integration(self):
         """Full run() with augment_sites configured end-to-end."""
-        main_store = make_sample_vcz(
+        main_store = helpers.make_sample_vcz(
             genotypes=np.array([[[0], [1], [1]], [[1], [0], [1]]], dtype=np.int8),
             positions=np.array([100, 300], dtype=np.int32),
             alleles=np.array([["A", "T"], ["C", "G"]]),
             ancestral_state=np.array(["A", "C"]),
             sequence_length=1000,
         )
-        extra_store = make_sample_vcz(
+        extra_store = helpers.make_sample_vcz(
             genotypes=np.array([[[0], [0], [1]]], dtype=np.int8),
             positions=np.array([200], dtype=np.int32),
             alleles=np.array([["A", "G"]]),
@@ -1288,7 +1340,7 @@ class TestAugmentSites:
             sequence_length=1000,
         )
         # Combined annotation store
-        ann_store = make_sample_vcz(
+        ann_store = helpers.make_sample_vcz(
             genotypes=np.zeros((3, 1, 1), dtype=np.int8),
             positions=np.array([100, 200, 300], dtype=np.int32),
             alleles=np.array([["A", "T"], ["A", "G"], ["C", "G"]]),
@@ -1296,30 +1348,34 @@ class TestAugmentSites:
             sequence_length=1000,
         )
 
-        src = Source(path=main_store, name="test")
-        extra_src = Source(path=extra_store, name="extra")
-        anc_src = Source(path=None, name="ancestors", sample_time="sample_time")
-        cfg = Config(
+        src = config.Source(path=main_store, name="test")
+        extra_src = config.Source(path=extra_store, name="extra")
+        anc_src = config.Source(path=None, name="ancestors", sample_time="sample_time")
+        cfg = config.Config(
             sources={
                 "test": src,
                 "extra": extra_src,
                 "ancestors": anc_src,
             },
-            ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
-            match=MatchConfig(
+            ancestors=[
+                config.AncestorsConfig(name="ancestors", path=None, sources=["test"])
+            ],
+            match=config.MatchConfig(
                 sources={
-                    "ancestors": MatchSourceConfig(
+                    "ancestors": config.MatchSourceConfig(
                         node_flags=0, create_individuals=False
                     ),
-                    "test": MatchSourceConfig(),
+                    "test": config.MatchSourceConfig(),
                 },
                 output="output.trees",
             ),
-            post_process=PostProcessConfig(split_ultimate=False, erase_flanks=True),
-            augment_sites=AugmentSitesConfig(sources=["extra"]),
+            post_process=config.PostProcessConfig(
+                split_ultimate=False, erase_flanks=True
+            ),
+            augment_sites=config.AugmentSitesConfig(sources=["extra"]),
             ancestral_state=_anc_state(ann_store),
         )
-        out_ts = run(cfg)
+        out_ts = pipeline.run(cfg)
         assert out_ts.num_nodes > 0
         # Should have the augmented site
         positions = set(out_ts.sites_position)

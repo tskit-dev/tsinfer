@@ -18,28 +18,21 @@
 #
 """
 Tests for tsinfer.grouping: merge_overlapping_ancestors, group_ancestors_by_linesweep,
-find_groups, compute_groups, assign_groups.
+grouping.find_groups, grouping.compute_groups, grouping.assign_groups.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import itertools
-from dataclasses import dataclass
 
 import numpy as np
 import pytest
 
-from tsinfer.grouping import (
-    MatchJob,
-    assign_groups,
-    compute_groups,
-    find_groups,
-    group_haplotypes_by_linesweep,
-    merge_overlapping_haplotypes,
-)
+from tsinfer import grouping
 
 
-@dataclass
+@dataclasses.dataclass
 class _GroupInputs:
     times: np.ndarray
     start_positions: np.ndarray
@@ -48,7 +41,7 @@ class _GroupInputs:
 
 class TestComputeGroups:
     """
-    Tests for compute_groups, which partitions haplotypes into ordered groups
+    Tests for grouping.compute_groups, which partitions haplotypes into ordered groups
     for sequential matching.
 
     Rules:
@@ -83,14 +76,14 @@ class TestComputeGroups:
 
     def test_single_haplotype(self):
         gi = self._make_inputs([0.5])
-        groups = compute_groups(gi.times, gi.start_positions, gi.end_positions)
+        groups = grouping.compute_groups(gi.times, gi.start_positions, gi.end_positions)
         assert len(groups) == 1
         assert list(groups[0]) == [0]
 
     def test_multiple_time_levels_ordering(self):
         # Haplotypes at 0.8, 0.5, 0.3 — should be in descending order
         gi = self._make_inputs([0.8, 0.5, 0.3])
-        groups = compute_groups(gi.times, gi.start_positions, gi.end_positions)
+        groups = grouping.compute_groups(gi.times, gi.start_positions, gi.end_positions)
         assert len(groups) == 3
         assert list(groups[0]) == [0]  # time 0.8
         assert list(groups[1]) == [1]  # time 0.5
@@ -99,14 +92,14 @@ class TestComputeGroups:
     def test_samples_only_modern(self):
         # 3 modern samples (time=0) — all overlap → same group
         gi = self._make_inputs([0.0, 0.0, 0.0])
-        groups = compute_groups(gi.times, gi.start_positions, gi.end_positions)
+        groups = grouping.compute_groups(gi.times, gi.start_positions, gi.end_positions)
         assert len(groups) == 1
         assert set(groups[0]) == {0, 1, 2}
 
     def test_ancient_before_modern(self):
         # Ancient (time=0.5) + modern (time=0)
         gi = self._make_inputs([0.5, 0.0])
-        groups = compute_groups(gi.times, gi.start_positions, gi.end_positions)
+        groups = grouping.compute_groups(gi.times, gi.start_positions, gi.end_positions)
         assert len(groups) == 2
         assert list(groups[0]) == [0]  # ancient first
         assert list(groups[1]) == [1]  # modern last
@@ -114,14 +107,14 @@ class TestComputeGroups:
     def test_same_time_overlapping_haplotypes_same_group(self):
         # Two haplotypes at t=0.5 with overlapping intervals → SAME group
         gi = self._make_inputs([0.5, 0.5])
-        groups = compute_groups(gi.times, gi.start_positions, gi.end_positions)
+        groups = grouping.compute_groups(gi.times, gi.start_positions, gi.end_positions)
         assert len(groups) == 1
         assert set(groups[0]) == {0, 1}
 
     def test_mixed_ordering(self):
         # Haplotypes at 0.9, 0.4, 0.4, 0.0 — all default intervals [0,100]
         gi = self._make_inputs([0.9, 0.4, 0.4, 0.0])
-        groups = compute_groups(gi.times, gi.start_positions, gi.end_positions)
+        groups = grouping.compute_groups(gi.times, gi.start_positions, gi.end_positions)
         # t=0.9: group alone; t=0.4: two overlap → same group; t=0.0: alone
         assert len(groups) == 3
         assert list(groups[0]) == [0]  # t=0.9
@@ -130,13 +123,13 @@ class TestComputeGroups:
 
     def test_returns_int32_arrays(self):
         gi = self._make_inputs([0.5])
-        groups = compute_groups(gi.times, gi.start_positions, gi.end_positions)
+        groups = grouping.compute_groups(gi.times, gi.start_positions, gi.end_positions)
         for g in groups:
             assert g.dtype == np.int32
 
     def test_empty_returns_empty(self):
         gi = self._make_inputs([])
-        groups = compute_groups(gi.times, gi.start_positions, gi.end_positions)
+        groups = grouping.compute_groups(gi.times, gi.start_positions, gi.end_positions)
         assert len(groups) == 0
 
     # -------------------------------------------------------------------
@@ -150,7 +143,7 @@ class TestComputeGroups:
             starts=[0, 0],
             ends=[100, 100],
         )
-        groups = compute_groups(gi.times, gi.start_positions, gi.end_positions)
+        groups = grouping.compute_groups(gi.times, gi.start_positions, gi.end_positions)
         assert len(groups) == 1
         assert set(groups[0]) == {0, 1}
 
@@ -161,7 +154,7 @@ class TestComputeGroups:
             starts=[0, 60],
             ends=[30, 100],
         )
-        groups = compute_groups(gi.times, gi.start_positions, gi.end_positions)
+        groups = grouping.compute_groups(gi.times, gi.start_positions, gi.end_positions)
         assert len(groups) == 1
         assert set(groups[0]) == {0, 1}
 
@@ -172,7 +165,7 @@ class TestComputeGroups:
             starts=[0, 50],
             ends=[50, 100],
         )
-        groups = compute_groups(gi.times, gi.start_positions, gi.end_positions)
+        groups = grouping.compute_groups(gi.times, gi.start_positions, gi.end_positions)
         assert len(groups) == 1
         assert set(groups[0]) == {0, 1}
 
@@ -183,7 +176,7 @@ class TestComputeGroups:
             starts=[0, 49],
             ends=[50, 100],
         )
-        groups = compute_groups(gi.times, gi.start_positions, gi.end_positions)
+        groups = grouping.compute_groups(gi.times, gi.start_positions, gi.end_positions)
         assert len(groups) == 1
         assert set(groups[0]) == {0, 1}
 
@@ -194,7 +187,7 @@ class TestComputeGroups:
             starts=[0, 30, 60],
             ends=[20, 50, 100],
         )
-        groups = compute_groups(gi.times, gi.start_positions, gi.end_positions)
+        groups = grouping.compute_groups(gi.times, gi.start_positions, gi.end_positions)
         assert len(groups) == 1
         assert set(groups[0]) == {0, 1, 2}
 
@@ -205,7 +198,7 @@ class TestComputeGroups:
             starts=[0, 25, 50],
             ends=[35, 55, 100],
         )
-        groups = compute_groups(gi.times, gi.start_positions, gi.end_positions)
+        groups = grouping.compute_groups(gi.times, gi.start_positions, gi.end_positions)
         assert len(groups) == 1
         assert set(groups[0]) == {0, 1, 2}
 
@@ -216,7 +209,7 @@ class TestComputeGroups:
             starts=[0, 10, 20],
             ends=[80, 90, 100],
         )
-        groups = compute_groups(gi.times, gi.start_positions, gi.end_positions)
+        groups = grouping.compute_groups(gi.times, gi.start_positions, gi.end_positions)
         assert len(groups) == 1
         assert set(groups[0]) == {0, 1, 2}
 
@@ -227,7 +220,7 @@ class TestComputeGroups:
             starts=[0, 60, 0, 60],
             ends=[30, 100, 30, 100],
         )
-        groups = compute_groups(gi.times, gi.start_positions, gi.end_positions)
+        groups = grouping.compute_groups(gi.times, gi.start_positions, gi.end_positions)
         assert len(groups) == 2  # t=0.8 group + t=0.5 group
         assert set(groups[0]) == {0, 1}  # t=0.8 disjoint
         assert set(groups[1]) == {2, 3}  # t=0.5 disjoint
@@ -239,7 +232,7 @@ class TestComputeGroups:
             starts=[0, 0],
             ends=[100, 100],
         )
-        groups = compute_groups(gi.times, gi.start_positions, gi.end_positions)
+        groups = grouping.compute_groups(gi.times, gi.start_positions, gi.end_positions)
         assert len(groups) == 1
         assert set(groups[0]) == {0, 1}
 
@@ -250,7 +243,7 @@ class TestComputeGroups:
             starts=[0],
             ends=[100],
         )
-        groups = compute_groups(gi.times, gi.start_positions, gi.end_positions)
+        groups = grouping.compute_groups(gi.times, gi.start_positions, gi.end_positions)
         assert len(groups) == 1
         assert list(groups[0]) == [0]
 
@@ -261,7 +254,7 @@ class TestComputeGroups:
             starts=[0, 20],
             ends=[100, 60],
         )
-        groups = compute_groups(gi.times, gi.start_positions, gi.end_positions)
+        groups = grouping.compute_groups(gi.times, gi.start_positions, gi.end_positions)
         assert len(groups) == 1
         assert set(groups[0]) == {0, 1}
 
@@ -272,7 +265,7 @@ class TestComputeGroups:
             starts=[0, 50],
             ends=[100, 50],
         )
-        groups = compute_groups(gi.times, gi.start_positions, gi.end_positions)
+        groups = grouping.compute_groups(gi.times, gi.start_positions, gi.end_positions)
         assert len(groups) == 1
         assert set(groups[0]) == {0, 1}
 
@@ -403,7 +396,7 @@ class TestGroupAncestorsLinesweep:
             new_time,
             old_indexes,
             sort_indices,
-        ) = merge_overlapping_haplotypes(
+        ) = grouping.merge_overlapping_haplotypes(
             np.array(case["start"]),
             np.array(case["end"]),
             np.array(case["time"], dtype=np.float32),
@@ -494,7 +487,7 @@ class TestGroupAncestorsLinesweep:
         ids=[case["name"] for case in grouping_fixed_test_cases],
     )
     def test_grouping_fixed_cases(self, case):
-        output = group_haplotypes_by_linesweep(
+        output = grouping.group_haplotypes_by_linesweep(
             np.array(case["start"]), np.array(case["end"]), np.array(case["time"])
         )
         for group in output:
@@ -507,7 +500,7 @@ class TestGroupAncestorsLinesweep:
         start = rng.randint(0, 200, size=n)
         end = start + rng.randint(1, 100, size=n)
         time = rng.randint(0, 40, size=n)
-        output = group_haplotypes_by_linesweep(start, end, time)
+        output = grouping.group_haplotypes_by_linesweep(start, end, time)
 
         group_ids = np.full(n, -1, dtype=np.int32)
         for group_id, group in output.items():
@@ -530,7 +523,7 @@ class TestGroupAncestorsLinesweep:
         with pytest.raises(
             ValueError, match="Erroneous cycle in ancestor dependancies.*"
         ):
-            find_groups(children_data, children_indices, incoming_edge_count)
+            grouping.find_groups(children_data, children_indices, incoming_edge_count)
 
 
 # ---------------------------------------------------------------------------
@@ -539,7 +532,7 @@ class TestGroupAncestorsLinesweep:
 
 
 class TestComputeGroupsFromGrouping:
-    """Test that compute_groups imported from grouping works correctly."""
+    """Test that grouping.compute_groups imported from grouping works correctly."""
 
     def test_import_from_grouping(self):
         from tsinfer.grouping import compute_groups as cg
@@ -547,7 +540,7 @@ class TestComputeGroupsFromGrouping:
         assert callable(cg)
 
     def test_basic_grouping(self):
-        groups = compute_groups(
+        groups = grouping.compute_groups(
             times=np.array([1.0, 0.5, 0.0], dtype=np.float64),
             start_positions=np.array([0, 0, 0], dtype=np.int32),
             end_positions=np.array([100, 100, 100], dtype=np.int32),
@@ -567,7 +560,7 @@ class TestAssignGroups:
     """Test that assign_groups takes ungrouped MatchJobs and assigns groups."""
 
     def _make_job(self, haplotype_index, time, start=0, end=100):
-        return MatchJob(
+        return grouping.MatchJob(
             haplotype_index=haplotype_index,
             source="test",
             sample_id=f"s{haplotype_index}",
@@ -579,12 +572,12 @@ class TestAssignGroups:
         )
 
     def test_empty(self):
-        result = assign_groups([])
+        result = grouping.assign_groups([])
         assert result == []
 
     def test_single_job(self):
         jobs = [self._make_job(0, 0.5)]
-        result = assign_groups(jobs)
+        result = grouping.assign_groups(jobs)
         assert len(result) == 1
         assert result[0].group == 0
 
@@ -594,7 +587,7 @@ class TestAssignGroups:
             self._make_job(1, 0.5),
             self._make_job(2, 0.3),
         ]
-        result = assign_groups(jobs)
+        result = grouping.assign_groups(jobs)
         assert len(result) == 3
         groups = [j.group for j in result]
         assert len(set(groups)) == 3
@@ -608,7 +601,7 @@ class TestAssignGroups:
             self._make_job(0, 0.5, start=0, end=100),
             self._make_job(1, 0.5, start=0, end=100),
         ]
-        result = assign_groups(jobs)
+        result = grouping.assign_groups(jobs)
         assert result[0].group == result[1].group
 
     def test_sorted_by_group_then_haplotype_index(self):
@@ -617,7 +610,7 @@ class TestAssignGroups:
             self._make_job(0, 0.8),
             self._make_job(1, 0.5),
         ]
-        result = assign_groups(jobs)
+        result = grouping.assign_groups(jobs)
         # Should be sorted by (group, haplotype_index)
         for i in range(len(result) - 1):
             assert (result[i].group, result[i].haplotype_index) <= (
@@ -626,7 +619,7 @@ class TestAssignGroups:
             )
 
     def test_preserves_job_fields(self):
-        job = MatchJob(
+        job = grouping.MatchJob(
             haplotype_index=0,
             source="my_source",
             sample_id="my_sample",
@@ -639,7 +632,7 @@ class TestAssignGroups:
             individual_id=42,
             population_id=7,
         )
-        result = assign_groups([job])
+        result = grouping.assign_groups([job])
         assert result[0].source == "my_source"
         assert result[0].sample_id == "my_sample"
         assert result[0].ploidy_index == 1

@@ -23,30 +23,21 @@ resolution, field specs, and validation errors.
 
 from __future__ import annotations
 
-from pathlib import Path
+import pathlib
 
+import helpers
 import numpy as np
 import pytest
 import zarr
-from helpers import make_sample_vcz
 
-from tsinfer.config import (
-    AncestorsConfig,
-    AncestralState,
-    Config,
-    IndividualMetadataConfig,
-    MatchConfig,
-    MatchSourceConfig,
-    PostProcessConfig,
-    Source,
-)
+from tsinfer import config
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _write_toml(tmp_path: Path, content: str) -> Path:
+def _write_toml(tmp_path: pathlib.Path, content: str) -> pathlib.Path:
     p = tmp_path / "inference.toml"
     p.write_text(content)
     return p
@@ -55,37 +46,39 @@ def _write_toml(tmp_path: Path, content: str) -> Path:
 def _minimal_match_cfg(**kwargs):
     defaults = dict(
         sources={
-            "ancestors": MatchSourceConfig(node_flags=0, create_individuals=False),
-            "cohort": MatchSourceConfig(),
+            "ancestors": config.MatchSourceConfig(
+                node_flags=0, create_individuals=False
+            ),
+            "cohort": config.MatchSourceConfig(),
         },
         output="out.trees",
     )
     defaults.update(kwargs)
-    return MatchConfig(**defaults)
+    return config.MatchConfig(**defaults)
 
 
 def _minimal_ancestors_cfg(**kwargs):
     defaults = dict(name="ancestors", path="ancestors.vcz", sources=["cohort"])
     defaults.update(kwargs)
-    return AncestorsConfig(**defaults)
+    return config.AncestorsConfig(**defaults)
 
 
 def _minimal_config(**kwargs):
     defaults = dict(
         sources={
-            "cohort": Source(path="samples.vcz", name="cohort"),
-            "ancestors": Source(
+            "cohort": config.Source(path="samples.vcz", name="cohort"),
+            "ancestors": config.Source(
                 path="ancestors.vcz", name="ancestors", sample_time="sample_time"
             ),
         },
         ancestors=[_minimal_ancestors_cfg()],
         match=_minimal_match_cfg(),
-        ancestral_state=AncestralState(
+        ancestral_state=config.AncestralState(
             path="annotations.vcz", field="variant_ancestral_allele"
         ),
     )
     defaults.update(kwargs)
-    return Config(**defaults)
+    return config.Config(**defaults)
 
 
 # ---------------------------------------------------------------------------
@@ -95,7 +88,7 @@ def _minimal_config(**kwargs):
 
 class TestSourceConstruction:
     def test_basic(self):
-        s = Source(path="samples.vcz", name="cohort")
+        s = config.Source(path="samples.vcz", name="cohort")
         assert s.name == "cohort"
         assert str(s.path) == "samples.vcz"
         assert s.include is None
@@ -106,50 +99,50 @@ class TestSourceConstruction:
         assert s.sample_time is None
 
     def test_include_expression(self):
-        s = Source(path="s.vcz", name="s", include="QUAL > 30")
+        s = config.Source(path="s.vcz", name="s", include="QUAL > 30")
         assert s.include == "QUAL > 30"
 
     def test_exclude_expression(self):
-        s = Source(path="s.vcz", name="s", exclude="AC == 0")
+        s = config.Source(path="s.vcz", name="s", exclude="AC == 0")
         assert s.exclude == "AC == 0"
 
     def test_samples_string(self):
-        s = Source(path="s.vcz", name="s", samples="^sample_2")
+        s = config.Source(path="s.vcz", name="s", samples="^sample_2")
         assert s.samples == "^sample_2"
 
     def test_sample_time_scalar(self):
-        s = Source(path="s.vcz", name="ancient", sample_time=1.5)
+        s = config.Source(path="s.vcz", name="ancient", sample_time=1.5)
         assert s.sample_time == 1.5
 
     def test_sample_time_string(self):
-        s = Source(path="s.vcz", name="s", sample_time="sample_age")
+        s = config.Source(path="s.vcz", name="s", sample_time="sample_age")
         assert s.sample_time == "sample_age"
 
     def test_empty_name_raises(self):
         with pytest.raises(ValueError, match="name"):
-            Source(path="s.vcz", name="")
+            config.Source(path="s.vcz", name="")
 
     def test_missing_name_raises(self):
         with pytest.raises(ValueError, match="name"):
-            Source(path="s.vcz")
+            config.Source(path="s.vcz")
 
 
 class TestAncestralStateConstruction:
     def test_basic(self):
-        a = AncestralState(path="ann.vcz", field="variant_ancestral_allele")
+        a = config.AncestralState(path="ann.vcz", field="variant_ancestral_allele")
         assert str(a.path) == "ann.vcz"
         assert a.field == "variant_ancestral_allele"
 
 
 class TestAncestorsConfigConstruction:
     def test_basic(self):
-        a = AncestorsConfig(name="anc", path="anc.vcz", sources=["cohort"])
+        a = config.AncestorsConfig(name="anc", path="anc.vcz", sources=["cohort"])
         assert a.name == "anc"
         assert a.sources == ["cohort"]
         assert a.max_gap_length == 500_000
 
     def test_custom_gap_length(self):
-        a = AncestorsConfig(
+        a = config.AncestorsConfig(
             name="anc", path="anc.vcz", sources=["cohort"], max_gap_length=1_000
         )
         assert a.max_gap_length == 1_000
@@ -157,10 +150,12 @@ class TestAncestorsConfigConstruction:
 
 class TestMatchConfigConstruction:
     def test_basic(self):
-        m = MatchConfig(
+        m = config.MatchConfig(
             sources={
-                "ancestors": MatchSourceConfig(node_flags=0, create_individuals=False),
-                "cohort": MatchSourceConfig(),
+                "ancestors": config.MatchSourceConfig(
+                    node_flags=0, create_individuals=False
+                ),
+                "cohort": config.MatchSourceConfig(),
             },
             output="out.trees",
         )
@@ -172,8 +167,8 @@ class TestMatchConfigConstruction:
         assert m.sources["ancestors"].create_individuals is False
 
     def test_with_reference_ts(self):
-        m = MatchConfig(
-            sources={"cohort": MatchSourceConfig()},
+        m = config.MatchConfig(
+            sources={"cohort": config.MatchSourceConfig()},
             output="out.trees",
             reference_ts="ref.trees",
         )
@@ -182,23 +177,23 @@ class TestMatchConfigConstruction:
 
 class TestPostProcessConfigConstruction:
     def test_defaults(self):
-        p = PostProcessConfig()
+        p = config.PostProcessConfig()
         assert p.split_ultimate is True
         assert p.erase_flanks is True
 
     def test_custom(self):
-        p = PostProcessConfig(split_ultimate=False, erase_flanks=False)
+        p = config.PostProcessConfig(split_ultimate=False, erase_flanks=False)
         assert p.split_ultimate is False
 
 
 class TestIndividualMetadataConfigConstruction:
     def test_defaults(self):
-        m = IndividualMetadataConfig()
+        m = config.IndividualMetadataConfig()
         assert m.fields == {}
         assert m.population is None
 
     def test_with_fields(self):
-        m = IndividualMetadataConfig(
+        m = config.IndividualMetadataConfig(
             fields={"sample_id": "sample_id", "sex": "sample_sex"},
             population="sample_population",
         )
@@ -216,28 +211,28 @@ class TestConfigConstruction:
 
     def test_no_ancestors_no_reference_ts_raises(self):
         with pytest.raises(ValueError, match="ancestors"):
-            Config(
+            config.Config(
                 sources={},
                 ancestors=[],
-                match=MatchConfig(
-                    sources={"cohort": MatchSourceConfig()},
+                match=config.MatchConfig(
+                    sources={"cohort": config.MatchSourceConfig()},
                     output="out.trees",
                 ),
-                ancestral_state=AncestralState(
+                ancestral_state=config.AncestralState(
                     path="dummy", field="variant_ancestral_allele"
                 ),
             )
 
     def test_reference_ts_without_ancestors_ok(self):
-        cfg = Config(
-            sources={"cohort": Source(path="s.vcz", name="cohort")},
+        cfg = config.Config(
+            sources={"cohort": config.Source(path="s.vcz", name="cohort")},
             ancestors=[],
-            match=MatchConfig(
-                sources={"cohort": MatchSourceConfig()},
+            match=config.MatchConfig(
+                sources={"cohort": config.MatchSourceConfig()},
                 output="out.trees",
                 reference_ts="ref.trees",
             ),
-            ancestral_state=AncestralState(
+            ancestral_state=config.AncestralState(
                 path="dummy", field="variant_ancestral_allele"
             ),
         )
@@ -286,27 +281,27 @@ erase_flanks   = true
 
 class TestFromTomlStandard:
     def test_loads_without_error(self, tmp_path):
-        cfg = Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
-        assert isinstance(cfg, Config)
+        cfg = config.Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
+        assert isinstance(cfg, config.Config)
 
     def test_sources(self, tmp_path):
-        cfg = Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
+        cfg = config.Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
         assert "cohort" in cfg.sources
         assert cfg.sources["cohort"].include == "QUAL > 20"
 
     def test_ancestral_state(self, tmp_path):
-        cfg = Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
+        cfg = config.Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
         assert cfg.ancestral_state is not None
         assert cfg.ancestral_state.field == "variant_ancestral_allele"
 
     def test_ancestors(self, tmp_path):
-        cfg = Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
+        cfg = config.Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
         assert len(cfg.ancestors) == 1
         assert cfg.ancestors[0].sources == ["cohort"]
         assert cfg.ancestors[0].max_gap_length == 500_000
 
     def test_match(self, tmp_path):
-        cfg = Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
+        cfg = config.Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
         assert set(cfg.match.sources.keys()) == {"ancestors", "cohort"}
         assert cfg.match.sources["ancestors"].node_flags == 0
         assert cfg.match.sources["ancestors"].create_individuals is False
@@ -314,13 +309,13 @@ class TestFromTomlStandard:
         assert cfg.match.sources["cohort"].create_individuals is True
 
     def test_individual_metadata(self, tmp_path):
-        cfg = Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
+        cfg = config.Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
         assert cfg.individual_metadata is not None
         assert cfg.individual_metadata.fields["sex"] == "sample_sex"
         assert cfg.individual_metadata.population == "sample_population"
 
     def test_post_process(self, tmp_path):
-        cfg = Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
+        cfg = config.Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
         assert cfg.post_process is not None
         assert cfg.post_process.split_ultimate is True
         assert cfg.post_process.erase_flanks is True
@@ -333,19 +328,19 @@ class TestFromTomlStandard:
 
 class TestPathResolution:
     def test_source_path_as_is(self, tmp_path):
-        cfg = Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
+        cfg = config.Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
         assert cfg.sources["cohort"].path == "samples.vcz"
 
     def test_ancestors_path_as_is(self, tmp_path):
-        cfg = Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
+        cfg = config.Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
         assert cfg.ancestors[0].path == "ancestors.vcz"
 
     def test_match_output_as_is(self, tmp_path):
-        cfg = Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
+        cfg = config.Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
         assert cfg.match.output == "final.trees"
 
     def test_ancestral_state_path_as_is(self, tmp_path):
-        cfg = Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
+        cfg = config.Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
         assert cfg.ancestral_state.path == "annotations.vcz"
 
     def test_absolute_path_preserved(self, tmp_path):
@@ -368,7 +363,7 @@ output             = "/data/final.trees"
 [match.sources.ancestors]
 [match.sources.cohort]
 """
-        cfg = Config.from_toml(_write_toml(tmp_path, toml))
+        cfg = config.Config.from_toml(_write_toml(tmp_path, toml))
         assert cfg.sources["cohort"].path == "/data/samples.vcz"
         assert cfg.ancestors[0].path == "/data/ancestors.vcz"
         assert cfg.match.output == "/data/final.trees"
@@ -393,7 +388,7 @@ output             = "out.trees"
 [match.sources.ancestors]
 [match.sources.cohort]
 """
-        cfg = Config.from_toml(_write_toml(tmp_path, toml))
+        cfg = config.Config.from_toml(_write_toml(tmp_path, toml))
         assert str(cfg.sources["cohort"].path) == "s3://bucket/samples.vcz"
 
     def test_reference_ts_path_as_is(self, tmp_path):
@@ -412,7 +407,7 @@ reference_ts       = "ref.trees"
 
 [match.sources.cohort]
 """
-        cfg = Config.from_toml(_write_toml(tmp_path, toml))
+        cfg = config.Config.from_toml(_write_toml(tmp_path, toml))
         assert cfg.match.reference_ts == "ref.trees"
 
 
@@ -443,7 +438,7 @@ output             = "out.trees"
 [match.sources.ancestors]
 [match.sources.cohort]
 """
-        cfg = Config.from_toml(_write_toml(tmp_path, toml))
+        cfg = config.Config.from_toml(_write_toml(tmp_path, toml))
         assert cfg.sources["cohort"].include == "QUAL > 30"
 
     def test_exclude_expression(self, tmp_path):
@@ -467,7 +462,7 @@ output             = "out.trees"
 [match.sources.ancestors]
 [match.sources.cohort]
 """
-        cfg = Config.from_toml(_write_toml(tmp_path, toml))
+        cfg = config.Config.from_toml(_write_toml(tmp_path, toml))
         assert cfg.sources["cohort"].exclude == "AC == 0"
 
     def test_samples_string(self, tmp_path):
@@ -491,7 +486,7 @@ output             = "out.trees"
 [match.sources.ancestors]
 [match.sources.cohort]
 """
-        cfg = Config.from_toml(_write_toml(tmp_path, toml))
+        cfg = config.Config.from_toml(_write_toml(tmp_path, toml))
         assert cfg.sources["cohort"].samples == "^sample_2,sample_3"
 
     def test_sample_time_scalar(self, tmp_path):
@@ -515,7 +510,7 @@ output             = "out.trees"
 [match.sources.ancestors]
 [match.sources.parents]
 """
-        cfg = Config.from_toml(_write_toml(tmp_path, toml))
+        cfg = config.Config.from_toml(_write_toml(tmp_path, toml))
         assert cfg.sources["parents"].sample_time == 1
 
     def test_sample_time_string(self, tmp_path):
@@ -539,7 +534,7 @@ output             = "out.trees"
 [match.sources.ancestors]
 [match.sources.ancient]
 """
-        cfg = Config.from_toml(_write_toml(tmp_path, toml))
+        cfg = config.Config.from_toml(_write_toml(tmp_path, toml))
         assert cfg.sources["ancient"].sample_time == "sample_age_generations"
 
     def test_multiple_sources(self, tmp_path):
@@ -572,7 +567,7 @@ create_individuals = false
 
 [match.sources.ancient]
 """
-        cfg = Config.from_toml(_write_toml(tmp_path, toml))
+        cfg = config.Config.from_toml(_write_toml(tmp_path, toml))
         assert set(cfg.sources) == {"cohort", "ancient", "ancestors"}
         assert set(cfg.match.sources.keys()) == {"ancestors", "cohort", "ancient"}
 
@@ -594,7 +589,7 @@ name = "cohort"
 path = "samples.vcz"
 """
         with pytest.raises(ValueError, match=r"\[match\]"):
-            Config.from_toml(_write_toml(tmp_path, toml))
+            config.Config.from_toml(_write_toml(tmp_path, toml))
 
     def test_match_missing_sources(self, tmp_path):
         toml = """\
@@ -614,7 +609,7 @@ sources = ["cohort"]
 output             = "out.trees"
 """
         with pytest.raises((ValueError, KeyError)):
-            Config.from_toml(_write_toml(tmp_path, toml))
+            config.Config.from_toml(_write_toml(tmp_path, toml))
 
     def test_source_missing_name(self, tmp_path):
         toml = """\
@@ -636,7 +631,7 @@ output             = "out.trees"
 [match.sources.cohort]
 """
         with pytest.raises(ValueError, match="name"):
-            Config.from_toml(_write_toml(tmp_path, toml))
+            config.Config.from_toml(_write_toml(tmp_path, toml))
 
     def test_source_missing_path(self, tmp_path):
         toml = """\
@@ -658,7 +653,7 @@ output             = "out.trees"
 [match.sources.cohort]
 """
         with pytest.raises(ValueError, match="path"):
-            Config.from_toml(_write_toml(tmp_path, toml))
+            config.Config.from_toml(_write_toml(tmp_path, toml))
 
     def test_duplicate_source_names(self, tmp_path):
         toml = """\
@@ -685,7 +680,7 @@ output             = "out.trees"
 [match.sources.cohort]
 """
         with pytest.raises(ValueError, match="Duplicate"):
-            Config.from_toml(_write_toml(tmp_path, toml))
+            config.Config.from_toml(_write_toml(tmp_path, toml))
 
     def test_no_ancestors_no_reference_ts(self, tmp_path):
         toml = """\
@@ -703,7 +698,7 @@ output             = "out.trees"
 [match.sources.cohort]
 """
         with pytest.raises(ValueError, match="ancestors"):
-            Config.from_toml(_write_toml(tmp_path, toml))
+            config.Config.from_toml(_write_toml(tmp_path, toml))
 
     def test_ancestors_missing_path(self, tmp_path):
         toml = """\
@@ -725,7 +720,7 @@ output             = "out.trees"
 [match.sources.cohort]
 """
         with pytest.raises((ValueError, KeyError)):
-            Config.from_toml(_write_toml(tmp_path, toml))
+            config.Config.from_toml(_write_toml(tmp_path, toml))
 
     def test_toml_missing_ancestral_state_raises(self, tmp_path):
         toml = """\
@@ -744,11 +739,11 @@ output             = "out.trees"
 [match.sources.cohort]
 """
         with pytest.raises(ValueError, match="ancestral_state"):
-            Config.from_toml(_write_toml(tmp_path, toml))
+            config.Config.from_toml(_write_toml(tmp_path, toml))
 
 
 # ---------------------------------------------------------------------------
-# Config.format()
+# config.Config.format()
 # ---------------------------------------------------------------------------
 
 
@@ -773,7 +768,7 @@ class TestConfigFormat:
 
     def test_includes_ancestral_state(self):
         cfg = _minimal_config(
-            ancestral_state=AncestralState(path="ann.vcz", field="anc_allele"),
+            ancestral_state=config.AncestralState(path="ann.vcz", field="anc_allele"),
         )
         text = cfg.format()
         assert "[ancestral_state]" in text
@@ -781,14 +776,14 @@ class TestConfigFormat:
         assert "anc_allele" in text
 
     def test_includes_post_process(self):
-        cfg = _minimal_config(post_process=PostProcessConfig())
+        cfg = _minimal_config(post_process=config.PostProcessConfig())
         text = cfg.format()
         assert "[post_process]" in text
         assert "split_ultimate" in text
 
     def test_includes_individual_metadata(self):
         cfg = _minimal_config(
-            individual_metadata=IndividualMetadataConfig(
+            individual_metadata=config.IndividualMetadataConfig(
                 fields={"sample_id": "sample_id"},
                 population="pop",
             ),
@@ -800,7 +795,7 @@ class TestConfigFormat:
     def test_optional_source_fields(self):
         cfg = _minimal_config(
             sources={
-                "s": Source(
+                "s": config.Source(
                     path="s.vcz",
                     name="s",
                     include="QUAL > 30",
@@ -817,15 +812,15 @@ class TestConfigFormat:
         assert "sample_time = 1.5" in text
 
     def test_no_optional_sections(self):
-        cfg = Config(
-            sources={"s": Source(path="s.vcz", name="s")},
+        cfg = config.Config(
+            sources={"s": config.Source(path="s.vcz", name="s")},
             ancestors=[],
-            match=MatchConfig(
-                sources={"s": MatchSourceConfig()},
+            match=config.MatchConfig(
+                sources={"s": config.MatchSourceConfig()},
                 output="out.trees",
                 reference_ts="ref.trees",
             ),
-            ancestral_state=AncestralState(
+            ancestral_state=config.AncestralState(
                 path="dummy", field="variant_ancestral_allele"
             ),
         )
@@ -838,13 +833,13 @@ class TestConfigFormat:
 
 
 # ---------------------------------------------------------------------------
-# Config.validate()
+# config.Config.validate()
 # ---------------------------------------------------------------------------
 
 
 def _write_sample_vcz(tmp_path):
     """Create a sample VCZ on disk and return its path."""
-    store = make_sample_vcz(
+    store = helpers.make_sample_vcz(
         genotypes=np.array([[[0], [1]], [[1], [0]]], dtype=np.int8),
         positions=np.array([100, 200], dtype=np.int32),
         alleles=np.array([["A", "T"], ["A", "T"]]),
@@ -858,22 +853,22 @@ def _write_sample_vcz(tmp_path):
 
 class TestConfigValidate:
     def _anc_src(self, path=None):
-        return Source(path=path, name="ancestors", sample_time="sample_time")
+        return config.Source(path=path, name="ancestors", sample_time="sample_time")
 
     def test_valid_config(self, tmp_path):
         vcz_path = _write_sample_vcz(tmp_path)
-        cfg = Config(
+        cfg = config.Config(
             sources={
-                "test": Source(path=vcz_path, name="test"),
+                "test": config.Source(path=vcz_path, name="test"),
                 "ancestors": self._anc_src(tmp_path / "ancestors.vcz"),
             },
             ancestors=[
-                AncestorsConfig(
+                config.AncestorsConfig(
                     name="ancestors", path=tmp_path / "ancestors.vcz", sources=["test"]
                 )
             ],
             match=_minimal_match_cfg(),
-            ancestral_state=AncestralState(
+            ancestral_state=config.AncestralState(
                 path=vcz_path, field="variant_ancestral_allele"
             ),
         )
@@ -881,14 +876,16 @@ class TestConfigValidate:
         assert errors == []
 
     def test_missing_source_path(self, tmp_path):
-        cfg = Config(
+        cfg = config.Config(
             sources={
-                "test": Source(path=tmp_path / "nonexistent.vcz", name="test"),
+                "test": config.Source(path=tmp_path / "nonexistent.vcz", name="test"),
                 "ancestors": self._anc_src(),
             },
-            ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
+            ancestors=[
+                config.AncestorsConfig(name="ancestors", path=None, sources=["test"])
+            ],
             match=_minimal_match_cfg(),
-            ancestral_state=AncestralState(
+            ancestral_state=config.AncestralState(
                 path="dummy", field="variant_ancestral_allele"
             ),
         )
@@ -898,20 +895,20 @@ class TestConfigValidate:
     def test_ancestors_path_not_checked(self, tmp_path):
         """ancestors.path is an output — should not be checked."""
         vcz_path = _write_sample_vcz(tmp_path)
-        cfg = Config(
+        cfg = config.Config(
             sources={
-                "test": Source(path=vcz_path, name="test"),
+                "test": config.Source(path=vcz_path, name="test"),
                 "ancestors": self._anc_src(tmp_path / "not_yet_created.vcz"),
             },
             ancestors=[
-                AncestorsConfig(
+                config.AncestorsConfig(
                     name="ancestors",
                     path=tmp_path / "not_yet_created.vcz",
                     sources=["test"],
                 )
             ],
             match=_minimal_match_cfg(),
-            ancestral_state=AncestralState(
+            ancestral_state=config.AncestralState(
                 path=vcz_path, field="variant_ancestral_allele"
             ),
         )
@@ -920,16 +917,18 @@ class TestConfigValidate:
 
     def test_unknown_ancestor_source(self, tmp_path):
         vcz_path = _write_sample_vcz(tmp_path)
-        cfg = Config(
+        cfg = config.Config(
             sources={
-                "test": Source(path=vcz_path, name="test"),
+                "test": config.Source(path=vcz_path, name="test"),
                 "ancestors": self._anc_src(),
             },
             ancestors=[
-                AncestorsConfig(name="ancestors", path=None, sources=["nonexistent"])
+                config.AncestorsConfig(
+                    name="ancestors", path=None, sources=["nonexistent"]
+                )
             ],
             match=_minimal_match_cfg(),
-            ancestral_state=AncestralState(
+            ancestral_state=config.AncestralState(
                 path=vcz_path, field="variant_ancestral_allele"
             ),
         )
@@ -939,9 +938,9 @@ class TestConfigValidate:
     def test_missing_sample_time_path(self, tmp_path):
         """Error when sample_time dict spec references nonexistent path."""
         vcz_path = _write_sample_vcz(tmp_path)
-        cfg = Config(
+        cfg = config.Config(
             sources={
-                "test": Source(
+                "test": config.Source(
                     path=vcz_path,
                     name="test",
                     sample_time={
@@ -951,9 +950,11 @@ class TestConfigValidate:
                 ),
                 "ancestors": self._anc_src(),
             },
-            ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
+            ancestors=[
+                config.AncestorsConfig(name="ancestors", path=None, sources=["test"])
+            ],
             match=_minimal_match_cfg(),
-            ancestral_state=AncestralState(
+            ancestral_state=config.AncestralState(
                 path=vcz_path, field="variant_ancestral_allele"
             ),
         )
@@ -961,15 +962,15 @@ class TestConfigValidate:
         assert any("sample_time" in e and "does not exist" in e for e in errors)
 
     def test_missing_reference_ts(self):
-        cfg = Config(
-            sources={"s": Source(path="s.vcz", name="s")},
+        cfg = config.Config(
+            sources={"s": config.Source(path="s.vcz", name="s")},
             ancestors=[],
-            match=MatchConfig(
-                sources={"s": MatchSourceConfig()},
+            match=config.MatchConfig(
+                sources={"s": config.MatchSourceConfig()},
                 output="out.trees",
                 reference_ts="/nonexistent/ref.trees",
             ),
-            ancestral_state=AncestralState(
+            ancestral_state=config.AncestralState(
                 path="dummy", field="variant_ancestral_allele"
             ),
         )
@@ -978,7 +979,9 @@ class TestConfigValidate:
 
     def test_missing_ancestral_state_path(self):
         cfg = _minimal_config(
-            ancestral_state=AncestralState(path="/nonexistent/ann.vcz", field="anc"),
+            ancestral_state=config.AncestralState(
+                path="/nonexistent/ann.vcz", field="anc"
+            ),
         )
         errors = cfg.validate()
         assert any("Ancestral state" in e and "does not exist" in e for e in errors)
@@ -986,14 +989,16 @@ class TestConfigValidate:
     def test_source_with_none_path(self, tmp_path):
         """Sources with path=None (in-memory) should not error."""
         vcz_path = _write_sample_vcz(tmp_path)
-        cfg = Config(
+        cfg = config.Config(
             sources={
-                "test": Source(path=None, name="test"),
+                "test": config.Source(path=None, name="test"),
                 "ancestors": self._anc_src(),
             },
-            ancestors=[AncestorsConfig(name="ancestors", path=None, sources=["test"])],
+            ancestors=[
+                config.AncestorsConfig(name="ancestors", path=None, sources=["test"])
+            ],
             match=_minimal_match_cfg(),
-            ancestral_state=AncestralState(
+            ancestral_state=config.AncestralState(
                 path=vcz_path, field="variant_ancestral_allele"
             ),
         )
@@ -1034,7 +1039,7 @@ class TestUnknownKeys:
     def test_unknown_top_level_key(self, tmp_path):
         toml = _MINIMAL_TOML + '\n[bogus]\nfoo = "bar"\n'
         with pytest.raises(ValueError, match="Unrecognised.*top-level.*bogus"):
-            Config.from_toml(_write_toml(tmp_path, toml))
+            config.Config.from_toml(_write_toml(tmp_path, toml))
 
     def test_unknown_source_key(self, tmp_path):
         toml = _MINIMAL_TOML.replace(
@@ -1042,7 +1047,7 @@ class TestUnknownKeys:
             'path = "samples.vcz"\nflavour = "vanilla"',
         )
         with pytest.raises(ValueError, match="Unrecognised.*source.*flavour"):
-            Config.from_toml(_write_toml(tmp_path, toml))
+            config.Config.from_toml(_write_toml(tmp_path, toml))
 
     def test_unknown_ancestors_key(self, tmp_path):
         toml = _MINIMAL_TOML.replace(
@@ -1051,7 +1056,7 @@ class TestUnknownKeys:
             1,  # only replace first occurrence (ancestors section)
         )
         with pytest.raises(ValueError, match="Unrecognised.*ancestors.*foo"):
-            Config.from_toml(_write_toml(tmp_path, toml))
+            config.Config.from_toml(_write_toml(tmp_path, toml))
 
     def test_unknown_match_key(self, tmp_path):
         toml = _MINIMAL_TOML.replace(
@@ -1059,15 +1064,15 @@ class TestUnknownKeys:
             'output             = "out.trees"\nmagic = true',
         )
         with pytest.raises(ValueError, match="Unrecognised.*match.*magic"):
-            Config.from_toml(_write_toml(tmp_path, toml))
+            config.Config.from_toml(_write_toml(tmp_path, toml))
 
     def test_unknown_post_process_key(self, tmp_path):
         toml = _MINIMAL_TOML + "\n[post_process]\nturbo = true\n"
         with pytest.raises(ValueError, match="Unrecognised.*post_process.*turbo"):
-            Config.from_toml(_write_toml(tmp_path, toml))
+            config.Config.from_toml(_write_toml(tmp_path, toml))
 
     def test_valid_config_no_error(self, tmp_path):
-        Config.from_toml(_write_toml(tmp_path, _MINIMAL_TOML))
+        config.Config.from_toml(_write_toml(tmp_path, _MINIMAL_TOML))
 
 
 class TestWorkdirConfig:
@@ -1076,7 +1081,7 @@ class TestWorkdirConfig:
             'output             = "out.trees"',
             'output             = "out.trees"\nworkdir = "checkpoints"',
         )
-        cfg = Config.from_toml(_write_toml(tmp_path, toml))
+        cfg = config.Config.from_toml(_write_toml(tmp_path, toml))
         assert cfg.match.workdir == "checkpoints"
 
     def test_keep_intermediates_parsed_from_toml(self, tmp_path):
@@ -1085,54 +1090,58 @@ class TestWorkdirConfig:
             'output             = "out.trees"\n'
             'workdir = "checkpoints"\nkeep_intermediates = true',
         )
-        cfg = Config.from_toml(_write_toml(tmp_path, toml))
+        cfg = config.Config.from_toml(_write_toml(tmp_path, toml))
         assert cfg.match.keep_intermediates is True
         assert cfg.match.workdir == "checkpoints"
 
     def test_keep_intermediates_without_workdir_errors(self):
         with pytest.raises(ValueError, match="keep_intermediates requires workdir"):
-            Config(
+            config.Config(
                 sources={
-                    "t": Source(path="x", name="t"),
-                    "ancestors": Source(
+                    "t": config.Source(path="x", name="t"),
+                    "ancestors": config.Source(
                         path="a", name="ancestors", sample_time="sample_time"
                     ),
                 },
-                ancestors=[AncestorsConfig(name="ancestors", path="a", sources=["t"])],
-                match=MatchConfig(
+                ancestors=[
+                    config.AncestorsConfig(name="ancestors", path="a", sources=["t"])
+                ],
+                match=config.MatchConfig(
                     sources={
-                        "ancestors": MatchSourceConfig(
+                        "ancestors": config.MatchSourceConfig(
                             node_flags=0, create_individuals=False
                         ),
-                        "t": MatchSourceConfig(),
+                        "t": config.MatchSourceConfig(),
                     },
                     output="o.trees",
                     keep_intermediates=True,
                 ),
-                ancestral_state=AncestralState(
+                ancestral_state=config.AncestralState(
                     path="dummy", field="variant_ancestral_allele"
                 ),
             )
 
     def test_workdir_defaults_to_none(self):
-        cfg = Config(
+        cfg = config.Config(
             sources={
-                "t": Source(path="x", name="t"),
-                "ancestors": Source(
+                "t": config.Source(path="x", name="t"),
+                "ancestors": config.Source(
                     path="a", name="ancestors", sample_time="sample_time"
                 ),
             },
-            ancestors=[AncestorsConfig(name="ancestors", path="a", sources=["t"])],
-            match=MatchConfig(
+            ancestors=[
+                config.AncestorsConfig(name="ancestors", path="a", sources=["t"])
+            ],
+            match=config.MatchConfig(
                 sources={
-                    "ancestors": MatchSourceConfig(
+                    "ancestors": config.MatchSourceConfig(
                         node_flags=0, create_individuals=False
                     ),
-                    "t": MatchSourceConfig(),
+                    "t": config.MatchSourceConfig(),
                 },
                 output="o.trees",
             ),
-            ancestral_state=AncestralState(
+            ancestral_state=config.AncestralState(
                 path="dummy", field="variant_ancestral_allele"
             ),
         )
@@ -1146,7 +1155,7 @@ class TestWorkdirConfig:
             'output             = "out.trees"\nintermediate_ts = "foo_{group}.trees"',
         )
         with pytest.raises(ValueError, match="Unrecognised.*match.*intermediate_ts"):
-            Config.from_toml(_write_toml(tmp_path, toml))
+            config.Config.from_toml(_write_toml(tmp_path, toml))
 
     def test_groups_rejected(self, tmp_path):
         """Old groups key is rejected as unknown."""
@@ -1155,4 +1164,4 @@ class TestWorkdirConfig:
             'output             = "out.trees"\ngroups = "groups.json"',
         )
         with pytest.raises(ValueError, match="Unrecognised.*match.*groups"):
-            Config.from_toml(_write_toml(tmp_path, toml))
+            config.Config.from_toml(_write_toml(tmp_path, toml))

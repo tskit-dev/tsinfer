@@ -25,16 +25,7 @@ from __future__ import annotations
 import numpy as np
 import tskit
 
-from tsinfer.grouping import MatchJob
-from tsinfer.matching import (
-    Matcher,
-    MatchResult,
-    Mutation,
-    PathSegment,
-    extend_ts,
-    make_root_ts,
-)
-from tsinfer.vcz import AlleleMapper
+from tsinfer import grouping, matching, vcz
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -119,7 +110,7 @@ def _make_job(
     population_id=None,
 ):
     """Create a MatchJob with sensible defaults for testing."""
-    return MatchJob(
+    return grouping.MatchJob(
         haplotype_index=haplotype_index,
         source=source,
         sample_id=sample_id,
@@ -136,7 +127,7 @@ def _make_job(
 
 def _dummy_result():
     """A MatchResult with no edges or mutations."""
-    return MatchResult(path=[], mutations=[])
+    return matching.MatchResult(path=[], mutations=[])
 
 
 # ---------------------------------------------------------------------------
@@ -146,31 +137,39 @@ def _dummy_result():
 
 class TestMakeRootTs:
     def _mapper(self, n):
-        return AlleleMapper(n, [["A", "T"]] * n)
+        return vcz.AlleleMapper(n, [["A", "T"]] * n)
 
     def test_sequence_length(self):
         positions = np.array([10, 20, 30], dtype=np.int32)
         intervals = np.array([[10, 31]], dtype=np.int32)
-        ts = make_root_ts(1000.0, positions, intervals, allele_mapper=self._mapper(3))
+        ts = matching.make_root_ts(
+            1000.0, positions, intervals, allele_mapper=self._mapper(3)
+        )
         assert ts.sequence_length == 1000.0
 
     def test_num_nodes_two(self):
         positions = np.array([10, 20, 30], dtype=np.int32)
         intervals = np.array([[10, 31]], dtype=np.int32)
-        ts = make_root_ts(1000.0, positions, intervals, allele_mapper=self._mapper(3))
+        ts = matching.make_root_ts(
+            1000.0, positions, intervals, allele_mapper=self._mapper(3)
+        )
         assert ts.num_nodes == 2
 
     def test_sites_at_correct_positions(self):
         positions = np.array([5, 15, 25, 100], dtype=np.int32)
         intervals = np.array([[5, 101]], dtype=np.int32)
-        ts = make_root_ts(200.0, positions, intervals, allele_mapper=self._mapper(4))
+        ts = matching.make_root_ts(
+            200.0, positions, intervals, allele_mapper=self._mapper(4)
+        )
         assert ts.num_sites == 4
         np.testing.assert_array_equal(ts.tables.sites.position, [5, 15, 25, 100])
 
     def test_sequence_intervals_in_metadata(self):
         positions = np.array([10, 20, 30], dtype=np.int32)
         intervals = np.array([[10, 31], [100, 200]], dtype=np.int32)
-        ts = make_root_ts(500.0, positions, intervals, allele_mapper=self._mapper(3))
+        ts = matching.make_root_ts(
+            500.0, positions, intervals, allele_mapper=self._mapper(3)
+        )
         meta = ts.metadata
         assert "sequence_intervals" in meta
         assert meta["sequence_intervals"] == [[10, 31], [100, 200]]
@@ -178,7 +177,9 @@ class TestMakeRootTs:
     def test_single_site(self):
         positions = np.array([42], dtype=np.int32)
         intervals = np.array([[42, 43]], dtype=np.int32)
-        ts = make_root_ts(100.0, positions, intervals, allele_mapper=self._mapper(1))
+        ts = matching.make_root_ts(
+            100.0, positions, intervals, allele_mapper=self._mapper(1)
+        )
         assert ts.num_sites == 1
         assert ts.num_nodes == 2
         assert ts.num_edges == 1
@@ -187,25 +188,33 @@ class TestMakeRootTs:
     def test_one_edge(self):
         positions = np.array([10, 20, 30], dtype=np.int32)
         intervals = np.array([[10, 31]], dtype=np.int32)
-        ts = make_root_ts(1000.0, positions, intervals, allele_mapper=self._mapper(3))
+        ts = matching.make_root_ts(
+            1000.0, positions, intervals, allele_mapper=self._mapper(3)
+        )
         assert ts.num_edges == 1
 
     def test_no_mutations(self):
         positions = np.array([10, 20, 30], dtype=np.int32)
         intervals = np.array([[10, 31]], dtype=np.int32)
-        ts = make_root_ts(1000.0, positions, intervals, allele_mapper=self._mapper(3))
+        ts = matching.make_root_ts(
+            1000.0, positions, intervals, allele_mapper=self._mapper(3)
+        )
         assert ts.num_mutations == 0
 
     def test_sequence_length_float(self):
         positions = np.array([1, 2, 3], dtype=np.int32)
         intervals = np.array([[1, 4]], dtype=np.int32)
-        ts = make_root_ts(999.5, positions, intervals, allele_mapper=self._mapper(3))
+        ts = matching.make_root_ts(
+            999.5, positions, intervals, allele_mapper=self._mapper(3)
+        )
         assert ts.sequence_length == 999.5
 
     def test_node_metadata_schema_set(self):
         positions = np.array([10, 20, 30], dtype=np.int32)
         intervals = np.array([[10, 31]], dtype=np.int32)
-        ts = make_root_ts(1000.0, positions, intervals, allele_mapper=self._mapper(3))
+        ts = matching.make_root_ts(
+            1000.0, positions, intervals, allele_mapper=self._mapper(3)
+        )
         assert ts.tables.nodes.metadata_schema.schema is not None
         for node in ts.nodes():
             assert node.metadata == {}
@@ -223,11 +232,11 @@ class TestMatcher:
         self.positions = np.array([10, 20, 30], dtype=np.int32)
         self.seq_len = 100.0
         self.num_sites = 3
-        self.allele_mapper = AlleleMapper(3, [["A", "T"]] * 3)
+        self.allele_mapper = vcz.AlleleMapper(3, [["A", "T"]] * 3)
 
     def _make_ts_with_root_only(self):
         """Empty tree sequence (just sites, no nodes)."""
-        return make_root_ts(
+        return matching.make_root_ts(
             self.seq_len,
             self.positions,
             np.array([[10, 31]], dtype=np.int32),
@@ -248,7 +257,7 @@ class TestMatcher:
         """Matching an identical haplotype returns a MatchResult with path edges."""
         hap = np.array([0, 1, 0], dtype=np.int8)
         ts = self._make_ts_with_one_ancestor(hap)
-        matcher = Matcher(ts, self.positions, allele_mapper=self.allele_mapper)
+        matcher = matching.Matcher(ts, self.positions, allele_mapper=self.allele_mapper)
         results = list(matcher.match(_jobs(1), _ArrayReader([hap])))
         assert len(results) == 1
         _, r = results[0]
@@ -261,7 +270,7 @@ class TestMatcher:
         ts = self._make_ts_with_one_ancestor(ancestor_hap)
         # Query haplotype has derived state at site 1
         query_hap = np.array([0, 1, 0], dtype=np.int8)
-        matcher = Matcher(ts, self.positions, allele_mapper=self.allele_mapper)
+        matcher = matching.Matcher(ts, self.positions, allele_mapper=self.allele_mapper)
         results = list(matcher.match(_jobs(1), _ArrayReader([query_hap])))
         _, r = results[0]
         # There should be a mutation at position 20 (site index 1)
@@ -273,7 +282,7 @@ class TestMatcher:
         hap = np.array([0, 1, 0], dtype=np.int8)
         ts = self._make_ts_with_one_ancestor(hap)
         missing_hap = np.array([-1, -1, -1], dtype=np.int8)
-        matcher = Matcher(ts, self.positions, allele_mapper=self.allele_mapper)
+        matcher = matching.Matcher(ts, self.positions, allele_mapper=self.allele_mapper)
         results = list(matcher.match(_jobs(1), _ArrayReader([missing_hap])))
         assert len(results) == 1
 
@@ -282,7 +291,7 @@ class TestMatcher:
         hap = np.array([0, 1, 0], dtype=np.int8)
         ts = self._make_ts_with_one_ancestor(hap)
         query_hap = np.array([-1, 1, 0], dtype=np.int8)
-        matcher = Matcher(ts, self.positions, allele_mapper=self.allele_mapper)
+        matcher = matching.Matcher(ts, self.positions, allele_mapper=self.allele_mapper)
         results = list(matcher.match(_jobs(1), _ArrayReader([query_hap])))
         assert len(results) == 1
         _, r = results[0]
@@ -295,7 +304,7 @@ class TestMatcher:
         hap = np.array([0, 1, 0], dtype=np.int8)
         ts = self._make_ts_with_one_ancestor(hap)
         haplotypes = np.array([[0, 1, 0], [0, 0, 1], [1, 0, 0]], dtype=np.int8)
-        matcher = Matcher(ts, self.positions, allele_mapper=self.allele_mapper)
+        matcher = matching.Matcher(ts, self.positions, allele_mapper=self.allele_mapper)
         results = list(matcher.match(_jobs(3), _ArrayReader(haplotypes)))
         assert len(results) == 3
 
@@ -303,13 +312,13 @@ class TestMatcher:
         """MatchResult should contain PathSegment and Mutation objects."""
         hap = np.array([0, 1, 0], dtype=np.int8)
         ts = self._make_ts_with_one_ancestor(hap)
-        matcher = Matcher(ts, self.positions, allele_mapper=self.allele_mapper)
+        matcher = matching.Matcher(ts, self.positions, allele_mapper=self.allele_mapper)
         results = list(matcher.match(_jobs(1), _ArrayReader([hap])))
         _, r = results[0]
         assert isinstance(r.path, list)
         assert isinstance(r.mutations, list)
         for seg in r.path:
-            assert isinstance(seg, PathSegment)
+            assert isinstance(seg, matching.PathSegment)
             assert isinstance(seg.left, float)
             assert isinstance(seg.right, float)
             assert isinstance(seg.parent, int)
@@ -318,7 +327,7 @@ class TestMatcher:
         """PathSegment left < right for every segment."""
         hap = np.array([0, 1, 0], dtype=np.int8)
         ts = self._make_ts_with_one_ancestor(hap)
-        matcher = Matcher(ts, self.positions, allele_mapper=self.allele_mapper)
+        matcher = matching.Matcher(ts, self.positions, allele_mapper=self.allele_mapper)
         results = list(matcher.match(_jobs(1), _ArrayReader([hap])))
         _, r = results[0]
         for seg in r.path:
@@ -329,12 +338,12 @@ class TestMatcher:
         hap = np.array([0, 0, 0], dtype=np.int8)
         ts = self._make_ts_with_one_ancestor(hap)
         query = np.array([1, 1, 0], dtype=np.int8)
-        matcher = Matcher(ts, self.positions, allele_mapper=self.allele_mapper)
+        matcher = matching.Matcher(ts, self.positions, allele_mapper=self.allele_mapper)
         results = list(matcher.match(_jobs(1), _ArrayReader([query])))
         _, r = results[0]
         assert len(r.mutations) > 0
         for m in r.mutations:
-            assert isinstance(m, Mutation)
+            assert isinstance(m, matching.Mutation)
             assert isinstance(m.position, float)
             assert isinstance(m.derived_state, int)
 
@@ -349,10 +358,10 @@ class TestExtendTs:
         self.positions = np.array([10, 20, 30], dtype=np.int32)
         self.seq_len = 100.0
         self.intervals = np.array([[10, 31]], dtype=np.int32)
-        self.allele_mapper = AlleleMapper(3, [["A", "T"]] * 3)
+        self.allele_mapper = vcz.AlleleMapper(3, [["A", "T"]] * 3)
 
     def _root_ts(self, individuals=None, populations=None):
-        return make_root_ts(
+        return matching.make_root_ts(
             self.seq_len,
             self.positions,
             self.intervals,
@@ -365,8 +374,10 @@ class TestExtendTs:
         """A MatchResult that copies from parent_id across all sites."""
         left_pos = float(self.positions[0])
         right_pos = self.seq_len
-        return MatchResult(
-            path=[PathSegment(left=left_pos, right=right_pos, parent=parent_id)],
+        return matching.MatchResult(
+            path=[
+                matching.PathSegment(left=left_pos, right=right_pos, parent=parent_id)
+            ],
             mutations=[],
         )
 
@@ -375,7 +386,7 @@ class TestExtendTs:
         assert ts.num_nodes == 2  # ultimate root + virtual root
 
         job = _make_job(time=0.5)
-        ts2 = extend_ts(
+        ts2 = matching.extend_ts(
             ts,
             paired_results=[(job, self._simple_match_result(1, len(self.positions)))],
             allele_mapper=self.allele_mapper,
@@ -385,7 +396,7 @@ class TestExtendTs:
     def test_edges_present_after_extend(self):
         ts = self._root_ts()
         job = _make_job(time=0.5)
-        ts2 = extend_ts(
+        ts2 = matching.extend_ts(
             ts,
             paired_results=[(job, self._simple_match_result(1, len(self.positions)))],
             allele_mapper=self.allele_mapper,
@@ -394,12 +405,12 @@ class TestExtendTs:
 
     def test_mutations_present_after_extend(self):
         ts = self._root_ts()
-        result_with_mut = MatchResult(
-            path=[PathSegment(left=10.0, right=100.0, parent=1)],
-            mutations=[Mutation(position=20.0, derived_state=1)],
+        result_with_mut = matching.MatchResult(
+            path=[matching.PathSegment(left=10.0, right=100.0, parent=1)],
+            mutations=[matching.Mutation(position=20.0, derived_state=1)],
         )
         job = _make_job(time=0.5)
-        ts2 = extend_ts(
+        ts2 = matching.extend_ts(
             ts,
             paired_results=[(job, result_with_mut)],
             allele_mapper=self.allele_mapper,
@@ -425,7 +436,7 @@ class TestExtendTs:
             sample_id="s0",
             individual_id=0,
         )
-        ts2 = extend_ts(
+        ts2 = matching.extend_ts(
             ts,
             paired_results=[(j1, r1), (j2, r2)],
             allele_mapper=self.allele_mapper,
@@ -438,7 +449,7 @@ class TestExtendTs:
         ts = self._root_ts()
         assert "sequence_intervals" in ts.metadata
         job = _make_job(time=0.5)
-        ts2 = extend_ts(
+        ts2 = matching.extend_ts(
             ts,
             paired_results=[(job, self._simple_match_result(1, len(self.positions)))],
             allele_mapper=self.allele_mapper,
@@ -452,7 +463,7 @@ class TestExtendTs:
         r2 = self._simple_match_result(1, len(self.positions))
         j1 = _make_job(haplotype_index=0, time=0.0, individual_id=None)
         j2 = _make_job(haplotype_index=1, time=0.0, individual_id=None)
-        ts2 = extend_ts(
+        ts2 = matching.extend_ts(
             ts,
             paired_results=[(j1, r1), (j2, r2)],
             allele_mapper=self.allele_mapper,
@@ -462,7 +473,7 @@ class TestExtendTs:
     def test_sites_preserved(self):
         ts = self._root_ts()
         job = _make_job(time=0.5)
-        ts2 = extend_ts(
+        ts2 = matching.extend_ts(
             ts,
             paired_results=[(job, self._simple_match_result(1, len(self.positions)))],
             allele_mapper=self.allele_mapper,
@@ -487,7 +498,7 @@ class TestExtendTs:
             )
             for i in range(4)
         ]
-        ts2 = extend_ts(
+        ts2 = matching.extend_ts(
             ts,
             paired_results=list(zip(jobs, results)),
             allele_mapper=self.allele_mapper,
@@ -503,7 +514,7 @@ class TestExtendTs:
             ploidy_index=1,
         )
         result = self._simple_match_result(1, len(self.positions))
-        ts2 = extend_ts(
+        ts2 = matching.extend_ts(
             ts, paired_results=[(job, result)], allele_mapper=self.allele_mapper
         )
         # New node is the last one added (node 2)
@@ -543,7 +554,7 @@ class TestExtendTs:
                 individual_id=1,
             ),
         ]
-        ts2 = extend_ts(
+        ts2 = matching.extend_ts(
             ts,
             paired_results=list(zip(jobs, results)),
             allele_mapper=self.allele_mapper,
@@ -576,7 +587,7 @@ class TestExtendTs:
                 individual_id=1,
             ),
         ]
-        ts2 = extend_ts(
+        ts2 = matching.extend_ts(
             ts,
             paired_results=list(zip(jobs, results)),
             allele_mapper=self.allele_mapper,
@@ -595,7 +606,9 @@ class TestExtendTs:
             sample_id="sam1",
             individual_id=0,
         )
-        ts2 = extend_ts(ts, paired_results=[(job, r)], allele_mapper=self.allele_mapper)
+        ts2 = matching.extend_ts(
+            ts, paired_results=[(job, r)], allele_mapper=self.allele_mapper
+        )
         assert ts2.num_individuals == 1
         ind_meta = ts2.individual(0).metadata
         assert ind_meta["source"] == "my_src"
@@ -623,7 +636,7 @@ class TestExtendTs:
                 individual_id=0,
             ),
         ]
-        ts2 = extend_ts(
+        ts2 = matching.extend_ts(
             ts,
             paired_results=list(zip(jobs, results)),
             allele_mapper=self.allele_mapper,
@@ -652,11 +665,11 @@ class TestMatcherExtendCycle:
         self.seq_len = 100.0
         self.intervals = np.array([[10, 51]], dtype=np.int32)
         self.num_sites = 5
-        self.allele_mapper = AlleleMapper(5, [["A", "T"]] * 5)
+        self.allele_mapper = vcz.AlleleMapper(5, [["A", "T"]] * 5)
 
     def _build_root_ts(self):
         """Create a root TS with ultimate root + virtual root (2 nodes)."""
-        return make_root_ts(
+        return matching.make_root_ts(
             self.seq_len,
             self.positions,
             self.intervals,
@@ -665,7 +678,7 @@ class TestMatcherExtendCycle:
 
     def _match_and_pair(self, ts, haplotypes):
         """Match haplotypes against ts and return paired_results list."""
-        matcher = Matcher(ts, self.positions, allele_mapper=self.allele_mapper)
+        matcher = matching.Matcher(ts, self.positions, allele_mapper=self.allele_mapper)
         results = list(matcher.match(_jobs(len(haplotypes)), _ArrayReader(haplotypes)))
         return results
 
@@ -676,7 +689,7 @@ class TestMatcherExtendCycle:
         paired = self._match_and_pair(ts, [ancestor_hap])
         job = _make_job(time=0.5, individual_id=None)
         paired_results = [(job, paired[0][1])]
-        ts2 = extend_ts(
+        ts2 = matching.extend_ts(
             ts, paired_results=paired_results, allele_mapper=self.allele_mapper
         )
         node_times = [n.time for n in ts2.nodes()]
@@ -689,7 +702,7 @@ class TestMatcherExtendCycle:
         ancestor_hap = np.array([0, 0, 1, 1, 0], dtype=np.int8)
         paired = self._match_and_pair(ts, [ancestor_hap])
         job = _make_job(time=0.5, individual_id=None)
-        ts2 = extend_ts(
+        ts2 = matching.extend_ts(
             ts,
             paired_results=[(job, paired[0][1])],
             allele_mapper=self.allele_mapper,
@@ -697,7 +710,9 @@ class TestMatcherExtendCycle:
 
         # Now match a sample against ts2
         sample_hap = np.array([0, 0, 1, 1, 0], dtype=np.int8)
-        matcher2 = Matcher(ts2, self.positions, allele_mapper=self.allele_mapper)
+        matcher2 = matching.Matcher(
+            ts2, self.positions, allele_mapper=self.allele_mapper
+        )
         results2 = list(matcher2.match(_jobs(1), _ArrayReader([sample_hap])))
         _, r = results2[0]
         assert len(r.path) > 0
@@ -710,7 +725,7 @@ class TestMatcherExtendCycle:
         hap1 = np.array([[0, 1, 0, 0, 1]], dtype=np.int8)
         paired1 = self._match_and_pair(ts, hap1)
         job1 = _make_job(time=0.7, haplotype_index=0, individual_id=None)
-        ts2 = extend_ts(
+        ts2 = matching.extend_ts(
             ts,
             paired_results=[(job1, paired1[0][1])],
             allele_mapper=self.allele_mapper,
@@ -720,7 +735,7 @@ class TestMatcherExtendCycle:
         hap2 = np.array([[1, 0, 0, 1, 0]], dtype=np.int8)
         paired2 = self._match_and_pair(ts2, hap2)
         job2 = _make_job(time=0.5, haplotype_index=1, individual_id=None)
-        ts3 = extend_ts(
+        ts3 = matching.extend_ts(
             ts2,
             paired_results=[(job2, paired2[0][1])],
             allele_mapper=self.allele_mapper,
@@ -730,7 +745,7 @@ class TestMatcherExtendCycle:
         sample_hap = np.array([[0, 1, 0, 0, 1]], dtype=np.int8)
         paired3 = self._match_and_pair(ts3, sample_hap)
         job3 = _make_job(time=0.0, haplotype_index=2, individual_id=None)
-        ts4 = extend_ts(
+        ts4 = matching.extend_ts(
             ts3,
             paired_results=[(job3, paired3[0][1])],
             allele_mapper=self.allele_mapper,
@@ -743,7 +758,7 @@ class TestMatcherExtendCycle:
         hap = np.array([[0, 1, 0, 0, 1]], dtype=np.int8)
         paired = self._match_and_pair(ts, hap)
         job = _make_job(time=0.5, individual_id=None)
-        ts2 = extend_ts(
+        ts2 = matching.extend_ts(
             ts,
             paired_results=[(job, paired[0][1])],
             allele_mapper=self.allele_mapper,

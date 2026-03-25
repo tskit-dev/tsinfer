@@ -36,19 +36,11 @@ from __future__ import annotations
 import bisect
 import pathlib
 
+import helpers
 import numpy as np
 import tskit
-from helpers import make_ancestor_vcz, ts_to_sample_vcz
 
-from tsinfer.config import (
-    AncestorsConfig,
-    AncestralState,
-    Config,
-    MatchConfig,
-    MatchSourceConfig,
-    Source,
-)
-from tsinfer.pipeline import match
+from tsinfer import config, pipeline
 
 UNKNOWN_ALLELE = 255
 
@@ -251,7 +243,7 @@ def build_perfect_ancestors(ts):
     else:
         sequence_intervals = np.array([[0, sequence_length]], dtype=np.int32)
 
-    ancestor_vcz = make_ancestor_vcz(
+    ancestor_vcz = helpers.make_ancestor_vcz(
         genotypes=genotypes,
         positions=positions,
         alleles=alleles,
@@ -260,7 +252,7 @@ def build_perfect_ancestors(ts):
         sequence_intervals=sequence_intervals,
         contig_length=sequence_length,
     )
-    sample_vcz = ts_to_sample_vcz(ts, ancestral_allele="ANCESTRAL")
+    sample_vcz = helpers.ts_to_sample_vcz(ts, ancestral_allele="ANCESTRAL")
     return sample_vcz, ancestor_vcz
 
 
@@ -270,7 +262,7 @@ def build_perfect_ancestors(ts):
 
 
 def _anc_state(store):
-    return AncestralState(path=store, field="variant_ancestral_allele")
+    return config.AncestralState(path=store, field="variant_ancestral_allele")
 
 
 def _make_config(
@@ -278,17 +270,23 @@ def _make_config(
     ancestor_store,
     path_compression=False,
 ):
-    src = Source(path=sample_store, name="test")
-    anc_src = Source(path=ancestor_store, name="ancestors", sample_time="sample_time")
-    return Config(
+    src = config.Source(path=sample_store, name="test")
+    anc_src = config.Source(
+        path=ancestor_store, name="ancestors", sample_time="sample_time"
+    )
+    return config.Config(
         sources={"test": src, "ancestors": anc_src},
         ancestors=[
-            AncestorsConfig(name="ancestors", path=ancestor_store, sources=["test"])
+            config.AncestorsConfig(
+                name="ancestors", path=ancestor_store, sources=["test"]
+            )
         ],
-        match=MatchConfig(
+        match=config.MatchConfig(
             sources={
-                "ancestors": MatchSourceConfig(node_flags=0, create_individuals=False),
-                "test": MatchSourceConfig(),
+                "ancestors": config.MatchSourceConfig(
+                    node_flags=0, create_individuals=False
+                ),
+                "test": config.MatchSourceConfig(),
             },
             output="output.trees",
             path_compression=path_compression,
@@ -377,7 +375,7 @@ class TestPerfectInference:
     def _run_perfect_inference(self, ts):
         sample_vcz, ancestor_vcz = build_perfect_ancestors(ts)
         cfg = _make_config(sample_vcz, ancestor_vcz)
-        inferred_ts = match(cfg)
+        inferred_ts = pipeline.match(cfg)
         assert_edges_equal(ts, inferred_ts)
         # Verify node flags: ancestor nodes have flags=0, sample nodes flags=1
         for node in inferred_ts.nodes():

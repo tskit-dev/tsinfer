@@ -24,10 +24,10 @@ converting to VCF text via vcztools and comparing against expected output.
 import sys
 
 import bio2zarr.tskit as bzt
+import helpers
 import msprime
 import numpy as np
 import zarr
-from helpers import make_ancestor_vcz, make_sample_vcz, ts_to_sample_vcz, vcz_to_vcf
 
 
 def _parse_vcf_records(vcf_text: str) -> list[dict]:
@@ -60,10 +60,10 @@ class TestMakeSampleVczVcf:
 
     def test_single_site_haploid(self):
         gt = np.array([[[0], [1]]], dtype=np.int8)
-        vcz = make_sample_vcz(
+        vcz = helpers.make_sample_vcz(
             gt, [42], [["A", "T"]], ["A"], 100, sample_ids=np.array(["s0", "s1"])
         )
-        vcf = vcz_to_vcf(vcz)
+        vcf = helpers.vcz_to_vcf(vcz)
         records = _parse_vcf_records(vcf)
         assert len(records) == 1
         r = records[0]
@@ -76,7 +76,7 @@ class TestMakeSampleVczVcf:
 
     def test_two_sites_diploid(self):
         gt = np.array([[[0, 1], [1, 0]], [[1, 1], [0, 0]]], dtype=np.int8)
-        vcz = make_sample_vcz(
+        vcz = helpers.make_sample_vcz(
             gt,
             [100, 500],
             [["A", "T"], ["C", "G"]],
@@ -84,7 +84,7 @@ class TestMakeSampleVczVcf:
             1000,
             sample_ids=np.array(["NA001", "NA002"]),
         )
-        vcf = vcz_to_vcf(vcz)
+        vcf = helpers.vcz_to_vcf(vcz)
         records = _parse_vcf_records(vcf)
 
         assert len(records) == 2
@@ -105,18 +105,18 @@ class TestMakeSampleVczVcf:
 
     def test_ancestral_allele_in_info(self):
         gt = np.array([[[0, 0]]], dtype=np.int8)
-        vcz = make_sample_vcz(gt, [10], [["G", "A"]], ["G"], 100)
-        vcf = vcz_to_vcf(vcz)
+        vcz = helpers.make_sample_vcz(gt, [10], [["G", "A"]], ["G"], 100)
+        vcf = helpers.vcz_to_vcf(vcz)
         records = _parse_vcf_records(vcf)
         assert "ancestral_allele=G" in records[0]["INFO"]
 
     def test_three_alleles(self):
         # Triallelic site: REF=A, ALT=T,C
         gt = np.array([[[0, 2], [1, 2]]], dtype=np.int8)
-        vcz = make_sample_vcz(
+        vcz = helpers.make_sample_vcz(
             gt, [200], [["A", "T", "C"]], ["A"], 1000, sample_ids=np.array(["s0", "s1"])
         )
-        vcf = vcz_to_vcf(vcz)
+        vcf = helpers.vcz_to_vcf(vcz)
         records = _parse_vcf_records(vcf)
         assert records[0]["ALT"] == "T,C"
         assert _parse_gt(records[0]["s0"]) == [0, 2]
@@ -124,15 +124,17 @@ class TestMakeSampleVczVcf:
 
     def test_custom_contig_id(self):
         gt = np.array([[[0, 1]]], dtype=np.int8)
-        vcz = make_sample_vcz(gt, [50], [["A", "T"]], ["A"], 500, contig_id="chr20")
-        vcf = vcz_to_vcf(vcz)
+        vcz = helpers.make_sample_vcz(
+            gt, [50], [["A", "T"]], ["A"], 500, contig_id="chr20"
+        )
+        vcf = helpers.vcz_to_vcf(vcz)
         assert "##contig=<ID=chr20" in vcf
         records = _parse_vcf_records(vcf)
         assert records[0]["CHROM"] == "chr20"
 
     def test_header_contains_sample_ids(self):
         gt = np.array([[[0, 1], [0, 0]]], dtype=np.int8)
-        vcz = make_sample_vcz(
+        vcz = helpers.make_sample_vcz(
             gt,
             [10],
             [["A", "T"]],
@@ -140,7 +142,7 @@ class TestMakeSampleVczVcf:
             100,
             sample_ids=np.array(["SAMPLE_X", "SAMPLE_Y"]),
         )
-        vcf = vcz_to_vcf(vcz)
+        vcf = helpers.vcz_to_vcf(vcz)
         chrom_line = next(line for line in vcf.splitlines() if line.startswith("#CHROM"))
         assert "SAMPLE_X" in chrom_line
         assert "SAMPLE_Y" in chrom_line
@@ -148,10 +150,10 @@ class TestMakeSampleVczVcf:
     def test_missing_genotype_encoded_as_dot(self):
         # -1 in call_genotype should appear as '.' in VCF GT field
         gt = np.array([[[-1, 0]]], dtype=np.int8)
-        vcz = make_sample_vcz(
+        vcz = helpers.make_sample_vcz(
             gt, [10], [["A", "T"]], ["A"], 100, sample_ids=np.array(["s0"])
         )
-        vcf = vcz_to_vcf(vcz)
+        vcf = helpers.vcz_to_vcf(vcz)
         records = _parse_vcf_records(vcf)
         gt_parts = records[0]["s0"].split("/")
         assert "." in gt_parts
@@ -173,23 +175,23 @@ class TestTsToSampleVczVcf:
 
     def test_position_order(self):
         ts = self._sim()
-        vcz = ts_to_sample_vcz(ts)
-        vcf = vcz_to_vcf(vcz)
+        vcz = helpers.ts_to_sample_vcz(ts)
+        vcf = helpers.vcz_to_vcf(vcz)
         records = _parse_vcf_records(vcf)
         positions = [int(r["POS"]) for r in records]
         assert positions == sorted(positions)
 
     def test_record_count_matches_ts(self):
         ts = self._sim()
-        vcz = ts_to_sample_vcz(ts)
-        vcf = vcz_to_vcf(vcz)
+        vcz = helpers.ts_to_sample_vcz(ts)
+        vcf = helpers.vcz_to_vcf(vcz)
         records = _parse_vcf_records(vcf)
         assert len(records) == ts.num_sites
 
     def test_positions_match_ts(self):
         ts = self._sim()
-        vcz = ts_to_sample_vcz(ts)
-        vcf = vcz_to_vcf(vcz)
+        vcz = helpers.ts_to_sample_vcz(ts)
+        vcf = helpers.vcz_to_vcf(vcz)
         records = _parse_vcf_records(vcf)
         vcf_positions = [int(r["POS"]) for r in records]
         ts_positions = [int(s.position) for s in ts.sites()]
@@ -197,16 +199,16 @@ class TestTsToSampleVczVcf:
 
     def test_ref_alleles_match_ts(self):
         ts = self._sim()
-        vcz = ts_to_sample_vcz(ts)
-        vcf = vcz_to_vcf(vcz)
+        vcz = helpers.ts_to_sample_vcz(ts)
+        vcf = helpers.vcz_to_vcf(vcz)
         records = _parse_vcf_records(vcf)
         for rec, variant in zip(records, ts.variants()):
             assert rec["REF"] == variant.alleles[0]
 
     def test_genotypes_match_ts(self):
         ts = self._sim(n=2)
-        vcz = ts_to_sample_vcz(ts)
-        vcf = vcz_to_vcf(vcz)
+        vcz = helpers.ts_to_sample_vcz(ts)
+        vcf = helpers.vcz_to_vcf(vcz)
         records = _parse_vcf_records(vcf)
         sample_cols = [f"tsk_{i}" for i in range(ts.num_individuals)]
 
@@ -221,8 +223,8 @@ class TestTsToSampleVczVcf:
 
     def test_sample_count_in_header(self):
         ts = self._sim(n=4)
-        vcz = ts_to_sample_vcz(ts)
-        vcf = vcz_to_vcf(vcz)
+        vcz = helpers.ts_to_sample_vcz(ts)
+        vcf = helpers.vcz_to_vcf(vcz)
         chrom_line = next(line for line in vcf.splitlines() if line.startswith("#CHROM"))
         sample_cols = chrom_line.split("\t")[9:]
         assert len(sample_cols) == ts.num_individuals
@@ -256,14 +258,14 @@ class TestTsToSampleVczMatchesBio2zarr:
         ts = self._sim()
         bzt.convert(ts, tmp_path / "ref.vcz")
         ref = zarr.open(str(tmp_path / "ref.vcz"), mode="r")
-        ours = ts_to_sample_vcz(ts)
+        ours = helpers.ts_to_sample_vcz(ts)
         np.testing.assert_array_equal(ours["call_genotype"][:], ref["call_genotype"][:])
 
     def test_variant_position(self, tmp_path):
         ts = self._sim()
         bzt.convert(ts, tmp_path / "ref.vcz")
         ref = zarr.open(str(tmp_path / "ref.vcz"), mode="r")
-        ours = ts_to_sample_vcz(ts)
+        ours = helpers.ts_to_sample_vcz(ts)
         np.testing.assert_array_equal(
             ours["variant_position"][:], ref["variant_position"][:]
         )
@@ -272,7 +274,7 @@ class TestTsToSampleVczMatchesBio2zarr:
         ts = self._sim()
         bzt.convert(ts, tmp_path / "ref.vcz")
         ref = zarr.open(str(tmp_path / "ref.vcz"), mode="r")
-        ours = ts_to_sample_vcz(ts)
+        ours = helpers.ts_to_sample_vcz(ts)
         # Both should have the same shape and values; empty strings pad unused alleles
         assert ours["variant_allele"].shape == ref["variant_allele"].shape
         np.testing.assert_array_equal(
@@ -283,28 +285,28 @@ class TestTsToSampleVczMatchesBio2zarr:
         ts = self._sim()
         bzt.convert(ts, tmp_path / "ref.vcz")
         ref = zarr.open(str(tmp_path / "ref.vcz"), mode="r")
-        ours = ts_to_sample_vcz(ts)
+        ours = helpers.ts_to_sample_vcz(ts)
         np.testing.assert_array_equal(ours["sample_id"][:], ref["sample_id"][:])
 
     def test_contig_id(self, tmp_path):
         ts = self._sim()
         bzt.convert(ts, tmp_path / "ref.vcz")
         ref = zarr.open(str(tmp_path / "ref.vcz"), mode="r")
-        ours = ts_to_sample_vcz(ts)
+        ours = helpers.ts_to_sample_vcz(ts)
         np.testing.assert_array_equal(ours["contig_id"][:], ref["contig_id"][:])
 
     def test_contig_length(self, tmp_path):
         ts = self._sim()
         bzt.convert(ts, tmp_path / "ref.vcz")
         ref = zarr.open(str(tmp_path / "ref.vcz"), mode="r")
-        ours = ts_to_sample_vcz(ts)
+        ours = helpers.ts_to_sample_vcz(ts)
         np.testing.assert_array_equal(ours["contig_length"][:], ref["contig_length"][:])
 
     def test_variant_contig(self, tmp_path):
         ts = self._sim()
         bzt.convert(ts, tmp_path / "ref.vcz")
         ref = zarr.open(str(tmp_path / "ref.vcz"), mode="r")
-        ours = ts_to_sample_vcz(ts)
+        ours = helpers.ts_to_sample_vcz(ts)
         np.testing.assert_array_equal(
             ours["variant_contig"][:], ref["variant_contig"][:]
         )
@@ -316,7 +318,7 @@ class TestTsToSampleVczMatchesBio2zarr:
             vcz_path = tmp_path / f"ref_{seed}.vcz"
             bzt.convert(ts, vcz_path)
             ref = zarr.open(str(vcz_path), mode="r")
-            ours = ts_to_sample_vcz(ts)
+            ours = helpers.ts_to_sample_vcz(ts)
             np.testing.assert_array_equal(
                 ours["call_genotype"][:],
                 ref["call_genotype"][:],
@@ -334,7 +336,7 @@ class TestAncestorVczToVcf:
 
     def test_ancestor_vcz_to_vcf(self):
         gt = np.array([[[0, 1]], [[1, 0]]], dtype=np.int8)
-        vcz = make_ancestor_vcz(
+        vcz = helpers.make_ancestor_vcz(
             genotypes=gt,
             positions=np.array([100, 200]),
             alleles=np.array([["A", "T"], ["C", "G"]]),
@@ -344,7 +346,7 @@ class TestAncestorVczToVcf:
             contig_id="chr1",
             contig_length=5000,
         )
-        vcf = vcz_to_vcf(vcz)
+        vcf = helpers.vcz_to_vcf(vcz)
         assert "##contig=<ID=chr1" in vcf
         records = _parse_vcf_records(vcf)
         assert len(records) == 2
@@ -357,15 +359,14 @@ class TestAncestorVczToVcf:
         """vcztools view on a filesystem-backed ancestor VCZ produces valid VCF."""
         import subprocess
 
-        from tsinfer.ancestors import infer_ancestors
-        from tsinfer.config import AncestorsConfig, AncestralState, Source
+        from tsinfer import ancestors, config
 
         n_sites = 20
         n_samples = 6
         rng = np.random.RandomState(42)
         gt = rng.randint(0, 2, size=(n_sites, n_samples, 1)).astype(np.int8)
         positions = np.arange(100, 100 + n_sites * 100, 100, dtype=np.int32)
-        store = make_sample_vcz(
+        store = helpers.make_sample_vcz(
             gt,
             positions,
             np.array([["A", "T"]] * n_sites),
@@ -374,17 +375,17 @@ class TestAncestorVczToVcf:
             contig_id="chr2",
         )
         anc_path = tmp_path / "ancestors.vcz"
-        cfg = AncestorsConfig(
+        cfg = config.AncestorsConfig(
             name="ancestors",
             path=anc_path,
             sources=["test"],
             variants_chunk_size=5,
             samples_chunk_size=3,
         )
-        infer_ancestors(
-            Source(path=store, name="test"),
+        ancestors.infer_ancestors(
+            config.Source(path=store, name="test"),
             cfg,
-            AncestralState(path=store, field="variant_ancestral_allele"),
+            config.AncestralState(path=store, field="variant_ancestral_allele"),
         )
 
         result = subprocess.run(

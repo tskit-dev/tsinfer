@@ -25,25 +25,12 @@ from __future__ import annotations
 
 import pathlib
 
+import helpers
 import numpy as np
 import pytest
 import zarr
-from helpers import make_sample_vcz
 
-from tsinfer.ancestors import (
-    compute_inference_sites,
-    compute_sequence_intervals,
-    infer_ancestors,
-)
-from tsinfer.config import AncestorsConfig, AncestralState, Source
-from tsinfer.vcz import (
-    ActiveChunkRegistry,
-    ChunkBuffer,
-    ChunkBufferPool,
-    iter_genotypes,
-    open_group,
-    write_empty_ancestor_vcz,
-)
+from tsinfer import ancestors, config, vcz
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -55,7 +42,7 @@ def _cfg(
     samples_chunk_size=1000,
     variants_chunk_size=1000,
 ):
-    return AncestorsConfig(
+    return config.AncestorsConfig(
         name="ancestors",
         path=None,
         sources=["src"],
@@ -67,7 +54,7 @@ def _cfg(
 
 def _src(path_or_group, **kwargs):
     """Wrap a zarr.Group (or path) in a Source for infer_ancestors."""
-    return Source(path=path_or_group, name="test", **kwargs)
+    return config.Source(path=path_or_group, name="test", **kwargs)
 
 
 def _haploid_store(gt_matrix, positions, alleles, anc_states, seq_len=None, **kwargs):
@@ -77,7 +64,7 @@ def _haploid_store(gt_matrix, positions, alleles, anc_states, seq_len=None, **kw
     gt = gt_matrix[:, :, np.newaxis]
     if seq_len is None:
         seq_len = max(positions) + 1000
-    return make_sample_vcz(
+    return helpers.make_sample_vcz(
         gt, positions, alleles, anc_states, sequence_length=seq_len, **kwargs
     )
 
@@ -116,7 +103,7 @@ def _oracle_ancestors(gt_matrix, times):
 
 def _anc_state(store):
     """Return an AncestralState pointing at the store's own ancestral allele field."""
-    return AncestralState(path=store, field="variant_ancestral_allele")
+    return config.AncestralState(path=store, field="variant_ancestral_allele")
 
 
 def _anc_genotypes(anc_store):
@@ -132,71 +119,75 @@ def _anc_genotypes(anc_store):
 class TestComputeInferenceSites:
     def test_all_sites_pass(self):
         gt = np.zeros((3, 2, 1), dtype=np.int8)
-        store = make_sample_vcz(
+        store = helpers.make_sample_vcz(
             gt,
             positions=[10, 20, 30],
             alleles=[["A", "T"]] * 3,
             ancestral_state=["A", "A", "A"],
             sequence_length=100,
         )
-        result = compute_inference_sites(store, _anc_state(store))
+        result = ancestors.compute_inference_sites(store, _anc_state(store))
         np.testing.assert_array_equal(result.positions, [10, 20, 30])
         np.testing.assert_array_equal(result.ancestral_allele_index, [0, 0, 0])
 
     def test_include_excludes_sites(self):
         gt = np.zeros((3, 2, 1), dtype=np.int8)
-        store = make_sample_vcz(
+        store = helpers.make_sample_vcz(
             gt,
             positions=[10, 20, 30],
             alleles=[["A", "T"]] * 3,
             ancestral_state=["A", "A", "A"],
             sequence_length=100,
         )
-        result = compute_inference_sites(store, _anc_state(store), include="POS >= 20")
+        result = ancestors.compute_inference_sites(
+            store, _anc_state(store), include="POS >= 20"
+        )
         np.testing.assert_array_equal(result.positions, [20, 30])
 
     def test_exclude_excludes_sites(self):
         gt = np.zeros((3, 2, 1), dtype=np.int8)
-        store = make_sample_vcz(
+        store = helpers.make_sample_vcz(
             gt,
             positions=[10, 20, 30],
             alleles=[["A", "T"]] * 3,
             ancestral_state=["A", "A", "A"],
             sequence_length=100,
         )
-        result = compute_inference_sites(store, _anc_state(store), exclude="POS == 20")
+        result = ancestors.compute_inference_sites(
+            store, _anc_state(store), exclude="POS == 20"
+        )
         np.testing.assert_array_equal(result.positions, [10, 30])
 
     def test_missing_ancestral_state_excludes(self):
         # Site 1 has ancestral state not in alleles → excluded
         gt = np.zeros((3, 2, 1), dtype=np.int8)
-        store = make_sample_vcz(
+        store = helpers.make_sample_vcz(
             gt,
             positions=[10, 20, 30],
             alleles=[["A", "T"], ["C", "G"], ["A", "T"]],
             ancestral_state=["A", "X", "A"],  # X not in alleles[1]
             sequence_length=100,
         )
-        result = compute_inference_sites(store, _anc_state(store))
+        result = ancestors.compute_inference_sites(store, _anc_state(store))
         np.testing.assert_array_equal(result.positions, [10, 30])
 
     def test_ancestral_allele_index_not_always_zero(self):
         # Site 0: alleles=['T','A'], ancestral='A' → anc_idx=1
         gt = np.zeros((1, 2, 1), dtype=np.int8)
-        store = make_sample_vcz(
+        store = helpers.make_sample_vcz(
             gt,
             positions=[10],
             alleles=[["T", "A"]],
             ancestral_state=["A"],
             sequence_length=100,
         )
-        result = compute_inference_sites(store, _anc_state(store))
+        result = ancestors.compute_inference_sites(store, _anc_state(store))
         assert result.ancestral_allele_index[0] == 1
 
     def test_external_ancestral_state(self):
         # AncestralState annotation from a separate sample VCZ (used as annotation)
         # The annotation covers positions 10 and 30 (but not 20)
-        ann = make_sample_vcz(
+        ann = helpers.make_sample_vcz(
             np.zeros((2, 1, 1), dtype=np.int8),
             positions=[10, 30],
             alleles=[["A", "T"]] * 2,
@@ -205,28 +196,28 @@ class TestComputeInferenceSites:
         )
 
         gt = np.zeros((3, 2, 1), dtype=np.int8)
-        store = make_sample_vcz(
+        store = helpers.make_sample_vcz(
             gt,
             positions=[10, 20, 30],
             alleles=[["A", "T"]] * 3,
             ancestral_state=["", "", ""],  # store has no valid anc state
             sequence_length=100,
         )
-        anc_cfg = AncestralState(path=ann, field="variant_ancestral_allele")
-        result = compute_inference_sites(store, anc_cfg)
+        anc_cfg = config.AncestralState(path=ann, field="variant_ancestral_allele")
+        result = ancestors.compute_inference_sites(store, anc_cfg)
         # Only positions 10 and 30 are annotated
         np.testing.assert_array_equal(result.positions, [10, 30])
 
     def test_duplicate_positions_omitted(self):
         gt = np.zeros((3, 2, 1), dtype=np.int8)
-        store = make_sample_vcz(
+        store = helpers.make_sample_vcz(
             gt,
             positions=[10, 10, 30],
             alleles=[["A", "T"]] * 3,
             ancestral_state=["A", "A", "A"],
             sequence_length=100,
         )
-        result = compute_inference_sites(store, _anc_state(store))
+        result = ancestors.compute_inference_sites(store, _anc_state(store))
         # Both sites at position 10 should be omitted
         np.testing.assert_array_equal(result.positions, [30])
 
@@ -234,7 +225,7 @@ class TestComputeInferenceSites:
         import logging
 
         gt = np.zeros((4, 2, 1), dtype=np.int8)
-        store = make_sample_vcz(
+        store = helpers.make_sample_vcz(
             gt,
             positions=[10, 10, 20, 30],
             alleles=[["A", "T"]] * 4,
@@ -242,19 +233,19 @@ class TestComputeInferenceSites:
             sequence_length=100,
         )
         with caplog.at_level(logging.INFO, logger="tsinfer"):
-            compute_inference_sites(store, _anc_state(store))
+            ancestors.compute_inference_sites(store, _anc_state(store))
         assert "1 duplicate position" in caplog.text
 
     def test_no_duplicates_keeps_all(self):
         gt = np.zeros((3, 2, 1), dtype=np.int8)
-        store = make_sample_vcz(
+        store = helpers.make_sample_vcz(
             gt,
             positions=[10, 20, 30],
             alleles=[["A", "T"]] * 3,
             ancestral_state=["A", "A", "A"],
             sequence_length=100,
         )
-        result = compute_inference_sites(store, _anc_state(store))
+        result = ancestors.compute_inference_sites(store, _anc_state(store))
         np.testing.assert_array_equal(result.positions, [10, 20, 30])
 
 
@@ -265,35 +256,39 @@ class TestComputeInferenceSites:
 
 class TestComputeSequenceIntervals:
     def test_single_site(self):
-        intervals = compute_sequence_intervals([100], 1000, 500_000)
+        intervals = ancestors.compute_sequence_intervals([100], 1000, 500_000)
         np.testing.assert_array_equal(intervals, [[100, 101]])
 
     def test_no_gap_single_interval(self):
-        intervals = compute_sequence_intervals([100, 200, 300], 1000, 500_000)
+        intervals = ancestors.compute_sequence_intervals([100, 200, 300], 1000, 500_000)
         np.testing.assert_array_equal(intervals, [[100, 301]])
 
     def test_gap_splits_interval(self):
         positions = [100, 200, 800_000, 900_000]
-        intervals = compute_sequence_intervals(positions, 1_000_000, 500_000)
+        intervals = ancestors.compute_sequence_intervals(positions, 1_000_000, 500_000)
         np.testing.assert_array_equal(intervals, [[100, 201], [800_000, 900_001]])
 
     def test_gap_exactly_at_threshold_not_split(self):
         # gap = max_gap_length → NOT split (split only when strictly greater)
-        intervals = compute_sequence_intervals([0, 500_000], 1_000_000, 500_000)
+        intervals = ancestors.compute_sequence_intervals(
+            [0, 500_000], 1_000_000, 500_000
+        )
         np.testing.assert_array_equal(intervals, [[0, 500_001]])
 
     def test_gap_one_over_threshold_splits(self):
-        intervals = compute_sequence_intervals([0, 500_001], 1_000_000, 500_000)
+        intervals = ancestors.compute_sequence_intervals(
+            [0, 500_001], 1_000_000, 500_000
+        )
         np.testing.assert_array_equal(intervals, [[0, 1], [500_001, 500_002]])
 
     def test_empty_positions(self):
-        intervals = compute_sequence_intervals([], 1000, 500_000)
+        intervals = ancestors.compute_sequence_intervals([], 1000, 500_000)
         assert intervals.shape == (0, 2)
 
     def test_three_intervals(self):
         # Two gaps
         positions = [100, 200, 1_000_000, 1_100_000, 2_000_000, 2_100_000]
-        intervals = compute_sequence_intervals(positions, 3_000_000, 500_000)
+        intervals = ancestors.compute_sequence_intervals(positions, 3_000_000, 500_000)
         assert len(intervals) == 3
         np.testing.assert_array_equal(intervals[0], [100, 201])
         np.testing.assert_array_equal(intervals[1], [1_000_000, 1_100_001])
@@ -316,7 +311,9 @@ class TestIterGenotypes:
             anc_states=["A", "A", "A"],
         )
         anc_idx = np.array([0, 0], dtype=np.int8)
-        rows = list(iter_genotypes(store, np.array([100, 300], dtype=np.int32), anc_idx))
+        rows = list(
+            vcz.iter_genotypes(store, np.array([100, 300], dtype=np.int32), anc_idx)
+        )
         assert len(rows) == 2
         # ancestral is allele 0, so derived genotypes match raw genotypes
         np.testing.assert_array_equal(rows[0], [0, 1, 0, 1])
@@ -334,7 +331,7 @@ class TestIterGenotypes:
             anc_states=["A"],
         )
         anc_idx = np.array([1], dtype=np.int8)
-        rows = list(iter_genotypes(store, np.array([100], dtype=np.int32), anc_idx))
+        rows = list(vcz.iter_genotypes(store, np.array([100], dtype=np.int32), anc_idx))
         assert len(rows) == 1
         # raw 0→derived(1), raw 1→ancestral(0)
         np.testing.assert_array_equal(rows[0], [1, 0, 1, 0])
@@ -342,7 +339,7 @@ class TestIterGenotypes:
     def test_empty_positions(self):
         store = _haploid_store([[0, 1]], [100], [["A", "T"]], ["A"])
         anc_idx = np.array([], dtype=np.int8)
-        rows = list(iter_genotypes(store, np.array([], dtype=np.int32), anc_idx))
+        rows = list(vcz.iter_genotypes(store, np.array([], dtype=np.int32), anc_idx))
         assert len(rows) == 0
 
     def test_sample_include_mask(self):
@@ -357,7 +354,7 @@ class TestIterGenotypes:
         sample_include = np.array([True, False, True, False])
         anc_idx = np.array([0], dtype=np.int8)
         rows = list(
-            iter_genotypes(
+            vcz.iter_genotypes(
                 store, np.array([100], dtype=np.int32), anc_idx, sample_include
             )
         )
@@ -370,7 +367,7 @@ class TestIterGenotypes:
             [[[0, 1], [1, 0]]],  # site 0: haplotypes = 0,1,1,0
             dtype=np.int8,
         )
-        store = make_sample_vcz(
+        store = helpers.make_sample_vcz(
             gt,
             positions=[100],
             alleles=[["A", "T"]],
@@ -378,7 +375,7 @@ class TestIterGenotypes:
             sequence_length=1000,
         )
         anc_idx = np.array([0], dtype=np.int8)
-        rows = list(iter_genotypes(store, np.array([100], dtype=np.int32), anc_idx))
+        rows = list(vcz.iter_genotypes(store, np.array([100], dtype=np.int32), anc_idx))
         assert len(rows) == 1
         np.testing.assert_array_equal(rows[0], [0, 1, 1, 0])
 
@@ -392,7 +389,7 @@ class TestIterGenotypes:
         )
         anc_idx = np.array([0, 0, 0], dtype=np.int8)
         rows = list(
-            iter_genotypes(store, np.array([100, 200, 300], dtype=np.int32), anc_idx)
+            vcz.iter_genotypes(store, np.array([100, 200, 300], dtype=np.int32), anc_idx)
         )
         result = np.stack(rows)
         np.testing.assert_array_equal(result, gt_matrix)
@@ -408,7 +405,9 @@ class TestIterGenotypes:
             anc_states=["A", "A"],
         )
         anc_idx = np.array([0, 0], dtype=np.int8)
-        rows = list(iter_genotypes(store, np.array([100, 200], dtype=np.int32), anc_idx))
+        rows = list(
+            vcz.iter_genotypes(store, np.array([100, 200], dtype=np.int32), anc_idx)
+        )
         np.testing.assert_array_equal(rows[0], [0, 1])
         np.testing.assert_array_equal(rows[1], [1, 0])
 
@@ -422,7 +421,7 @@ class TestIterGenotypes:
             anc_states=["A"],
         )
         anc_idx = np.array([0], dtype=np.int8)
-        rows = list(iter_genotypes(store, np.array([100], dtype=np.int32), anc_idx))
+        rows = list(vcz.iter_genotypes(store, np.array([100], dtype=np.int32), anc_idx))
         np.testing.assert_array_equal(rows[0], [0, -1, 1, -1])
 
     def test_mixed_ancestral_indices(self):
@@ -439,7 +438,7 @@ class TestIterGenotypes:
         )
         anc_idx = np.array([0, 1, 0], dtype=np.int8)
         rows = list(
-            iter_genotypes(store, np.array([100, 200, 300], dtype=np.int32), anc_idx)
+            vcz.iter_genotypes(store, np.array([100, 200, 300], dtype=np.int32), anc_idx)
         )
         # Site 0: 0→0, 1→1, 0→0, 1→1
         np.testing.assert_array_equal(rows[0], [0, 1, 0, 1])
@@ -460,7 +459,7 @@ class TestIterGenotypes:
             anc_states=["A"],
         )
         anc_idx = np.array([1], dtype=np.int8)
-        rows = list(iter_genotypes(store, np.array([100], dtype=np.int32), anc_idx))
+        rows = list(vcz.iter_genotypes(store, np.array([100], dtype=np.int32), anc_idx))
         # raw 0→derived(1), raw -1→missing(-1), raw 1→ancestral(0), raw 0→derived(1)
         np.testing.assert_array_equal(rows[0], [1, -1, 0, 1])
 
@@ -479,7 +478,7 @@ class TestInferAncestorsFormat:
             alleles=[["A", "T"]] * 3,
             anc_states=["A", "A", "A"],
         )
-        anc = infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+        anc = ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
         np.testing.assert_array_equal(anc["variant_position"][:], [100, 300])
 
     def test_genotype_shape(self):
@@ -489,7 +488,7 @@ class TestInferAncestorsFormat:
             alleles=[["A", "T"]] * 2,
             anc_states=["A", "A"],
         )
-        anc = infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+        anc = ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
         num_sites, num_anc, ploidy = anc["call_genotype"].shape
         assert num_sites == 2
         assert ploidy == 1
@@ -502,7 +501,7 @@ class TestInferAncestorsFormat:
             alleles=[["A", "T"]] * 2,
             anc_states=["A", "A"],
         )
-        anc = infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+        anc = ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
         ids = [str(x) for x in anc["sample_id"][:].tolist()]
         num_anc = anc["call_genotype"].shape[1]
         assert ids == [f"a{i}" for i in range(num_anc)]
@@ -515,7 +514,7 @@ class TestInferAncestorsFormat:
             alleles=[["A", "T"]] * 2,
             anc_states=["A", "A"],
         )
-        anc = infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+        anc = ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
         times = np.asarray(anc["sample_time"][:])
         assert np.all(times > 0)
 
@@ -527,7 +526,7 @@ class TestInferAncestorsFormat:
             alleles=[["A", "T"]] * 2,
             anc_states=["A", "A"],
         )
-        anc = infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+        anc = ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
         gt_out = _anc_genotypes(anc)
         focal_positions = np.asarray(anc["sample_focal_positions"][:])
         anc_positions = np.asarray(anc["variant_position"][:])
@@ -549,7 +548,7 @@ class TestInferAncestorsFormat:
             alleles=[["A", "T"]] * 3,
             anc_states=["A", "A", "A"],
         )
-        anc = infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+        anc = ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
         gt_out = _anc_genotypes(anc)
         positions = np.asarray(anc["variant_position"][:])
         start_pos = np.asarray(anc["sample_start_position"][:])
@@ -585,7 +584,7 @@ class TestInferAncestorsFormat:
             alleles=[["A", "T"]] * 6,
             anc_states=["A"] * 6,
         )
-        anc = infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+        anc = ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
         positions = np.asarray(anc["variant_position"][:])
         end_pos = np.asarray(anc["sample_end_position"][:])
         gt_out = _anc_genotypes(anc)
@@ -620,7 +619,7 @@ class TestInferAncestorsFormat:
             alleles=[["A", "T"]] * 6,
             anc_states=["A"] * 6,
         )
-        anc = infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+        anc = ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
         positions = np.asarray(anc["variant_position"][:])
         start_pos = np.asarray(anc["sample_start_position"][:])
         end_pos = np.asarray(anc["sample_end_position"][:])
@@ -672,7 +671,7 @@ class TestInferAncestorsFormat:
             alleles=[["A", "T"], ["T", "A"]],
             anc_states=["A", "A"],
         )
-        anc = infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+        anc = ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
         alleles = np.asarray(anc["variant_allele"][:])
         for i in range(len(alleles)):
             assert str(alleles[i, 0]) == "A"
@@ -684,7 +683,7 @@ class TestInferAncestorsFormat:
             alleles=[["A", "T"]] * 2,
             anc_states=["A", "A"],
         )
-        anc = infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+        anc = ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
         intervals = np.asarray(anc["sequence_intervals"][:])
         assert intervals.ndim == 2
         assert intervals.shape[1] == 2
@@ -698,7 +697,7 @@ class TestInferAncestorsFormat:
             seq_len=5000,
             contig_id="chr1",
         )
-        anc = infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+        anc = ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
         assert str(anc["contig_id"][0]) == "chr1"
         assert int(anc["contig_length"][0]) == 5000
         num_sites = anc["variant_position"].shape[0]
@@ -716,7 +715,7 @@ class TestInferAncestorsFormat:
             seq_len=3000,
             contig_id="chrX",
         )
-        anc = infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+        anc = ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
         assert str(anc["contig_id"][0]) == "chrX"
         assert int(anc["contig_length"][0]) == 3000
         assert anc["variant_contig"].shape == (0,)
@@ -729,7 +728,7 @@ class TestInferAncestorsFormat:
             alleles=[["A", "T"]] * 4,
             anc_states=["A", "A", "A", "A"],
         )
-        anc = infer_ancestors(
+        anc = ancestors.infer_ancestors(
             _src(gt), _cfg(variants_chunk_size=2, samples_chunk_size=2), _anc_state(gt)
         )
         gt_vchunks = anc["call_genotype"].chunks[0]
@@ -759,7 +758,7 @@ class TestInferAncestorsVsPythonOracle:
         gt_matrix = np.asarray(gt_matrix, dtype=np.int8)
         store = _haploid_store(gt_matrix, positions, alleles, anc_states)
         cfg = _cfg(max_gap_length=max_gap)
-        anc = infer_ancestors(_src(store), cfg, _anc_state(store))
+        anc = ancestors.infer_ancestors(_src(store), cfg, _anc_state(store))
 
         # Compute derived genotypes for oracle
         anc_idx_map = {}
@@ -896,7 +895,7 @@ class TestInferAncestorsVsPythonOracle:
 class TestInferAncestorsScenarios:
     def test_single_site(self):
         gt = _haploid_store([[0, 1]], [100], [["A", "T"]], ["A"], seq_len=1000)
-        anc = infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+        anc = ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
         # No virtual root; only the real ancestor.
         assert anc["call_genotype"].shape == (1, 1, 1)
         assert int(anc["call_genotype"][0, 0, 0]) == 1  # real ancestor: derived
@@ -908,7 +907,7 @@ class TestInferAncestorsScenarios:
         # alleles=['T','A'], ancestral='A' (idx 1)
         # raw genotype 1 = ancestral, raw genotype 0 = derived
         gt = _haploid_store([[1, 0]], [100], [["T", "A"]], ["A"], seq_len=1000)
-        anc = infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+        anc = ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
         assert anc["call_genotype"].shape == (1, 1, 1)
         assert int(anc["call_genotype"][0, 0, 0]) == 1  # derived
         # Output allele 0 should be ancestral 'A'
@@ -925,7 +924,7 @@ class TestInferAncestorsScenarios:
             [["A", "T"], ["T", "A"]],
             ["A", "A"],
         )
-        anc = infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+        anc = ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
         assert anc["call_genotype"].shape[1] >= 1
         # Both output sites should have ancestral 'A' as allele 0
         alleles = np.asarray(anc["variant_allele"][:])
@@ -940,17 +939,17 @@ class TestInferAncestorsScenarios:
             [["T", "A"], ["G", "C"]],
             ["A", "C"],
         )
-        anc = infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+        anc = ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
         assert anc["call_genotype"].shape[1] == 0
 
     def test_all_fixed_ancestral_returns_empty(self):
         gt = _haploid_store([[0, 0], [0, 0]], [100, 200], [["A", "T"]] * 2, ["A", "A"])
-        anc = infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+        anc = ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
         assert anc["call_genotype"].shape[1] == 0
 
     def test_all_fixed_derived_returns_empty(self):
         gt = _haploid_store([[1, 1], [1, 1]], [100, 200], [["A", "T"]] * 2, ["A", "A"])
-        anc = infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+        anc = ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
         assert anc["call_genotype"].shape[1] == 0
 
     def test_include_excludes_sites(self):
@@ -961,8 +960,8 @@ class TestInferAncestorsScenarios:
             alleles=[["A", "T"]] * 3,
             anc_states=["A", "A", "A"],
         )
-        src = Source(path=gt, name="test", exclude="POS == 200")
-        anc = infer_ancestors(src, _cfg(), _anc_state(gt))
+        src = config.Source(path=gt, name="test", exclude="POS == 200")
+        anc = ancestors.infer_ancestors(src, _cfg(), _anc_state(gt))
         positions = np.asarray(anc["variant_position"][:])
         assert 200 not in positions.tolist()
         np.testing.assert_array_equal(positions, [100, 300])
@@ -972,15 +971,15 @@ class TestInferAncestorsScenarios:
         # 4 samples: keep only samples 0 and 1
         # Without filter, site has derived_count=2 (samples 1,2)
         # With only samples 0,1: site has derived_count=1 (sample 1 only)
-        gt = make_sample_vcz(
+        gt = helpers.make_sample_vcz(
             np.array([[[0], [1], [1], [0]]], dtype=np.int8),
             positions=[100],
             alleles=[["A", "T"]],
             ancestral_state=["A"],
             sequence_length=1000,
         )
-        src = Source(path=gt, name="test", samples="sample_0,sample_1")
-        anc = infer_ancestors(src, _cfg(), _anc_state(gt))
+        src = config.Source(path=gt, name="test", samples="sample_0,sample_1")
+        anc = ancestors.infer_ancestors(src, _cfg(), _anc_state(gt))
         # No virtual root; real ancestor at index 0 (time=0.5)
         assert anc["call_genotype"].shape[1] >= 1
         np.testing.assert_almost_equal(float(anc["sample_time"][0]), 0.5)
@@ -996,7 +995,9 @@ class TestInferAncestorsScenarios:
             anc_states=["A", "A", "A", "A"],
             seq_len=1_000_000,
         )
-        anc = infer_ancestors(_src(gt), _cfg(max_gap_length=500_000), _anc_state(gt))
+        anc = ancestors.infer_ancestors(
+            _src(gt), _cfg(max_gap_length=500_000), _anc_state(gt)
+        )
         intervals = np.asarray(anc["sequence_intervals"][:])
         assert len(intervals) == 2
 
@@ -1024,14 +1025,14 @@ class TestInferAncestorsScenarios:
             ],
             dtype=np.int8,
         )
-        store = make_sample_vcz(
+        store = helpers.make_sample_vcz(
             gt,
             positions=[100, 200],
             alleles=[["A", "T"]] * 2,
             ancestral_state=["A", "A"],
             sequence_length=1000,
         )
-        anc = infer_ancestors(_src(store), _cfg(), _anc_state(store))
+        anc = ancestors.infer_ancestors(_src(store), _cfg(), _anc_state(store))
         # 4 haplotypes total; both sites have derived_count=1 → valid inference sites
         assert anc["call_genotype"].shape[1] >= 1
 
@@ -1044,7 +1045,9 @@ class TestInferAncestorsScenarios:
             alleles=[["A", "T"]],
             anc_states=["A"],
         )
-        anc = infer_ancestors(_src(gt), _cfg(), _anc_state(gt), genotype_encoding=0)
+        anc = ancestors.infer_ancestors(
+            _src(gt), _cfg(), _anc_state(gt), genotype_encoding=0
+        )
         # non_missing = 3, derived = 1 → valid inference site
         # No virtual root; just the real ancestor.
         assert anc["call_genotype"].shape[1] == 1
@@ -1056,7 +1059,7 @@ class TestInferAncestorsScenarios:
             alleles=[["A", "T"]] * 2,
             anc_states=["A", "A"],
         )
-        anc = infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+        anc = ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
         intervals = np.asarray(anc["sequence_intervals"][:])
         assert len(intervals) == 1
         assert int(intervals[0, 0]) == 100
@@ -1070,7 +1073,7 @@ class TestInferAncestorsScenarios:
             alleles=[["A", "T"]] * 2,
             anc_states=["A", "A"],
         )
-        anc = infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+        anc = ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
         num_anc = anc["call_genotype"].shape[1]
         focal_pos = np.asarray(anc["sample_focal_positions"][:])
         # Find the ancestor with 2 focal sites (no -2 in row)
@@ -1086,8 +1089,8 @@ class TestInferAncestorsScenarios:
             anc_states=["A", "A"],
         )
         # Write to a tmp store — use the in-memory group directly as the "path"
-        src = Source(path=gt, name="test")
-        anc = infer_ancestors(src, _cfg(), _anc_state(gt))
+        src = config.Source(path=gt, name="test")
+        anc = ancestors.infer_ancestors(src, _cfg(), _anc_state(gt))
         assert anc["call_genotype"].shape[1] >= 1
 
     def test_inferred_alleles_ancestral_first(self):
@@ -1099,7 +1102,7 @@ class TestInferAncestorsScenarios:
             alleles=[["T", "A"], ["A", "T"]],
             anc_states=["A", "A"],
         )
-        anc = infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+        anc = ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
         alleles = np.asarray(anc["variant_allele"][:])
         # Both sites should have "A" as allele 0 (ancestral)
         for i in range(len(alleles)):
@@ -1113,7 +1116,7 @@ class TestInferAncestorsScenarios:
             alleles=[["A", "T"]] * 2,
             anc_states=["A", "A"],
         )
-        anc = infer_ancestors(_src(gt), _cfg(max_gap_length=0), _anc_state(gt))
+        anc = ancestors.infer_ancestors(_src(gt), _cfg(max_gap_length=0), _anc_state(gt))
         intervals = np.asarray(anc["sequence_intervals"][:])
         # gap = 100 > 0 → 2 intervals
         assert len(intervals) == 2
@@ -1154,40 +1157,40 @@ class TestAncestorWriterChunking:
 
     def test_samples_chunk_size_one_matches_default(self):
         store = self._make_store()
-        anc_default = infer_ancestors(_src(store), _cfg(), _anc_state(store))
-        anc_cs1 = infer_ancestors(
+        anc_default = ancestors.infer_ancestors(_src(store), _cfg(), _anc_state(store))
+        anc_cs1 = ancestors.infer_ancestors(
             _src(store), _cfg(samples_chunk_size=1), _anc_state(store)
         )
         self._compare_ancestors(anc_default, anc_cs1)
 
     def test_samples_chunk_size_two_matches_default(self):
         store = self._make_store()
-        anc_default = infer_ancestors(_src(store), _cfg(), _anc_state(store))
-        anc_cs2 = infer_ancestors(
+        anc_default = ancestors.infer_ancestors(_src(store), _cfg(), _anc_state(store))
+        anc_cs2 = ancestors.infer_ancestors(
             _src(store), _cfg(samples_chunk_size=2), _anc_state(store)
         )
         self._compare_ancestors(anc_default, anc_cs2)
 
     def test_variants_chunk_size_one_matches_default(self):
         store = self._make_store()
-        anc_default = infer_ancestors(_src(store), _cfg(), _anc_state(store))
-        anc_vcs1 = infer_ancestors(
+        anc_default = ancestors.infer_ancestors(_src(store), _cfg(), _anc_state(store))
+        anc_vcs1 = ancestors.infer_ancestors(
             _src(store), _cfg(variants_chunk_size=1), _anc_state(store)
         )
         self._compare_ancestors(anc_default, anc_vcs1)
 
     def test_variants_chunk_size_two_matches_default(self):
         store = self._make_store()
-        anc_default = infer_ancestors(_src(store), _cfg(), _anc_state(store))
-        anc_vcs2 = infer_ancestors(
+        anc_default = ancestors.infer_ancestors(_src(store), _cfg(), _anc_state(store))
+        anc_vcs2 = ancestors.infer_ancestors(
             _src(store), _cfg(variants_chunk_size=2), _anc_state(store)
         )
         self._compare_ancestors(anc_default, anc_vcs2)
 
     def test_both_chunk_sizes_small(self):
         store = self._make_store()
-        anc_default = infer_ancestors(_src(store), _cfg(), _anc_state(store))
-        anc_small = infer_ancestors(
+        anc_default = ancestors.infer_ancestors(_src(store), _cfg(), _anc_state(store))
+        anc_small = ancestors.infer_ancestors(
             _src(store),
             _cfg(samples_chunk_size=1, variants_chunk_size=1),
             _anc_state(store),
@@ -1202,7 +1205,9 @@ class TestAncestorWriterChunking:
             alleles=[["A", "T"]] * 2,
             anc_states=["A", "A"],
         )
-        anc = infer_ancestors(_src(gt), _cfg(samples_chunk_size=1), _anc_state(gt))
+        anc = ancestors.infer_ancestors(
+            _src(gt), _cfg(samples_chunk_size=1), _anc_state(gt)
+        )
         num_anc = anc["call_genotype"].shape[1]
         assert num_anc >= 1
 
@@ -1221,23 +1226,23 @@ class TestChunkBuffer:
     """Test ChunkBuffer record_fill and seal logic."""
 
     def test_record_fill_not_complete_until_expected(self):
-        buf = ChunkBuffer(n_local=3, chunk_size=4)
+        buf = vcz.ChunkBuffer(n_local=3, chunk_size=4)
         buf.expected_count = 3
         assert not buf.record_fill()
         assert not buf.record_fill()
         assert buf.record_fill()  # 3rd fill → complete
 
     def test_seal_sets_expected_count(self):
-        buf = ChunkBuffer(n_local=3, chunk_size=4)
+        buf = vcz.ChunkBuffer(n_local=3, chunk_size=4)
         buf.filled_count = 2
         assert not buf.seal(3)  # 2 != 3
         buf.filled_count = 3
-        buf2 = ChunkBuffer(n_local=3, chunk_size=4)
+        buf2 = vcz.ChunkBuffer(n_local=3, chunk_size=4)
         buf2.filled_count = 3
         assert buf2.seal(3)  # 3 == 3
 
     def test_reset_clears_state(self):
-        buf = ChunkBuffer(n_local=2, chunk_size=3)
+        buf = vcz.ChunkBuffer(n_local=2, chunk_size=3)
         buf.chunk_idx = 5
         buf.filled_count = 2
         buf.expected_count = 3
@@ -1255,7 +1260,7 @@ class TestChunkBufferPool:
     """Test ChunkBufferPool acquire/release."""
 
     def test_acquire_release_cycle(self):
-        pool = ChunkBufferPool(num_buffers=2, n_local=3, chunk_size=4)
+        pool = vcz.ChunkBufferPool(num_buffers=2, n_local=3, chunk_size=4)
         b1 = pool.acquire(chunk_idx=0, expected_count=4)
         assert b1.chunk_idx == 0
         b2 = pool.acquire(chunk_idx=1, expected_count=4)
@@ -1269,7 +1274,7 @@ class TestChunkBufferPool:
         pool.release(b3)
 
     def test_pool_resets_on_release(self):
-        pool = ChunkBufferPool(num_buffers=1, n_local=2, chunk_size=3)
+        pool = vcz.ChunkBufferPool(num_buffers=1, n_local=2, chunk_size=3)
         buf = pool.acquire(chunk_idx=0, expected_count=3)
         buf.haplotype_buf[0, 0] = 1
         buf.filled_count = 2
@@ -1284,15 +1289,15 @@ class TestActiveChunkRegistry:
     """Test ActiveChunkRegistry get_or_create and remove."""
 
     def test_get_or_create_returns_same_buffer(self):
-        pool = ChunkBufferPool(num_buffers=4, n_local=3, chunk_size=4)
-        reg = ActiveChunkRegistry(pool)
+        pool = vcz.ChunkBufferPool(num_buffers=4, n_local=3, chunk_size=4)
+        reg = vcz.ActiveChunkRegistry(pool)
         b1 = reg.get_or_create(0, 4)
         b2 = reg.get_or_create(0, 4)
         assert b1 is b2
 
     def test_remove_pops_buffer(self):
-        pool = ChunkBufferPool(num_buffers=4, n_local=3, chunk_size=4)
-        reg = ActiveChunkRegistry(pool)
+        pool = vcz.ChunkBufferPool(num_buffers=4, n_local=3, chunk_size=4)
+        reg = vcz.ActiveChunkRegistry(pool)
         b1 = reg.get_or_create(0, 4)
         removed = reg.remove(0)
         assert removed is b1
@@ -1301,8 +1306,8 @@ class TestActiveChunkRegistry:
         assert b3 is not b1
 
     def test_pop_remaining(self):
-        pool = ChunkBufferPool(num_buffers=4, n_local=3, chunk_size=4)
-        reg = ActiveChunkRegistry(pool)
+        pool = vcz.ChunkBufferPool(num_buffers=4, n_local=3, chunk_size=4)
+        reg = vcz.ActiveChunkRegistry(pool)
         reg.get_or_create(0, 4)
         reg.get_or_create(1, 4)
         remaining = reg.pop_remaining()
@@ -1323,7 +1328,7 @@ class TestDeadlockRegression:
             anc_states=["A", "A", "A", "A"],
             seq_len=1_000_000,
         )
-        anc = infer_ancestors(
+        anc = ancestors.infer_ancestors(
             _src(gt),
             _cfg(samples_chunk_size=chunk_size, max_gap_length=500_000),
             _anc_state(gt),
@@ -1344,7 +1349,7 @@ class TestDeadlockRegression:
             anc_states=["A", "A", "A", "A"],
             seq_len=1_000_000,
         )
-        anc = infer_ancestors(
+        anc = ancestors.infer_ancestors(
             _src(gt),
             _cfg(samples_chunk_size=chunk_size, max_gap_length=500_000),
             _anc_state(gt),
@@ -1374,7 +1379,7 @@ class TestPerIntervalBuilder:
             alleles=[["A", "T"]] * 4,
             anc_states=["A", "A", "A", "A"],
         )
-        anc = infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+        anc = ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
         # All sites in one interval, no gap
         intervals = np.asarray(anc["sequence_intervals"][:])
         assert len(intervals) == 1
@@ -1391,7 +1396,9 @@ class TestPerIntervalBuilder:
             anc_states=["A", "A", "A", "A"],
             seq_len=1_000_000,
         )
-        anc = infer_ancestors(_src(gt), _cfg(max_gap_length=500_000), _anc_state(gt))
+        anc = ancestors.infer_ancestors(
+            _src(gt), _cfg(max_gap_length=500_000), _anc_state(gt)
+        )
         intervals = np.asarray(anc["sequence_intervals"][:])
         assert len(intervals) == 2
 
@@ -1421,19 +1428,19 @@ class TestPerIntervalBuilder:
 
 class TestOpenGroup:
     def test_none_gives_memory_store(self):
-        group = open_group(None)
+        group = vcz.open_group(None)
         assert isinstance(group, zarr.Group)
 
     def test_path_gives_filesystem_store(self, tmp_path):
         out = tmp_path / "test.zarr"
-        group = open_group(out)
+        group = vcz.open_group(out)
         assert isinstance(group, zarr.Group)
         # Should have created the directory on disk
         assert out.exists()
 
     def test_string_path_works(self, tmp_path):
         out = str(tmp_path / "test.zarr")
-        group = open_group(out)
+        group = vcz.open_group(out)
         assert isinstance(group, zarr.Group)
         assert pathlib.Path(out).exists()
 
@@ -1468,11 +1475,11 @@ class TestFilesystemStore:
             alleles=[["A", "T"]] * 2,
             anc_states=["A", "A"],
         )
-        mem_result = infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+        mem_result = ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
 
         fs_path = tmp_path / "ancestors.zarr"
-        fs_cfg = AncestorsConfig(name="ancestors", path=fs_path, sources=["src"])
-        fs_result = infer_ancestors(_src(gt), fs_cfg, _anc_state(gt))
+        fs_cfg = config.AncestorsConfig(name="ancestors", path=fs_path, sources=["src"])
+        fs_result = ancestors.infer_ancestors(_src(gt), fs_cfg, _anc_state(gt))
 
         self._compare_groups(mem_result, fs_result)
 
@@ -1488,11 +1495,11 @@ class TestFilesystemStore:
             alleles=[["A", "T"]] * 4,
             anc_states=["A", "A", "A", "A"],
         )
-        mem_result = infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+        mem_result = ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
 
         fs_path = tmp_path / "ancestors.zarr"
-        fs_cfg = AncestorsConfig(name="ancestors", path=fs_path, sources=["src"])
-        fs_result = infer_ancestors(_src(gt), fs_cfg, _anc_state(gt))
+        fs_cfg = config.AncestorsConfig(name="ancestors", path=fs_path, sources=["src"])
+        fs_result = ancestors.infer_ancestors(_src(gt), fs_cfg, _anc_state(gt))
 
         self._compare_groups(mem_result, fs_result)
 
@@ -1500,10 +1507,10 @@ class TestFilesystemStore:
         """write_empty_ancestor_vcz with a filesystem path is re-readable."""
         seq_intervals = np.zeros((0, 2), dtype=np.int32)
 
-        mem_result = write_empty_ancestor_vcz(seq_intervals, store=None)
+        mem_result = vcz.write_empty_ancestor_vcz(seq_intervals, store=None)
 
         fs_path = tmp_path / "empty.zarr"
-        fs_result = write_empty_ancestor_vcz(seq_intervals, store=fs_path)
+        fs_result = vcz.write_empty_ancestor_vcz(seq_intervals, store=fs_path)
 
         self._compare_groups(mem_result, fs_result)
 
@@ -1514,8 +1521,8 @@ class TestFilesystemStore:
         """infer_ancestors with all-fixed sites writes empty output to filesystem."""
         gt = _haploid_store([[0, 0], [0, 0]], [100, 200], [["A", "T"]] * 2, ["A", "A"])
         fs_path = tmp_path / "empty_anc.zarr"
-        fs_cfg = AncestorsConfig(name="ancestors", path=fs_path, sources=["src"])
-        anc = infer_ancestors(_src(gt), fs_cfg, _anc_state(gt))
+        fs_cfg = config.AncestorsConfig(name="ancestors", path=fs_path, sources=["src"])
+        anc = ancestors.infer_ancestors(_src(gt), fs_cfg, _anc_state(gt))
 
         assert anc["call_genotype"].shape[1] == 0
         assert fs_path.exists()
@@ -1552,8 +1559,8 @@ class TestAtomicWrite:
 
         monkeypatch.setattr(vcz_mod, "finalize_ancestor_zarr", checking_finalize)
 
-        fs_cfg = AncestorsConfig(name="ancestors", path=fs_path, sources=["src"])
-        result = infer_ancestors(_src(gt), fs_cfg, _anc_state(gt))
+        fs_cfg = config.AncestorsConfig(name="ancestors", path=fs_path, sources=["src"])
+        result = ancestors.infer_ancestors(_src(gt), fs_cfg, _anc_state(gt))
 
         # After return, only the final path exists
         assert fs_path.exists()
@@ -1582,8 +1589,8 @@ class TestAtomicWrite:
 
         monkeypatch.setattr(vcz_mod, "write_empty_ancestor_vcz", checking_write_empty)
 
-        fs_cfg = AncestorsConfig(name="ancestors", path=fs_path, sources=["src"])
-        result = infer_ancestors(_src(gt), fs_cfg, _anc_state(gt))
+        fs_cfg = config.AncestorsConfig(name="ancestors", path=fs_path, sources=["src"])
+        result = ancestors.infer_ancestors(_src(gt), fs_cfg, _anc_state(gt))
 
         assert fs_path.exists()
         assert result["call_genotype"].shape[1] == 0
@@ -1600,9 +1607,9 @@ class TestAtomicWrite:
             alleles=[["A", "T"]] * 2,
             anc_states=["A", "A"],
         )
-        fs_cfg = AncestorsConfig(name="ancestors", path=fs_path, sources=["src"])
+        fs_cfg = config.AncestorsConfig(name="ancestors", path=fs_path, sources=["src"])
         with pytest.raises(FileExistsError, match="already exists"):
-            infer_ancestors(_src(gt), fs_cfg, _anc_state(gt))
+            ancestors.infer_ancestors(_src(gt), fs_cfg, _anc_state(gt))
 
     def test_no_tmp_left_after_success(self, tmp_path):
         """After a successful run, no .tmp directories remain."""
@@ -1613,8 +1620,8 @@ class TestAtomicWrite:
             alleles=[["A", "T"]] * 2,
             anc_states=["A", "A"],
         )
-        fs_cfg = AncestorsConfig(name="ancestors", path=fs_path, sources=["src"])
-        infer_ancestors(_src(gt), fs_cfg, _anc_state(gt))
+        fs_cfg = config.AncestorsConfig(name="ancestors", path=fs_path, sources=["src"])
+        ancestors.infer_ancestors(_src(gt), fs_cfg, _anc_state(gt))
 
         tmp_siblings = list(tmp_path.glob("*.tmp"))
         assert tmp_siblings == []
@@ -1628,7 +1635,7 @@ class TestAtomicWrite:
             alleles=[["A", "T"]] * 2,
             anc_states=["A", "A"],
         )
-        result = infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+        result = ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
         assert result["call_genotype"].shape[1] > 0
 
 
@@ -1649,7 +1656,7 @@ class TestLogging:
             anc_states=["A", "A"],
         )
         with caplog.at_level(logging.INFO, logger="tsinfer.ancestors"):
-            infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+            ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
 
         messages = caplog.text
         assert "Starting ancestor inference" in messages
@@ -1667,7 +1674,7 @@ class TestProgress:
             alleles=[["A", "T"]] * 2,
             anc_states=["A", "A"],
         )
-        anc = infer_ancestors(_src(gt), _cfg(), _anc_state(gt), progress=True)
+        anc = ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt), progress=True)
         assert anc["call_genotype"].shape[1] >= 1
 
     def test_progress_false_by_default(self):
@@ -1678,7 +1685,7 @@ class TestProgress:
             alleles=[["A", "T"]] * 2,
             anc_states=["A", "A"],
         )
-        anc = infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+        anc = ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
         assert anc["call_genotype"].shape[1] >= 1
 
 
@@ -1742,8 +1749,10 @@ class TestThreadedAncestorGeneration:
             alleles=[["A", "T"]] * 4,
             anc_states=["A", "A", "A", "A"],
         )
-        anc_sync = infer_ancestors(_src(gt), _cfg(), _anc_state(gt), num_threads=0)
-        anc_threaded = infer_ancestors(
+        anc_sync = ancestors.infer_ancestors(
+            _src(gt), _cfg(), _anc_state(gt), num_threads=0
+        )
+        anc_threaded = ancestors.infer_ancestors(
             _src(gt), _cfg(), _anc_state(gt), num_threads=num_threads
         )
         self._compare_ancestors(anc_sync, anc_threaded)
@@ -1758,10 +1767,10 @@ class TestThreadedAncestorGeneration:
             anc_states=["A", "A", "A", "A"],
             seq_len=1_000_000,
         )
-        anc_sync = infer_ancestors(
+        anc_sync = ancestors.infer_ancestors(
             _src(gt), _cfg(max_gap_length=500_000), _anc_state(gt), num_threads=0
         )
-        anc_threaded = infer_ancestors(
+        anc_threaded = ancestors.infer_ancestors(
             _src(gt),
             _cfg(max_gap_length=500_000),
             _anc_state(gt),
@@ -1777,7 +1786,7 @@ class TestThreadedAncestorGeneration:
             alleles=[["A", "T"]] * 2,
             anc_states=["A", "A"],
         )
-        anc = infer_ancestors(_src(gt), _cfg(), _anc_state(gt), num_threads=2)
+        anc = ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt), num_threads=2)
         assert anc["call_genotype"].shape[1] == 0
 
     def test_threaded_small_chunk_size(self):
@@ -1788,10 +1797,10 @@ class TestThreadedAncestorGeneration:
             alleles=[["A", "T"]] * 4,
             anc_states=["A", "A", "A", "A"],
         )
-        anc_sync = infer_ancestors(
+        anc_sync = ancestors.infer_ancestors(
             _src(gt), _cfg(samples_chunk_size=1), _anc_state(gt), num_threads=0
         )
-        anc_threaded = infer_ancestors(
+        anc_threaded = ancestors.infer_ancestors(
             _src(gt), _cfg(samples_chunk_size=1), _anc_state(gt), num_threads=2
         )
         self._compare_ancestors(anc_sync, anc_threaded)
@@ -1832,8 +1841,12 @@ class TestOneBitEncoding:
             alleles=[["A", "T"]] * 4,
             anc_states=["A", "A", "A", "A"],
         )
-        anc_8bit = infer_ancestors(_src(gt), _cfg(), _anc_state(gt), genotype_encoding=0)
-        anc_1bit = infer_ancestors(_src(gt), _cfg(), _anc_state(gt), genotype_encoding=1)
+        anc_8bit = ancestors.infer_ancestors(
+            _src(gt), _cfg(), _anc_state(gt), genotype_encoding=0
+        )
+        anc_1bit = ancestors.infer_ancestors(
+            _src(gt), _cfg(), _anc_state(gt), genotype_encoding=1
+        )
         self._compare_ancestors(anc_8bit, anc_1bit)
 
     def test_one_bit_multi_interval(self):
@@ -1845,13 +1858,13 @@ class TestOneBitEncoding:
             anc_states=["A", "A", "A", "A"],
             seq_len=1_000_000,
         )
-        anc_8bit = infer_ancestors(
+        anc_8bit = ancestors.infer_ancestors(
             _src(gt),
             _cfg(max_gap_length=500_000),
             _anc_state(gt),
             genotype_encoding=0,
         )
-        anc_1bit = infer_ancestors(
+        anc_1bit = ancestors.infer_ancestors(
             _src(gt),
             _cfg(max_gap_length=500_000),
             _anc_state(gt),
@@ -1867,14 +1880,14 @@ class TestOneBitEncoding:
             alleles=[["A", "T"]] * 4,
             anc_states=["A", "A", "A", "A"],
         )
-        anc_sync = infer_ancestors(
+        anc_sync = ancestors.infer_ancestors(
             _src(gt),
             _cfg(),
             _anc_state(gt),
             num_threads=0,
             genotype_encoding=0,
         )
-        anc_threaded = infer_ancestors(
+        anc_threaded = ancestors.infer_ancestors(
             _src(gt),
             _cfg(),
             _anc_state(gt),
@@ -1902,10 +1915,10 @@ class TestOneBitEncoding:
             alleles=[["A", "T"]] * n_sites,
             anc_states=["A"] * n_sites,
         )
-        anc_8bit = infer_ancestors(
+        anc_8bit = ancestors.infer_ancestors(
             _src(store), _cfg(), _anc_state(store), genotype_encoding=0
         )
-        anc_1bit = infer_ancestors(
+        anc_1bit = ancestors.infer_ancestors(
             _src(store), _cfg(), _anc_state(store), genotype_encoding=1
         )
         self._compare_ancestors(anc_8bit, anc_1bit)
@@ -1918,13 +1931,13 @@ class TestOneBitEncoding:
             alleles=[["A", "T"]] * 4,
             anc_states=["A", "A", "A", "A"],
         )
-        anc_8bit = infer_ancestors(
+        anc_8bit = ancestors.infer_ancestors(
             _src(gt),
             _cfg(samples_chunk_size=1),
             _anc_state(gt),
             genotype_encoding=0,
         )
-        anc_1bit = infer_ancestors(
+        anc_1bit = ancestors.infer_ancestors(
             _src(gt),
             _cfg(samples_chunk_size=1),
             _anc_state(gt),

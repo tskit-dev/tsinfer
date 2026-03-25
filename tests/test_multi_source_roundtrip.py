@@ -27,12 +27,11 @@ multi-source ancestor inference is implemented.
 
 from __future__ import annotations
 
+import helpers
 import numpy as np
 import zarr
-from helpers import make_sample_vcz
 
-from tsinfer.config import Config
-from tsinfer.pipeline import run
+from tsinfer import config, pipeline
 
 # ---------------------------------------------------------------------------
 # Shared test data
@@ -71,7 +70,7 @@ _SEQUENCE_LENGTH = 2000
 
 def _write_vcz_to_disk(tmp_path):
     """Write the shared 10-site, 8-sample VCZ to disk, return path string."""
-    store = make_sample_vcz(
+    store = helpers.make_sample_vcz(
         genotypes=_GENOTYPES,
         positions=_POSITIONS,
         alleles=_ALLELES,
@@ -212,8 +211,8 @@ create_individuals = false
 [match.sources.second_half]
 """
         config_path = _write_toml(tmp_path, toml_content)
-        cfg = Config.from_toml(config_path)
-        ts = run(cfg)
+        cfg = config.Config.from_toml(config_path)
+        ts = pipeline.run(cfg)
         _check_genotypes(sample_vcz, ts)
 
     def test_interleaved_samples(self, tmp_path):
@@ -253,8 +252,8 @@ create_individuals = false
 [match.sources.odd_samples]
 """
         config_path = _write_toml(tmp_path, toml_content)
-        cfg = Config.from_toml(config_path)
-        ts = run(cfg)
+        cfg = config.Config.from_toml(config_path)
+        ts = pipeline.run(cfg)
         _check_genotypes(sample_vcz, ts)
 
     def test_split_sites(self, tmp_path):
@@ -297,8 +296,8 @@ create_individuals = false
 [match.sources.all_samples]
 """
         config_path = _write_toml(tmp_path, toml_content)
-        cfg = Config.from_toml(config_path)
-        ts = run(cfg)
+        cfg = config.Config.from_toml(config_path)
+        ts = pipeline.run(cfg)
         _check_genotypes(sample_vcz, ts)
 
     def test_interleaved_sites(self, tmp_path):
@@ -341,8 +340,8 @@ create_individuals = false
 [match.sources.all_samples]
 """
         config_path = _write_toml(tmp_path, toml_content)
-        cfg = Config.from_toml(config_path)
-        ts = run(cfg)
+        cfg = config.Config.from_toml(config_path)
+        ts = pipeline.run(cfg)
         _check_genotypes(sample_vcz, ts)
 
 
@@ -362,7 +361,7 @@ _DIPLOID_SAMPLE_IDS = np.array([f"d{i}" for i in range(2)])
 
 def _write_mixed_ploidy_vcz(tmp_path):
     """Write haploid and diploid VCZ stores to disk, return paths."""
-    haploid_store = make_sample_vcz(
+    haploid_store = helpers.make_sample_vcz(
         genotypes=_HAPLOID_GENOTYPES,
         positions=_POSITIONS,
         alleles=_ALLELES,
@@ -373,7 +372,7 @@ def _write_mixed_ploidy_vcz(tmp_path):
     haploid_path = tmp_path / "haploid.vcz"
     zarr.save(haploid_path, **{k: haploid_store[k][:] for k in haploid_store})
 
-    diploid_store = make_sample_vcz(
+    diploid_store = helpers.make_sample_vcz(
         genotypes=_DIPLOID_GENOTYPES,
         positions=_POSITIONS,
         alleles=_ALLELES,
@@ -423,8 +422,8 @@ create_individuals = false
 [match.sources.diploid]
 """
         config_path = _write_toml(tmp_path, toml_content)
-        cfg = Config.from_toml(config_path)
-        ts = run(cfg)
+        cfg = config.Config.from_toml(config_path)
+        ts = pipeline.run(cfg)
         _check_genotypes(haploid_vcz, ts)
         _check_genotypes(diploid_vcz, ts)
 
@@ -463,8 +462,8 @@ create_individuals = false
 [match.sources.diploid]
 """
         config_path = _write_toml(tmp_path, toml_content)
-        cfg = Config.from_toml(config_path)
-        ts = run(cfg)
+        cfg = config.Config.from_toml(config_path)
+        ts = pipeline.run(cfg)
         _check_genotypes(haploid_vcz, ts)
         _check_genotypes(diploid_vcz, ts)
 
@@ -503,8 +502,8 @@ create_individuals = false
 [match.sources.diploid]
 """
         config_path = _write_toml(tmp_path, toml_content)
-        cfg = Config.from_toml(config_path)
-        ts = run(cfg)
+        cfg = config.Config.from_toml(config_path)
+        ts = pipeline.run(cfg)
         _check_genotypes(haploid_vcz, ts)
         _check_genotypes(diploid_vcz, ts)
 
@@ -552,7 +551,7 @@ _TRI_SAMPLE_IDS_B = np.array([f"b{i}" for i in range(4)])
 
 def _write_triallelic_vcz(tmp_path):
     """Write source A and source B VCZ stores, return (path_a, path_b)."""
-    store_a = make_sample_vcz(
+    store_a = helpers.make_sample_vcz(
         genotypes=_TRI_GT_A,
         positions=_TRI_POSITIONS,
         alleles=_TRI_ALLELES_A,
@@ -563,7 +562,7 @@ def _write_triallelic_vcz(tmp_path):
     path_a = tmp_path / "source_a.vcz"
     zarr.save(path_a, **{k: store_a[k][:] for k in store_a})
 
-    store_b = make_sample_vcz(
+    store_b = helpers.make_sample_vcz(
         genotypes=_TRI_GT_B,
         positions=_TRI_POSITIONS,
         alleles=_TRI_ALLELES_B,
@@ -613,8 +612,8 @@ create_individuals = false
 [match.sources.src_b]
 """
         config_path = _write_toml(tmp_path, toml_content)
-        cfg = Config.from_toml(config_path)
-        ts = run(cfg)
+        cfg = config.Config.from_toml(config_path)
+        ts = pipeline.run(cfg)
 
         # Verify site 0 has 3 alleles
         site0 = ts.site(0)
@@ -661,15 +660,15 @@ create_individuals = false
 [match.sources.src_b]
 """
         config_path = _write_toml(tmp_path, toml_content)
-        cfg = Config.from_toml(config_path)
-        ts = run(cfg)
+        cfg = config.Config.from_toml(config_path)
+        ts = pipeline.run(cfg)
         _check_genotypes(path_a, ts)
         _check_genotypes(path_b, ts)
 
     def test_all_sites_same_alleles_across_sources(self, tmp_path):
         """Control: both sources have identical alleles (all biallelic)."""
         # Source B uses same alleles as A (A/T everywhere)
-        store_a = make_sample_vcz(
+        store_a = helpers.make_sample_vcz(
             genotypes=_TRI_GT_A,
             positions=_TRI_POSITIONS,
             alleles=_TRI_ALLELES_A,
@@ -680,7 +679,7 @@ create_individuals = false
         path_a = tmp_path / "source_a.vcz"
         zarr.save(path_a, **{k: store_a[k][:] for k in store_a})
 
-        store_b = make_sample_vcz(
+        store_b = helpers.make_sample_vcz(
             genotypes=_TRI_GT_B,
             positions=_TRI_POSITIONS,
             alleles=np.array([["A", "T"]] * 6),
@@ -723,7 +722,7 @@ create_individuals = false
 [match.sources.src_b]
 """
         config_path = _write_toml(tmp_path, toml_content)
-        cfg = Config.from_toml(config_path)
-        ts = run(cfg)
+        cfg = config.Config.from_toml(config_path)
+        ts = pipeline.run(cfg)
         _check_genotypes(path_a, ts)
         _check_genotypes(path_b, ts)
