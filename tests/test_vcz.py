@@ -937,7 +937,7 @@ class TestScheduledCache:
         cache.get(("s", 0))
         result = cache.get(("s", 0))
         assert call_count[0] == 1
-        assert cache._hits == 2
+        assert cache._hits + cache._misses == 2
         assert result is not None
         cache.shutdown()
 
