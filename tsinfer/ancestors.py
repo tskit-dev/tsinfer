@@ -24,8 +24,10 @@ from __future__ import annotations
 
 import concurrent.futures
 import logging
+import os
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 import numcodecs
 import numpy as np
@@ -618,6 +620,18 @@ def infer_ancestors(
     # Use first source's store for contig metadata
     first_store = view.source_store(0)
 
+    # Determine the write path: use a PID-suffixed temp path for atomicity
+    if cfg.path is not None:
+        final_path = Path(cfg.path)
+        if final_path.exists():
+            raise FileExistsError(f"Ancestor output path already exists: {final_path}")
+        tmp_path = final_path.with_suffix(f".{os.getpid()}.tmp")
+        store_path = tmp_path
+    else:
+        final_path = None
+        tmp_path = None
+        store_path = None  # in-memory
+
     if num_inf == 0:
         seq_len = vcz_mod.sequence_length(first_store)
         seq_intervals = compute_sequence_intervals(
@@ -625,13 +639,17 @@ def infer_ancestors(
         )
         contig_id = str(first_store["contig_id"][0])
         contig_length = int(first_store["contig_length"][0])
-        return vcz_mod.write_empty_ancestor_vcz(
+        result = vcz_mod.write_empty_ancestor_vcz(
             seq_intervals,
-            store=cfg.path,
+            store=store_path,
             contig_id=contig_id,
             contig_length=contig_length,
             compressor=compressor,
         )
+        if tmp_path is not None:
+            tmp_path.rename(final_path)
+            result = vcz_mod.open_store(final_path)
+        return result
 
     # --- 3. Compute sequence intervals ---
     seq_len = vcz_mod.sequence_length(first_store)
@@ -677,7 +695,7 @@ def infer_ancestors(
         final_alleles,
         final_anc_indices,
         seq_intervals,
-        store=cfg.path,
+        store=store_path,
         samples_chunk_size=cfg.samples_chunk_size,
         variants_chunk_size=cfg.variants_chunk_size,
         contig_id=contig_id,
@@ -718,6 +736,9 @@ def infer_ancestors(
     result = vcz_mod.finalize_ancestor_zarr(
         zarr_root, all_focal_positions, compressor=compressor
     )
+    if tmp_path is not None:
+        tmp_path.rename(final_path)
+        result = vcz_mod.open_store(final_path)
     elapsed_total = time.monotonic() - t_start
     logger.info(
         "Ancestor inference complete: %d ancestors across %d sites"

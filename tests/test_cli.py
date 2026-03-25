@@ -23,6 +23,7 @@ Tests for the tsinfer CLI (click commands).
 from __future__ import annotations
 
 import os
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -297,7 +298,9 @@ class TestRun:
             result = runner.invoke(main, ["run", config_path])
             assert result.exit_code != 0
             assert "already exists" in result.output
-            # With --force should succeed
+            # Remove ancestor store (user's responsibility) then --force
+            anc_path = Path(tmp_dir) / "ancestors.vcz"
+            shutil.rmtree(anc_path)
             result = runner.invoke(main, ["run", config_path, "--force"])
             assert result.exit_code == 0, result.output
 
