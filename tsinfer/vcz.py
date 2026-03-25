@@ -1225,9 +1225,12 @@ class ScheduledCache:
 
     Requires a full read schedule at construction: a refcount per chunk
     (how many haplotype reads will use it) and the order chunks will first
-    be needed.  Chunks are evicted the moment their refcount reaches zero,
-    and a background thread reads ahead for the next chunk when memory
-    allows.
+    be needed.
+
+    ``prime()`` synchronously fills the cache at startup.  Chunks are
+    evicted when their refcount reaches zero, and the next needed chunk
+    is loaded in the background.  ``get()`` never triggers a load — it
+    returns cached data or waits for readahead to deliver it.
     """
 
     def __init__(
@@ -1242,20 +1245,17 @@ class ScheduledCache:
         self._refcount = dict(refcounts)
         self._chunk_order = chunk_order
         self._cursor = 0
-        self._lock = threading.Lock()
-        self._pending: dict[tuple[str, int], threading.Event] = {}
+        self._condition = threading.Condition()
         self._loaders: dict[str, Any] = {}
         self._chunk_bytes: dict[str, int] = {}
-        self._pending_bytes = 0
         self._readahead_executor = ThreadPoolExecutor(max_workers=1)
-        self._readahead_pending: set[tuple[str, int]] = set()
+        self._readahead_key: tuple[str, int] | None = None
         self._hits = 0
         self._misses = 0
-        # Timing stats
         self._total_load_time = 0.0
         self._total_wait_time = 0.0
         self._total_readahead_loads = 0
-        self._total_demand_loads = 0
+        self._total_prime_loads = 0
         self._total_evictions = 0
         self._total_evicted_bytes = 0
         self._t_start = _time.monotonic()
@@ -1270,78 +1270,37 @@ class ScheduledCache:
         self._loaders[source_name] = load_fn
         self._chunk_bytes[source_name] = chunk_bytes
 
-    # ----- public interface used by VCZHaplotypeReader ---------------------
+    def _cache_state_summary(self) -> str:
+        """Return a brief snapshot of cached chunks and their refcounts.
 
-    def get(self, key: tuple[str, int], _readahead: bool = False) -> np.ndarray:
-        """Return cached chunk, loading from zarr if necessary.
-
-        Cache hits are lock-free: the refcount guarantees a chunk
-        cannot be evicted while any reader still needs it, so
-        ``self._chunks.get(key)`` is safe without the lock.
-
-        Concurrent loads for the same key are deduplicated: only one
-        thread performs the I/O while others wait on a
-        ``threading.Event``.
+        Must be called under ``self._condition``.
         """
-        # Fast path — lock-free cache hit.
-        # Safe because the refcount guarantees the chunk is alive
-        # as long as any reader needs it, and CPython dict.get()
-        # is GIL-atomic.
-        data = self._chunks.get(key)
-        if data is not None:
-            self._hits += 1
-            return data
+        parts = []
+        for src, idx in sorted(self._chunks):
+            ref = self._refcount.get((src, idx), 0)
+            parts.append(f"{src}:{idx}(ref={ref})")
+        return "[" + ", ".join(parts) + "]"
 
-        # Slow path — coordinate loading under lock
-        with self._lock:
-            # Re-check: another thread may have loaded it
-            if key in self._chunks:
-                self._hits += 1
-                return self._chunks[key]
-            if key in self._pending:
-                event = self._pending[key]
-                self._misses += 1
-            else:
-                self._pending[key] = threading.Event()
-                self._misses += 1
-                # Caller is the loader — fall through below
-                event = None
+    # ----- internal loading ------------------------------------------------
 
-        if event is not None:
-            # Another thread is loading — wait on event (no lock held)
-            t_wait = _time.monotonic()
-            event.wait()
-            wait_elapsed = _time.monotonic() - t_wait
-            self._total_wait_time += wait_elapsed
-            logger.debug(
-                "Chunk cache wait: source=%s chunk=%d waited=%.3fs",
-                key[0],
-                key[1],
-                wait_elapsed,
-            )
-            return self._chunks[key]
+    def _load_chunk(self, key: tuple[str, int]) -> np.ndarray:
+        """Load a chunk via the registered loader and insert into cache.
 
-        # We are the loader — I/O outside the lock
+        Caller must ensure there is room (``_current_bytes + size <= _max_bytes``).
+        Notifies any ``get()`` waiters after insertion.
+        """
         t_load = _time.monotonic()
         data = self._loaders[key[0]](key[1])
         load_elapsed = _time.monotonic() - t_load
-        with self._lock:
-            if key not in self._chunks:
-                self._chunks[key] = data
-                self._current_bytes += data.nbytes
-            ev = self._pending.pop(key, None)
+        with self._condition:
+            self._chunks[key] = data
+            self._current_bytes += data.nbytes
             self._total_load_time += load_elapsed
-            if _readahead:
-                self._total_readahead_loads += 1
-            else:
-                self._total_demand_loads += 1
             state = self._cache_state_summary()
-        if ev is not None:
-            ev.set()
+            self._condition.notify_all()
         logger.info(
-            "Chunk cache %s: source=%s chunk=%d size=%.1f MiB"
+            "Chunk cache load: source=%s chunk=%d size=%.1f MiB"
             " load=%.3fs (total: %.1f MiB, %d entries)",
-            "readahead" if _readahead else "load",
             key[0],
             key[1],
             data.nbytes / (1024 * 1024),
@@ -1352,16 +1311,47 @@ class ScheduledCache:
         logger.debug("Chunk cache state: %s", state)
         return data
 
+    def _advance_cursor(self) -> tuple[str, int] | None:
+        """Advance cursor past cached/unneeded chunks, return next needed key.
+
+        Must be called under ``self._condition``.
+        """
+        while self._cursor < len(self._chunk_order):
+            k = self._chunk_order[self._cursor]
+            if k in self._chunks or k not in self._refcount:
+                self._cursor += 1
+                continue
+            if k[0] not in self._loaders:
+                self._cursor += 1
+                continue
+            return k
+        return None
+
+    # ----- public interface ------------------------------------------------
+
+    def get(self, key: tuple[str, int]) -> np.ndarray:
+        """Return cached chunk, waiting for readahead if necessary."""
+        with self._condition:
+            if key in self._chunks:
+                self._hits += 1
+                return self._chunks[key]
+            self._misses += 1
+            t_wait = _time.monotonic()
+            while key not in self._chunks:
+                self._condition.wait()
+            self._total_wait_time += _time.monotonic() - t_wait
+            return self._chunks[key]
+
     def record_read(self, key: tuple[str, int]) -> None:
         """Record that one haplotype was read from *key*.
 
-        When the refcount reaches zero the chunk is evicted and a
-        background read-ahead may be triggered.
+        When the refcount reaches zero the chunk is evicted and
+        readahead is attempted for the next needed chunk.
         """
         evicted = False
         freed = 0
         remaining = 0
-        with self._lock:
+        with self._condition:
             self._refcount[key] -= 1
             remaining = self._refcount[key]
             if remaining <= 0:
@@ -1385,7 +1375,7 @@ class ScheduledCache:
                 len(self._chunks),
             )
             logger.debug("Chunk cache state: %s", state)
-            self._try_readahead()
+            self._schedule_readahead()
         else:
             logger.debug(
                 "Chunk cache read: source=%s chunk=%d refcount=%d",
@@ -1394,20 +1384,23 @@ class ScheduledCache:
                 remaining,
             )
 
-    def _cache_state_summary(self) -> str:
-        """Return a brief snapshot of cached chunks and their refcounts.
-
-        Must be called under ``self._lock``.
-        """
-        parts = []
-        for src, idx in sorted(self._chunks):
-            ref = self._refcount.get((src, idx), 0)
-            parts.append(f"{src}:{idx}(ref={ref})")
-        return "[" + ", ".join(parts) + "]"
+    def prime(self) -> None:
+        """Synchronously load chunks in schedule order until cache is full."""
+        while True:
+            with self._condition:
+                next_key = self._advance_cursor()
+                if next_key is None:
+                    break
+                est = self._chunk_bytes.get(next_key[0], 0)
+                if self._current_bytes + est > self._max_bytes:
+                    break
+                self._cursor += 1
+            self._load_chunk(next_key)
+            self._total_prime_loads += 1
 
     def log_state(self) -> None:
         """Log an info-level summary of current cache state."""
-        with self._lock:
+        with self._condition:
             n_chunks = len(self._chunks)
             cached_mb = self._current_bytes / (1024 * 1024)
             ready_haps = sum(self._refcount.get(k, 0) for k in self._chunks)
@@ -1420,80 +1413,47 @@ class ScheduledCache:
 
     # ----- background read-ahead ------------------------------------------
 
-    def _try_readahead(self) -> None:
-        """Submit a background load for the next needed chunk, if room."""
-        next_key = None
-        with self._lock:
-            while self._cursor < len(self._chunk_order):
-                k = self._chunk_order[self._cursor]
-                if k in self._chunks or k not in self._refcount:
-                    self._cursor += 1
-                    continue
-                if k in self._pending or k in self._readahead_pending:
-                    self._cursor += 1
-                    continue
-                if k[0] not in self._loaders:
-                    self._cursor += 1
-                    continue
-                committed = self._current_bytes + self._pending_bytes
-                if committed >= self._max_bytes:
-                    logger.debug(
-                        "Chunk cache readahead skipped (at capacity):"
-                        " source=%s chunk=%d cached=%.1f MiB"
-                        " pending=%.1f MiB limit=%.1f MiB",
-                        k[0],
-                        k[1],
-                        self._current_bytes / (1024 * 1024),
-                        self._pending_bytes / (1024 * 1024),
-                        self._max_bytes / (1024 * 1024),
-                    )
-                    return
-                self._readahead_pending.add(k)
-                self._pending_bytes += self._chunk_bytes.get(k[0], 0)
-                next_key = k
-                self._cursor += 1
-                break
-
-        if next_key is not None:
-            logger.info(
-                "Chunk cache readahead submit: source=%s chunk=%d",
-                next_key[0],
-                next_key[1],
-            )
-            self._readahead_executor.submit(self._do_readahead, next_key)
-
-    def prime(self) -> None:
-        """Submit readahead tasks to fill available memory at startup."""
-        while True:
-            with self._lock:
-                committed = self._current_bytes + self._pending_bytes
-                at_capacity = committed >= self._max_bytes
-                cursor_done = self._cursor >= len(self._chunk_order)
-            if at_capacity or cursor_done:
-                break
-            self._try_readahead()
+    def _schedule_readahead(self) -> None:
+        """Submit background load for the next needed chunk, if room."""
+        with self._condition:
+            if self._readahead_key is not None:
+                return
+            next_key = self._advance_cursor()
+            if next_key is None:
+                return
+            est = self._chunk_bytes.get(next_key[0], 0)
+            if self._current_bytes + est > self._max_bytes:
+                return
+            self._readahead_key = next_key
+            self._cursor += 1
+        logger.info(
+            "Chunk cache readahead submit: source=%s chunk=%d",
+            next_key[0],
+            next_key[1],
+        )
+        self._readahead_executor.submit(self._do_readahead, next_key)
 
     def _do_readahead(self, key: tuple[str, int]) -> None:
-        """Background read-ahead worker.  Chains the next readahead on completion."""
+        """Background worker: load one chunk, then try the next."""
         try:
-            self.get(key, _readahead=True)
+            self._load_chunk(key)
+            self._total_readahead_loads += 1
         finally:
-            with self._lock:
-                self._readahead_pending.discard(key)
-                self._pending_bytes -= self._chunk_bytes.get(key[0], 0)
-            self._try_readahead()
+            with self._condition:
+                self._readahead_key = None
+            self._schedule_readahead()
 
     def shutdown(self) -> None:
         """Shut down the read-ahead executor and log summary stats."""
         self._readahead_executor.shutdown(wait=True)
         wall = _time.monotonic() - self._t_start
-        total_loads = self._total_demand_loads + self._total_readahead_loads
+        total_loads = self._total_prime_loads + self._total_readahead_loads
         logger.info(
-            "Chunk cache summary: %d loads (demand=%d readahead=%d)"
+            "Chunk cache summary: %d loads (prime=%d readahead=%d)"
             " %d evictions, %d hits, %d misses,"
             " load_time=%.1fs wait_time=%.1fs wall=%.1fs",
             total_loads,
-            self._total_demand_loads,
+            self._total_prime_loads,
             self._total_readahead_loads,
             self._total_evictions,
             self._hits,
