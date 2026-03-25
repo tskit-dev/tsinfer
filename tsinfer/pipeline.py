@@ -371,8 +371,6 @@ def match(
     """
     if num_threads is None:
         num_threads = DEFAULT_NUM_THREADS
-    if read_workers is None:
-        read_workers = max(1, num_threads // 2)
     if cache_size is None:
         cache_size = DEFAULT_CACHE_SIZE
     path_compression = kwargs.get("path_compression", cfg.match.path_compression)
@@ -444,6 +442,7 @@ def match(
         cache_size_mb=cache_size,
         schedule=schedule,
         read_workers=read_workers,
+        num_threads=num_threads,
     )
     allele_mapper = reader.allele_mapper
 

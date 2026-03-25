@@ -238,8 +238,6 @@ def match_cmd(
         cfg.match.workdir = workdir
     if keep_intermediates:
         cfg.match.keep_intermediates = True
-    if read_workers is None:
-        read_workers = max(1, threads // 2)
     _check_output(cfg.match.output, force)
     logger.info("Running match")
     ts = pipeline_match(
@@ -344,8 +342,6 @@ def run_cmd(
     """Run the full pipeline: infer-ancestors, match, post-process, augment-sites."""
     _setup_logging(verbose)
     cfg = Config.from_toml(config)
-    if read_workers is None:
-        read_workers = max(1, threads // 2)
     _check_output(cfg.match.output, force)
     logger.info("Running full pipeline")
     ts = pipeline_run(
