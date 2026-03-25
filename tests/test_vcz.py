@@ -643,7 +643,8 @@ def _make_cache_for_reader(reader, sample_ids, max_bytes=1024 * 1024):
             chunk_order.append(key)
             seen.add(key)
     cache = ScheduledCache(max_bytes, refcounts, chunk_order)
-    cache.register_loader(reader._source_name, reader._do_load_chunk)
+    cache.register_loader(reader._source_name, reader._do_load_chunk, reader.chunk_bytes)
+    cache.prime()
     return cache
 
 
@@ -698,11 +699,11 @@ class TestVCZHaplotypeReader:
         reader.read_haplotype("sample_0")
         # Chunk is still alive (refcount=1 remaining)
         assert ("test", 0) in cache._chunks
-        assert cache._hits == 0
+        assert cache._hits == 1  # prime loaded it, get() found it cached
         reader.read_haplotype("sample_1")
+        assert cache._hits == 2  # second get() also a cache hit
         # After last read, chunk is evicted (refcount=0)
         assert ("test", 0) not in cache._chunks
-        assert cache._hits == 1
 
     def test_refcount_eviction(self):
         """Chunk is evicted exactly when its last scheduled read completes."""
@@ -886,22 +887,36 @@ def _arr(n):
 
 
 class TestScheduledCache:
-    # --- Group 1: get() loads via registered loader ---
+    # --- Group 1: prime() and get() ---
 
-    def test_get_loads_via_loader(self):
+    def test_prime_loads_chunks(self):
         data = _arr(10)
         cache = ScheduledCache(
             max_bytes=100,
             refcounts={("s", 0): 1},
             chunk_order=[("s", 0)],
         )
-        cache.register_loader("s", lambda idx: data)
+        cache.register_loader("s", lambda idx: data, chunk_bytes=10)
+        cache.prime()
         result = cache.get(("s", 0))
         np.testing.assert_array_equal(result, data)
         assert cache.total_bytes == 10
 
+    def test_prime_fills_to_capacity(self):
+        cache = ScheduledCache(
+            max_bytes=25,
+            refcounts={("s", 0): 1, ("s", 1): 1, ("s", 2): 1},
+            chunk_order=[("s", 0), ("s", 1), ("s", 2)],
+        )
+        cache.register_loader("s", lambda idx: _arr(10), chunk_bytes=10)
+        cache.prime()
+        # 2 chunks fit (20 <= 25), 3rd would exceed (30 > 25)
+        assert ("s", 0) in cache._chunks
+        assert ("s", 1) in cache._chunks
+        assert ("s", 2) not in cache._chunks
+        assert cache.total_bytes == 20
+
     def test_get_returns_cached(self):
-        """Second get returns cached data without calling loader again."""
         call_count = [0]
 
         def loader(idx):
@@ -913,13 +928,39 @@ class TestScheduledCache:
             refcounts={("s", 0): 2},
             chunk_order=[("s", 0)],
         )
-        cache.register_loader("s", loader)
+        cache.register_loader("s", loader, chunk_bytes=10)
+        cache.prime()
         cache.get(("s", 0))
         result = cache.get(("s", 0))
         assert call_count[0] == 1
-        assert cache._hits == 1
-        assert cache._misses == 1
+        assert cache._hits == 2
         assert result is not None
+
+    def test_get_waits_for_readahead(self):
+        """get() blocks until readahead delivers the chunk."""
+        cache = ScheduledCache(
+            max_bytes=10,
+            refcounts={("s", 0): 1, ("s", 1): 1},
+            chunk_order=[("s", 0), ("s", 1)],
+        )
+        cache.register_loader("s", lambda idx: _arr(10), chunk_bytes=10)
+        cache.prime()  # loads only chunk 0 (fills capacity)
+        assert ("s", 1) not in cache._chunks
+
+        result = [None]
+
+        def worker():
+            result[0] = cache.get(("s", 1))
+
+        t = threading.Thread(target=worker)
+        t.start()
+        time.sleep(0.05)
+        # Evict chunk 0 — triggers readahead for chunk 1
+        cache.record_read(("s", 0))
+        t.join(timeout=5)
+        assert result[0] is not None
+        np.testing.assert_array_equal(result[0], _arr(10))
+        cache.shutdown()
 
     # --- Group 2: record_read() ---
 
@@ -929,11 +970,11 @@ class TestScheduledCache:
             refcounts={("s", 0): 3},
             chunk_order=[("s", 0)],
         )
-        cache.register_loader("s", lambda idx: _arr(10))
-        cache.get(("s", 0))
+        cache.register_loader("s", lambda idx: _arr(10), chunk_bytes=10)
+        cache.prime()
         cache.record_read(("s", 0))
         assert cache._refcount[("s", 0)] == 2
-        assert ("s", 0) in cache._chunks  # not evicted yet
+        assert ("s", 0) in cache._chunks
 
     def test_record_read_evicts_at_zero(self):
         cache = ScheduledCache(
@@ -941,23 +982,21 @@ class TestScheduledCache:
             refcounts={("s", 0): 1},
             chunk_order=[("s", 0)],
         )
-        cache.register_loader("s", lambda idx: _arr(10))
-        cache.get(("s", 0))
+        cache.register_loader("s", lambda idx: _arr(10), chunk_bytes=10)
+        cache.prime()
         assert cache.total_bytes == 10
         cache.record_read(("s", 0))
         assert ("s", 0) not in cache._chunks
         assert cache.total_bytes == 0
 
     def test_record_read_multiple_chunks(self):
-        """Chunks are evicted independently as their refcounts hit zero."""
         cache = ScheduledCache(
             max_bytes=100,
             refcounts={("s", 0): 1, ("s", 1): 2},
             chunk_order=[("s", 0), ("s", 1)],
         )
-        cache.register_loader("s", lambda idx: _arr(10))
-        cache.get(("s", 0))
-        cache.get(("s", 1))
+        cache.register_loader("s", lambda idx: _arr(10), chunk_bytes=10)
+        cache.prime()
         assert cache.total_bytes == 20
 
         cache.record_read(("s", 0))
@@ -966,53 +1005,15 @@ class TestScheduledCache:
         assert cache.total_bytes == 10
 
         cache.record_read(("s", 1))
-        assert ("s", 1) in cache._chunks  # refcount=1, not zero yet
+        assert ("s", 1) in cache._chunks  # refcount=1, not zero
 
         cache.record_read(("s", 1))
         assert ("s", 1) not in cache._chunks
         assert cache.total_bytes == 0
 
-    # --- Group 3: concurrent load deduplication ---
-
-    def test_concurrent_get_deduplicates(self):
-        """Two threads requesting the same chunk: only one loads."""
-        call_count = [0]
-        load_event = threading.Event()
-
-        def slow_loader(idx):
-            call_count[0] += 1
-            load_event.wait()
-            return _arr(10)
-
-        cache = ScheduledCache(
-            max_bytes=100,
-            refcounts={("s", 0): 2},
-            chunk_order=[("s", 0)],
-        )
-        cache.register_loader("s", slow_loader)
-
-        results = [None, None]
-
-        def worker(i):
-            results[i] = cache.get(("s", 0))
-
-        t0 = threading.Thread(target=worker, args=(0,))
-        t1 = threading.Thread(target=worker, args=(1,))
-        t0.start()
-        time.sleep(0.05)
-        t1.start()
-        time.sleep(0.05)
-        load_event.set()
-        t0.join(timeout=5)
-        t1.join(timeout=5)
-        assert call_count[0] == 1
-        for r in results:
-            np.testing.assert_array_equal(r, _arr(10))
-
-    # --- Group 4: read-ahead ---
+    # --- Group 3: read-ahead ---
 
     def test_readahead_triggers_on_eviction(self):
-        """Evicting a chunk triggers read-ahead for the next one."""
         loaded = set()
 
         def loader(idx):
@@ -1020,26 +1021,26 @@ class TestScheduledCache:
             return _arr(10)
 
         cache = ScheduledCache(
-            max_bytes=100,
+            max_bytes=15,
             refcounts={("s", 0): 1, ("s", 1): 1},
             chunk_order=[("s", 0), ("s", 1)],
         )
-        cache.register_loader("s", loader)
-        cache.get(("s", 0))
+        cache.register_loader("s", loader, chunk_bytes=10)
+        cache.prime()  # loads chunk 0 only (10 + 10 > 15)
         assert 0 in loaded
-        # Evict chunk 0 — should trigger read-ahead for chunk 1
+        assert 1 not in loaded
+        # Evict chunk 0 — should trigger readahead for chunk 1
         cache.record_read(("s", 0))
-        # Give the background thread time to complete
         time.sleep(0.1)
         assert 1 in loaded
         assert ("s", 1) in cache._chunks
         cache.shutdown()
 
     def test_readahead_respects_memory_limit(self):
-        """Read-ahead does not fire when cache is at capacity."""
+        """Readahead does not fire when next chunk doesn't fit."""
         cache = ScheduledCache(
-            max_bytes=10,
-            refcounts={("s", 0): 1, ("s", 1): 1},
+            max_bytes=15,
+            refcounts={("s", 0): 2, ("s", 1): 1},
             chunk_order=[("s", 0), ("s", 1)],
         )
         loaded = set()
@@ -1048,44 +1049,105 @@ class TestScheduledCache:
             loaded.add(idx)
             return _arr(10)
 
-        cache.register_loader("s", loader)
-        cache.get(("s", 0))  # fills cache to capacity
+        cache.register_loader("s", loader, chunk_bytes=10)
+        cache.prime()  # loads chunk 0 only
+        # Decrement but don't evict (refcount 2→1)
+        cache.record_read(("s", 0))
         assert cache.total_bytes == 10
-        # Read-ahead should not trigger because cache is full
-        cache._try_readahead()
+        # Readahead should not trigger: 10 + 10 > 15 and chunk 0 still alive
         time.sleep(0.05)
         assert 1 not in loaded
         cache.shutdown()
 
-    def test_readahead_skips_pending_chunk(self):
-        """Readahead skips chunks that are already being loaded."""
+    def test_readahead_multi_eviction(self):
+        """Large chunk needs multiple small evictions before it fits."""
+        loaded = {}
+
+        def loader_small(idx):
+            loaded[("small", idx)] = True
+            return _arr(10)
+
+        def loader_big(idx):
+            loaded[("big", idx)] = True
+            return _arr(30)
+
         cache = ScheduledCache(
-            max_bytes=100,
-            refcounts={("s", 0): 1, ("s", 1): 1},
-            chunk_order=[("s", 0), ("s", 1)],
+            max_bytes=35,
+            refcounts={
+                ("small", 0): 1,
+                ("small", 1): 1,
+                ("small", 2): 1,
+                ("big", 0): 1,
+            },
+            chunk_order=[
+                ("small", 0),
+                ("small", 1),
+                ("small", 2),
+                ("big", 0),
+            ],
         )
-        cache.register_loader("s", lambda idx: _arr(10))
-        # Simulate chunk 0 being loaded by adding to _pending
-        cache._pending[("s", 0)] = threading.Event()
-        cache._try_readahead()
-        # Should skip ("s", 0) and submit ("s", 1) instead
+        cache.register_loader("small", loader_small, chunk_bytes=10)
+        cache.register_loader("big", loader_big, chunk_bytes=30)
+        cache.prime()  # loads small 0,1,2 (30 bytes); big 0 won't fit
+        assert cache.total_bytes == 30
+        assert ("big", 0) not in cache._chunks
+
+        # Evict small 0 → 20 bytes; big needs 30, still doesn't fit
+        cache.record_read(("small", 0))
         time.sleep(0.1)
-        assert ("s", 1) in cache._chunks
+        assert ("big", 0) not in cache._chunks
+
+        # Evict small 1 → 10 bytes; 10 + 30 > 35, still doesn't fit
+        cache.record_read(("small", 1))
+        time.sleep(0.1)
+        assert ("big", 0) not in cache._chunks
+
+        # Evict small 2 → 0 bytes; 0 + 30 <= 35, now it fits
+        cache.record_read(("small", 2))
+        time.sleep(0.2)
+        assert ("big", 0) in cache._chunks
+        assert cache.total_bytes == 30
         cache.shutdown()
 
     def test_readahead_skips_unregistered_source(self):
-        """Readahead skips chunks whose source has no registered loader."""
         cache = ScheduledCache(
             max_bytes=100,
             refcounts={("unknown", 0): 1, ("s", 0): 1},
             chunk_order=[("unknown", 0), ("s", 0)],
         )
-        cache.register_loader("s", lambda idx: _arr(10))
-        # No loader for "unknown" — should skip it and load ("s", 0)
-        cache._try_readahead()
-        time.sleep(0.1)
+        cache.register_loader("s", lambda idx: _arr(10), chunk_bytes=10)
+        cache.prime()
+        # Skipped "unknown", loaded "s"
         assert ("s", 0) in cache._chunks
         assert ("unknown", 0) not in cache._chunks
+
+    # --- Group 4: concurrent get() ---
+
+    def test_concurrent_get_waiters(self):
+        """Multiple threads waiting for the same chunk all get it."""
+        cache = ScheduledCache(
+            max_bytes=10,
+            refcounts={("s", 0): 1, ("s", 1): 3},
+            chunk_order=[("s", 0), ("s", 1)],
+        )
+        cache.register_loader("s", lambda idx: _arr(10), chunk_bytes=10)
+        cache.prime()  # loads chunk 0 only
+
+        results = [None, None, None]
+
+        def worker(i):
+            results[i] = cache.get(("s", 1))
+
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(3)]
+        for t in threads:
+            t.start()
+        time.sleep(0.05)
+        # Evict chunk 0 → readahead loads chunk 1 → all waiters wake
+        cache.record_read(("s", 0))
+        for t in threads:
+            t.join(timeout=5)
+        for r in results:
+            np.testing.assert_array_equal(r, _arr(10))
         cache.shutdown()
 
     # --- Group 5: shutdown ---
@@ -1097,7 +1159,6 @@ class TestScheduledCache:
             chunk_order=[],
         )
         cache.shutdown()
-        # Should not raise
 
     # --- Group 6: bytes tracking ---
 
@@ -1107,10 +1168,8 @@ class TestScheduledCache:
             refcounts={("s", 0): 1, ("s", 1): 1},
             chunk_order=[("s", 0), ("s", 1)],
         )
-        cache.register_loader("s", lambda idx: _arr(30))
-        cache.get(("s", 0))
-        assert cache.total_bytes == 30
-        cache.get(("s", 1))
+        cache.register_loader("s", lambda idx: _arr(30), chunk_bytes=30)
+        cache.prime()
         assert cache.total_bytes == 60
         cache.record_read(("s", 0))
         assert cache.total_bytes == 30
