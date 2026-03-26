@@ -49,7 +49,7 @@ from . import ancestors, config, pipeline
 logger = logging.getLogger(__name__)
 
 
-def _setup_logging(verbose: int) -> None:
+def _setup_logging(verbose: int, log_file: str | None = None) -> None:
     """Configure logging level based on verbosity count."""
     if verbose >= 2:
         level = logging.DEBUG
@@ -57,11 +57,15 @@ def _setup_logging(verbose: int) -> None:
         level = logging.INFO
     else:
         level = logging.WARNING
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        stream=sys.stderr,
-    )
+    kwargs: dict = {
+        "level": level,
+        "format": "%(asctime)s %(levelname)s %(name)s: %(message)s",
+    }
+    if log_file is not None:
+        kwargs["filename"] = log_file
+    else:
+        kwargs["stream"] = sys.stderr
+    logging.basicConfig(**kwargs)
     # Suppress noisy third-party debug logs
     logging.getLogger("zarr").setLevel(max(level, logging.WARNING))
     logging.getLogger("numcodecs").setLevel(max(level, logging.WARNING))
@@ -100,6 +104,13 @@ _runtime_options = [
     click.option("--force", is_flag=True, help="Overwrite existing output files."),
     click.option("--progress", is_flag=True, help="Show per-step progress bars."),
     click.option("-v", "--verbose", count=True, help="Increase log verbosity."),
+    click.option(
+        "-l",
+        "--log-file",
+        default=None,
+        type=click.Path(),
+        help="Write log messages to this file instead of stderr.",
+    ),
 ]
 
 
@@ -149,9 +160,10 @@ def infer_ancestors_cmd(
     force,
     progress,
     verbose,
+    log_file,
 ):
     """Build the ancestor VCZ store from the samples VCZ."""
-    _setup_logging(verbose)
+    _setup_logging(verbose, log_file=log_file)
     cfg = config.Config.from_toml(config_path)
     if progress and threads <= 0:
         warnings.warn(
@@ -230,9 +242,10 @@ def match_cmd(
     force,
     progress,
     verbose,
+    log_file,
 ):
     """Run the unified match loop (ancestors + samples)."""
-    _setup_logging(verbose)
+    _setup_logging(verbose, log_file=log_file)
     cfg = config.Config.from_toml(config_path)
     if workdir is not None:
         cfg.match.workdir = workdir
@@ -263,9 +276,9 @@ def match_cmd(
     help="Input tree sequence file.",
 )
 @_add_options(_runtime_options)
-def post_process_cmd(config_path, input_ts, threads, force, progress, verbose):
+def post_process_cmd(config_path, input_ts, threads, force, progress, verbose, log_file):
     """Post-process a matched tree sequence."""
-    _setup_logging(verbose)
+    _setup_logging(verbose, log_file=log_file)
     cfg = config.Config.from_toml(config_path)
     ts = tskit.load(input_ts)
     logger.info("Post-processing %s (%d nodes)", input_ts, ts.num_nodes)
@@ -294,10 +307,17 @@ def post_process_cmd(config_path, input_ts, threads, force, progress, verbose):
 )
 @_add_options(_runtime_options)
 def augment_sites_cmd(
-    config_path, input_ts, output_path, threads, force, progress, verbose
+    config_path,
+    input_ts,
+    output_path,
+    threads,
+    force,
+    progress,
+    verbose,
+    log_file,
 ):
     """Place non-inference sites onto a tree sequence using parsimony."""
-    _setup_logging(verbose)
+    _setup_logging(verbose, log_file=log_file)
     cfg = config.Config.from_toml(config_path)
     ts = tskit.load(input_ts)
     _check_output(output_path, force)
@@ -348,9 +368,10 @@ def run_cmd(
     force,
     progress,
     verbose,
+    log_file,
 ):
     """Run the full pipeline: infer-ancestors, match, post-process, augment-sites."""
-    _setup_logging(verbose)
+    _setup_logging(verbose, log_file=log_file)
     cfg = config.Config.from_toml(config_path)
     _check_output(cfg.match.output, force)
     logger.info("Running full pipeline")
