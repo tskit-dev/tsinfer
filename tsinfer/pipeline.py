@@ -543,14 +543,18 @@ def match(
     config_str = cfg.format()
 
     prev_written_group = None
-    for gi, group_idx in enumerate(sorted_groups):
+    for group_idx in sorted_groups:
         group_jobs = groups_dict[group_idx]
         num_in_group = len(group_jobs)
 
         # Skip groups already completed
         if group_idx <= last_completed_group:
             completed_haps += num_in_group
-            logger.info("Group %d/%d: skipped (already completed)", gi + 1, num_groups)
+            logger.info(
+                "Group %d/%d: skipped (already completed)",
+                group_idx + 1,
+                num_groups,
+            )
             continue
 
         # Stop before reaching group_stop (range semantics)
@@ -563,7 +567,7 @@ def match(
             break
 
         reader.log_cache_state()
-        group_label = f"Group {gi + 1}/{num_groups}"
+        group_label = f"Group {group_idx + 1}/{num_groups}"
         logger.info("%s: %d haplotypes", group_label, num_in_group)
 
         ts = _process_group(
@@ -626,7 +630,7 @@ def match(
         completed_haps += num_in_group
         logger.info(
             "Group %d/%d done: %d/%d haplotypes completed (%.1f%%)",
-            gi + 1,
+            group_idx + 1,
             num_groups,
             completed_haps,
             total_haps,
