@@ -1447,7 +1447,7 @@ ancestor_matcher2_set_allelic_state(
     allelic_state[0] = 0;
 
     for (mutation = self->matcher_indexes->sites.mutations[site]; mutation != NULL;
-         mutation = mutation->next) {
+        mutation = mutation->next) {
         allelic_state[mutation->node] = mutation->derived_state;
     }
 }
@@ -1461,7 +1461,7 @@ ancestor_matcher2_unset_allelic_state(
 
     allelic_state[0] = NULL_NODE;
     for (mutation = self->matcher_indexes->sites.mutations[site]; mutation != NULL;
-         mutation = mutation->next) {
+        mutation = mutation->next) {
         allelic_state[mutation->node] = TSK_NULL;
     }
 }
@@ -1634,7 +1634,7 @@ ancestor_matcher2_update_site_state(ancestor_matcher2_t *self, const tsk_id_t si
         ancestor_matcher2_check_state(self);
     }
     for (mutation = self->matcher_indexes->sites.mutations[site]; mutation != NULL;
-         mutation = mutation->next) {
+        mutation = mutation->next) {
         /* Insert a new L-value for the mutation node if needed */
         if (L[mutation->node] == NULL_LIKELIHOOD) {
             u = mutation->node;
@@ -1803,7 +1803,7 @@ ancestor_matcher2_run_traceback(ancestor_matcher2_t *self, tsk_id_t start, tsk_i
         /* The tree is ready; perform the traceback at each site in this tree */
         assert(left < right);
         for (; site >= 0 && left <= sites_position[site] && sites_position[site] < right;
-             site--) {
+            site--) {
             if (start_pos <= sites_position[site] && sites_position[site] < end_pos) {
 
                 ancestor_matcher2_set_allelic_state(self, site, allelic_state);
@@ -2086,9 +2086,9 @@ ancestor_matcher2_find_path(ancestor_matcher2_t *self, tsk_id_t start, tsk_id_t 
     }
     /* Reset some memory for the next call */
     memset(
-        self->traceback + start, 0, ((size_t)(end - start)) * sizeof(*self->traceback));
+        self->traceback + start, 0, ((size_t) (end - start)) * sizeof(*self->traceback));
     memset(self->max_likelihood_node + start, 0xff,
-        ((size_t)(end - start)) * sizeof(*self->max_likelihood_node));
+        ((size_t) (end - start)) * sizeof(*self->max_likelihood_node));
 
 out:
     return ret;

@@ -26,7 +26,6 @@ import concurrent.futures as cf
 import dataclasses
 import logging
 import time as time_
-import dataclasses
 
 import numpy as np
 import tskit
