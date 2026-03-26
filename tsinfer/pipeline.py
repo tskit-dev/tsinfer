@@ -27,13 +27,14 @@ import dataclasses
 import json
 import logging
 import pathlib
+import sys
 import time as time_
 
 import numpy as np
 import tqdm
 import tskit
 
-from . import ancestors, config, grouping, matching
+from . import ancestors, config, grouping, matching, provenance
 from . import vcz as vcz_mod
 
 logger = logging.getLogger(__name__)
@@ -341,6 +342,81 @@ def _setup_workdir(workdir, cfg):
     )
 
 
+def _process_group(
+    ts: tskit.TreeSequence,
+    *,
+    group_idx: int,
+    group_jobs: list,
+    positions: np.ndarray,
+    path_compression: bool,
+    allele_mapper,
+    reader,
+    num_threads: int,
+    progress_desc: str | None,
+    match_fh,
+    config_str: str,
+) -> tskit.TreeSequence:
+    """Match one group of haplotypes and return the extended tree sequence."""
+    with provenance.TimingAndMemory() as tm:
+        m = matching.Matcher(
+            ts,
+            positions,
+            path_compression=path_compression,
+            num_alleles=reader.get_num_alleles(),
+            allele_mapper=allele_mapper,
+        )
+        job_list = [job for _, job in group_jobs]
+        match_iter = m.match(job_list, reader, num_threads=num_threads)
+        pbar = None
+        if progress_desc is not None:
+            pbar = tqdm.tqdm(
+                total=len(job_list),
+                desc=progress_desc,
+                unit="haplotypes",
+            )
+        results = []
+        for job, result in match_iter:
+            if match_fh is not None:
+                doc = {
+                    "group": group_idx,
+                    "haplotype_index": job.haplotype_index,
+                    "source": job.source,
+                    "sample_id": job.sample_id,
+                    "ploidy_index": job.ploidy_index,
+                    "time": job.time,
+                    "path": [
+                        {"left": s.left, "right": s.right, "parent": s.parent}
+                        for s in result.path
+                    ],
+                    "mutations": [
+                        {"position": m.position, "derived_state": m.derived_state}
+                        for m in result.mutations
+                    ],
+                }
+                match_fh.write(json.dumps(doc) + "\n")
+            results.append((job, result))
+            if pbar is not None:
+                pbar.update(1)
+        if pbar is not None:
+            pbar.close()
+        paired_results = sorted(results, key=lambda pair: pair[0].haplotype_index)
+
+    prov_dict = provenance.get_provenance_dict(
+        command="match",
+        group=group_idx,
+        config=config_str,
+        cli_args=sys.argv,
+        resources=tm.metrics.asdict(),
+    )
+
+    return matching.extend_ts(
+        ts,
+        paired_results=paired_results,
+        allele_mapper=allele_mapper,
+        provenance_record=json.dumps(prov_dict),
+    )
+
+
 def match(
     cfg: config.Config,
     reference_ts: tskit.TreeSequence | None = None,
@@ -464,6 +540,7 @@ def match(
     num_groups = len(sorted_groups)
     total_haps = len(jobs)
     completed_haps = 0
+    config_str = cfg.format()
 
     prev_written_group = None
     for gi, group_idx in enumerate(sorted_groups):
@@ -486,16 +563,23 @@ def match(
             break
 
         reader.log_cache_state()
-        logger.info("Group %d/%d: %d haplotypes", gi + 1, num_groups, num_in_group)
+        group_label = f"Group {gi + 1}/{num_groups}"
+        logger.info("%s: %d haplotypes", group_label, num_in_group)
 
-        # Match against current TS (haplotypes read on demand via reader)
-        matcher = matching.Matcher(
+        ts = _process_group(
             ts,
-            positions,
+            group_idx=group_idx,
+            group_jobs=group_jobs,
+            positions=positions,
             path_compression=path_compression,
-            num_alleles=reader.get_num_alleles(),
             allele_mapper=allele_mapper,
+            reader=reader,
+            num_threads=num_threads,
+            progress_desc=group_label if progress else None,
+            match_fh=match_fh,
+            config_str=config_str,
         )
+<<<<<<< HEAD
         job_list = [job for _, job in group_jobs]
         match_iter = matcher.match(job_list, reader, num_threads=num_threads)
         pbar = None
@@ -547,13 +631,6 @@ def match(
             completed_haps,
             total_haps,
             100.0 * completed_haps / total_haps if total_haps > 0 else 0,
-        )
-
-        # Extend the tree sequence
-        ts = matching.extend_ts(
-            ts,
-            paired_results=paired_results,
-            allele_mapper=allele_mapper,
         )
 
         # Write checkpoint to workdir if configured
