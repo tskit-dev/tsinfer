@@ -591,6 +591,55 @@ class TestMatchWorkdirCLI:
             assert len(trees_files) >= 1
 
 
+class TestShortOptions:
+    """Short and long option forms parse to the same params (no I/O needed)."""
+
+    def _parse(self, cmd, args, tmp_path):
+        """Parse *args* via make_context, using a dummy config file."""
+        dummy = tmp_path / "c.toml"
+        dummy.touch()
+        ctx = cmd.make_context("test", [str(dummy)] + list(args))
+        return ctx.params
+
+    def test_run_short_long_equivalent(self, tmp_path):
+        long_p = self._parse(
+            cli.run_cmd,
+            ["--threads", "4", "--cache-size", "128", "--force", "--progress"],
+            tmp_path,
+        )
+        short_p = self._parse(
+            cli.run_cmd, ["-t", "4", "-c", "128", "-f", "-p"], tmp_path
+        )
+        assert long_p == short_p
+
+    def test_match_short_long_equivalent(self, tmp_path):
+        long_p = self._parse(
+            cli.match_cmd,
+            ["--threads", "2", "--cache-size", "64", "--force"],
+            tmp_path,
+        )
+        short_p = self._parse(cli.match_cmd, ["-t", "2", "-c", "64", "-f"], tmp_path)
+        assert long_p == short_p
+
+    def test_infer_ancestors_short_long_equivalent(self, tmp_path):
+        long_p = self._parse(
+            cli.infer_ancestors_cmd,
+            ["--threads", "3", "--write-threads", "5", "--force", "--progress"],
+            tmp_path,
+        )
+        short_p = self._parse(
+            cli.infer_ancestors_cmd,
+            ["-t", "3", "-w", "5", "-f", "-p"],
+            tmp_path,
+        )
+        assert long_p == short_p
+
+    def test_verbose_short_long_equivalent(self, tmp_path):
+        long_p = self._parse(cli.run_cmd, ["--verbose"], tmp_path)
+        short_p = self._parse(cli.run_cmd, ["-v"], tmp_path)
+        assert long_p == short_p
+
+
 class TestShowMatchJobs:
     def test_show_match_jobs(self):
         """show-match-jobs prints a histogram from a match-jobs.json file."""
