@@ -1,6 +1,7 @@
 """
 Tests for the haplotype matching algorithm.
 """
+
 import collections
 import dataclasses
 import io
@@ -12,7 +13,6 @@ import pytest
 import tskit
 
 import _tsinfer
-import tsinfer
 from tsinfer import matching
 
 
@@ -574,8 +574,8 @@ def run_match(ts, h):
     )
     match_py = matcher.find_path(h)
 
-    mi = tsinfer.MatcherIndexes(ts)
-    am = tsinfer.AncestorMatcher2(
+    mi = matching.MatcherIndexes(ts)
+    am = matching.AncestorMatcher2(
         mi, recombination=recombination, mismatch=mismatch, precision=precision
     )
     match_c = am.find_match(h)
