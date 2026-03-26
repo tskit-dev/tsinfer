@@ -25,6 +25,7 @@ import sys
 
 import numpy as np
 import pytest
+import tskit
 
 import _tsinfer
 
@@ -350,3 +351,31 @@ class TestUninitialised:
                     method = getattr(uninitialised, method_name)
                     with pytest.raises((SystemError, ValueError)):
                         method()
+
+
+class TestMatcherIndexes:
+    def test_single_tree(self):
+        ts = tskit.Tree.generate_balanced(4).tree_sequence
+        tables = ts.dump_tables()
+        ll_tables = _tsinfer.LightweightTableCollection(tables.sequence_length)
+        ll_tables.fromdict(tables.asdict())
+        mi = _tsinfer.MatcherIndexes(ll_tables)
+        mi.print_state(sys.stdout)
+
+    def test_print_state(self, tmpdir):
+        ts = tskit.Tree.generate_balanced(4).tree_sequence
+        tables = ts.dump_tables()
+        ll_tables = _tsinfer.LightweightTableCollection(tables.sequence_length)
+        ll_tables.fromdict(tables.asdict())
+        mi = _tsinfer.MatcherIndexes(ll_tables)
+        with pytest.raises(TypeError):
+            mi.print_state()
+
+        path = tmpdir / "output.txt"
+        with open(path, "w") as f:
+            mi.print_state(f)
+        with open(path) as f:
+            output = f.read()
+        assert len(output) > 0
+        assert "indexes" in output
+        print(output)
