@@ -24,6 +24,36 @@ class Edge:
     child: int = dataclasses.field(default=None)
 
 
+@dataclasses.dataclass
+class Path:
+    left: np.ndarray
+    right: np.ndarray
+    parent: np.ndarray
+
+    def __iter__(self):
+        yield from zip(self.left, self.right, self.parent)
+
+    def __len__(self):
+        return len(self.left)
+
+    def assert_equals(self, other):
+        np.testing.assert_array_equal(self.left, other.left)
+        np.testing.assert_array_equal(self.right, other.right)
+        np.testing.assert_array_equal(self.parent, other.parent)
+
+
+@dataclasses.dataclass
+class Match:
+    path: Path
+    query_haplotype: np.ndarray
+    matched_haplotype: np.ndarray
+
+    def assert_equals(self, other):
+        self.path.assert_equals(other.path)
+        np.testing.assert_array_equal(self.matched_haplotype, other.matched_haplotype)
+        np.testing.assert_array_equal(self.query_haplotype, other.query_haplotype)
+
+
 # Special values used to indicate compressed paths and nodes that are
 # not present in the current tree.
 
@@ -297,8 +327,8 @@ class AncestorMatcher:
         return u != 0 and self.is_root(u) and self.left_child[u] == -1
 
     def zero_sites_path(self):
-        path = matching.Path([0], [self.matcher_indexes.sites_position[-1]], [0])
-        return matching.Match(path, [], [])
+        path = Path([0], [self.matcher_indexes.sites_position[-1]], [0])
+        return Match(path, [], [])
 
     def find_path(self, h):
         if self.num_sites == 0:
@@ -553,10 +583,10 @@ class AncestorMatcher:
 
         # Convert the parent node IDs back to original values
         parent -= 1
-        path = matching.Path(left[::-1], right[::-1], parent[::-1])
+        path = Path(left[::-1], right[::-1], parent[::-1])
         if start == 0 and path.left[0] == sites_position[0]:
             path.left[0] = 0
-        return matching.Match(path, query_haplotype, match)
+        return Match(path, query_haplotype, match)
 
 
 def run_match(ts, h):
@@ -574,19 +604,32 @@ def run_match(ts, h):
     )
     match_py = matcher.find_path(h)
 
-    mi = matching.MatcherIndexes(ts)
-    am = matching.AncestorMatcher2(
-        mi, recombination=recombination, mismatch=mismatch, precision=precision
-    )
-    match_c = am.find_match(h)
-    match_py.assert_equals(match_c)
+    if ts.num_sites > 0:
+        mi = matching.MatcherIndexes(ts)
+        am = matching.AncestorMatcher2(mi, recombination, mismatch)
+        match_out = np.zeros(ts.num_sites, dtype=np.int8)
+        non_missing = np.where(h >= 0)[0]
+        if len(non_missing) == 0:
+            start, end = 0, ts.num_sites
+        else:
+            start = int(non_missing[0])
+            end = int(non_missing[-1]) + 1
+        left, right, parent = am.find_path(h, start, end, match_out)
+        match_out[:start] = tskit.MISSING_DATA
+        match_out[end:] = tskit.MISSING_DATA
+        match_c = Match(
+            Path(left[::-1], right[::-1], (parent - 1)[::-1]),
+            h,
+            match_out,
+        )
+        match_py.assert_equals(match_c)
     return match_py
 
 
 class TestMatchClassUtils:
     def test_pickle(self):
-        m1 = matching.Match(
-            matching.Path(np.array([0]), np.array([1]), np.array([0])),
+        m1 = Match(
+            Path(np.array([0]), np.array([1]), np.array([0])),
             np.array([0]),
             np.array([0]),
         )
