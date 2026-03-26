@@ -550,11 +550,7 @@ def match(
         # Skip groups already completed
         if group_idx <= last_completed_group:
             completed_haps += num_in_group
-            logger.info(
-                "Group %d/%d: skipped (already completed)",
-                group_idx + 1,
-                num_groups,
-            )
+            logger.info("Group %d: skipped (already completed)", group_idx)
             continue
 
         # Stop before reaching group_stop (range semantics)
@@ -583,54 +579,10 @@ def match(
             match_fh=match_fh,
             config_str=config_str,
         )
-<<<<<<< HEAD
-        job_list = [job for _, job in group_jobs]
-        match_iter = matcher.match(job_list, reader, num_threads=num_threads)
-        pbar = None
-        if progress:
-            pbar = tqdm.tqdm(
-                total=len(job_list),
-                desc=f"Group {gi} ({num_groups})",
-                unit="haps",
-            )
-        results = []
-        for job, result in match_iter:
-            if match_fh is not None:
-                doc = {
-                    "group": group_idx,
-                    "haplotype_index": job.haplotype_index,
-                    "source": job.source,
-                    "sample_id": job.sample_id,
-                    "ploidy_index": job.ploidy_index,
-                    "time": job.time,
-                    "path": [
-                        {
-                            "left": s.left,
-                            "right": s.right,
-                            "parent": s.parent,
-                        }
-                        for s in result.path
-                    ],
-                    "mutations": [
-                        {
-                            "position": m.position,
-                            "derived_state": m.derived_state,
-                        }
-                        for m in result.mutations
-                    ],
-                }
-                match_fh.write(json.dumps(doc) + "\n")
-            results.append((job, result))
-            if pbar is not None:
-                pbar.update(1)
-        if pbar is not None:
-            pbar.close()
-        paired_results = sorted(results, key=lambda pair: pair[0].haplotype_index)
-
         completed_haps += num_in_group
         logger.info(
-            "Group %d/%d done: %d/%d haplotypes completed (%.1f%%)",
-            group_idx + 1,
+            "Group %d done (total=%d): %d/%d haplotypes completed (%.1f%%)",
+            group_idx,
             num_groups,
             completed_haps,
             total_haps,
