@@ -28,11 +28,12 @@ jobs:
 
   test:
     name: Python
-    uses: tskit-dev/.github/.github/workflows/python-tests.yml@v15
+    uses: tskit-dev/.github/.github/workflows/python-tests.yml@v16
     with:
       os: ${{ matrix.os }}
       python-version: ${{ matrix.python }}
       coverage-directory: tsinfer
+      fix-lwt-symlink: "true"
     secrets: inherit
     strategy:
       matrix:
