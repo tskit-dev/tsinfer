@@ -25,6 +25,7 @@ from __future__ import annotations
 import concurrent.futures as cf
 import dataclasses
 import logging
+import os
 import time as time_
 
 import numpy as np
@@ -36,6 +37,8 @@ import _tsinfer
 from . import grouping, vcz
 
 logger = logging.getLogger(__name__)
+
+_USE_MATCHER2 = os.environ.get("TSINFER_MATCHER") == "matcher2"
 
 
 @dataclasses.dataclass
@@ -250,22 +253,27 @@ class Matcher:
         self._sequence_length = ts.sequence_length
         self._path_compression = path_compression
 
+        self._use_matcher2 = _USE_MATCHER2
         logger.info(
-            "Creating Matcher: ts=%d nodes, %d edges, %.1f MiB, RSS=%.1f MiB",
+            "Creating Matcher (%s): ts=%d nodes, %d edges, %.1f MiB, RSS=%.1f MiB",
+            "AncestorMatcher2" if self._use_matcher2 else "AncestorMatcher",
             ts.num_nodes,
             ts.num_edges,
             ts.nbytes / (1024 * 1024),
             _rss_mib(),
         )
         t0 = time_.monotonic()
-        self._tsb = _tsb_from_ts(
-            ts,
-            self._num_sites,
-            self._positions,
-            num_alleles=num_alleles,
-            allele_mapper=allele_mapper,
-        )
-        logger.info("Create matcher tsb in %.3fs", time_.monotonic() - t0)
+        if self._use_matcher2:
+            self._matcher_indexes = MatcherIndexes(ts, vestigial_root=False)
+        else:
+            self._tsb = _tsb_from_ts(
+                ts,
+                self._num_sites,
+                self._positions,
+                num_alleles=num_alleles,
+                allele_mapper=allele_mapper,
+            )
+        logger.info("Create matcher indexes in %.3fs", time_.monotonic() - t0)
         self._rho = np.full(self._num_sites, 1e-2)
         self._mu = np.full(self._num_sites, 1e-20)
 
@@ -275,9 +283,12 @@ class Matcher:
         pos = self._positions.astype(np.float64)
         seq_len = self._sequence_length
 
-        # Each call gets its own AncestorMatcher so threads don't share state
+        # Each call gets its own matcher so threads don't share state
         t0 = time_.monotonic()
-        matcher = _tsinfer.AncestorMatcher(self._tsb, self._rho, self._mu)
+        if self._use_matcher2:
+            matcher = AncestorMatcher2(self._matcher_indexes, self._rho, self._mu)
+        else:
+            matcher = _tsinfer.AncestorMatcher(self._tsb, self._rho, self._mu)
         t_init = time_.monotonic() - t0
 
         t0 = time_.monotonic()
@@ -508,8 +519,9 @@ def add_vestigial_root(ts):
 class MatcherIndexes(_tsinfer.MatcherIndexes):
     """Wrapper around the C MatcherIndexes, built from a tree sequence."""
 
-    def __init__(self, ts):
-        ts = add_vestigial_root(ts)
+    def __init__(self, ts, *, vestigial_root=True):
+        if vestigial_root:
+            ts = add_vestigial_root(ts)
         tables = ts.dump_tables()
         ll_tables = _tsinfer.LightweightTableCollection(tables.sequence_length)
         ll_tables.fromdict(tables.asdict())
