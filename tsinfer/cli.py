@@ -96,13 +96,14 @@ _config_arg = click.argument(
 
 _runtime_options = [
     click.option(
+        "-t",
         "--threads",
         default=config.DEFAULT_CLI_THREADS,
         show_default=True,
         help="Worker threads.",
     ),
-    click.option("--force", is_flag=True, help="Overwrite existing output files."),
-    click.option("--progress", is_flag=True, help="Show per-step progress bars."),
+    click.option("-f", "--force", is_flag=True, help="Overwrite existing output files."),
+    click.option("-p", "--progress", is_flag=True, help="Show per-step progress bars."),
     click.option("-v", "--verbose", count=True, help="Increase log verbosity."),
     click.option(
         "-l",
@@ -138,6 +139,7 @@ _DEFAULT_ENCODING_NAME = (
 @_config_arg
 @_add_options(_runtime_options)
 @click.option(
+    "-w",
     "--write-threads",
     default=config.DEFAULT_WRITE_THREADS,
     show_default=True,
@@ -203,6 +205,7 @@ def infer_ancestors_cmd(
     help="Keep all intermediate .trees files in workdir.",
 )
 @click.option(
+    "-c",
     "--cache-size",
     default=config.DEFAULT_CACHE_SIZE,
     show_default=True,
@@ -330,6 +333,7 @@ def augment_sites_cmd(
 @main.command("run")
 @_config_arg
 @click.option(
+    "-c",
     "--cache-size",
     default=config.DEFAULT_CACHE_SIZE,
     show_default=True,
