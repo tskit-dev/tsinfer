@@ -28,6 +28,7 @@ import logging
 import time as time_
 
 import numpy as np
+import psutil
 import tskit
 
 import _tsinfer
@@ -63,6 +64,11 @@ class MatchResult:
     mutations: list[Mutation]
 
 
+def _rss_mib():
+    """Return current process RSS in MiB."""
+    return psutil.Process().memory_info().rss / (1024 * 1024)
+
+
 def _tsb_from_ts(
     ts: tskit.TreeSequence,
     num_sites: int,
@@ -75,6 +81,9 @@ def _tsb_from_ts(
     Mutation derived_state values are real allele strings and are
     reverse-mapped to integer codes via ``allele_mapper.encode_mutations``.
     """
+    rss_before = _rss_mib()
+    ts_mib = ts.nbytes / (1024 * 1024)
+
     if num_alleles is None:
         num_alleles = np.full(num_sites, 2, dtype=np.uint64)
     tsb = _tsinfer.TreeSequenceBuilder(num_alleles)
@@ -122,14 +131,23 @@ def _tsb_from_ts(
         )
         t_restore_mutations = time_.monotonic() - t0
 
+    rss_after = _rss_mib()
     logger.info(
         "TSB build: nodes %.3fs; build_edges: %.3fs; restore_edges: %.3fs "
-        "build_mutations: %.3fs; restore_mutations %.3fs",
+        "build_mutations: %.3fs; restore_mutations %.3fs | "
+        "ts=%.1f MiB (%d nodes, %d edges) "
+        "RSS: %.1f -> %.1f MiB (delta=%.1f MiB)",
         t_nodes,
         t_build_edges,
         t_restore_edges,
         t_build_mutations,
         t_restore_mutations,
+        ts_mib,
+        ts.num_nodes,
+        ts.num_edges,
+        rss_before,
+        rss_after,
+        rss_after - rss_before,
     )
 
     tsb.freeze_indexes()
@@ -232,6 +250,13 @@ class Matcher:
         self._sequence_length = ts.sequence_length
         self._path_compression = path_compression
 
+        logger.info(
+            "Creating Matcher: ts=%d nodes, %d edges, %.1f MiB, RSS=%.1f MiB",
+            ts.num_nodes,
+            ts.num_edges,
+            ts.nbytes / (1024 * 1024),
+            _rss_mib(),
+        )
         t0 = time_.monotonic()
         self._tsb = _tsb_from_ts(
             ts,
