@@ -1661,21 +1661,20 @@ static PyTypeObject AncestorMatcherType = {
     (initproc) AncestorMatcher_init,                           /* tp_init */
 };
 
-
 /*===================================================================
  * MatcherIndexes
  *===================================================================
  */
 
 static void
-MatcherIndexes_dealloc(MatcherIndexes* self)
+MatcherIndexes_dealloc(MatcherIndexes *self)
 {
     if (self->matcher_indexes != NULL) {
         /* matcher_indexes_free(self->matcher_indexes); */
         PyMem_Free(self->matcher_indexes);
         self->matcher_indexes = NULL;
     }
-    Py_TYPE(self)->tp_free((PyObject*)self);
+    Py_TYPE(self)->tp_free((PyObject *) self);
 }
 
 static int
@@ -1684,11 +1683,11 @@ MatcherIndexes_init(MatcherIndexes *self, PyObject *args, PyObject *kwds)
     int ret = -1;
     int err;
     LightweightTableCollection *tables;
-    static char *kwlist[] = {"tables", NULL};
+    static char *kwlist[] = { "tables", NULL };
 
     self->matcher_indexes = NULL;
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!", kwlist,
-            &LightweightTableCollectionType, &tables)) {
+    if (!PyArg_ParseTupleAndKeywords(
+            args, kwds, "O!", kwlist, &LightweightTableCollectionType, &tables)) {
         goto out;
     }
     if (LightweightTableCollection_check_state(tables) != 0) {
@@ -1721,7 +1720,6 @@ MatcherIndexes_check_state(MatcherIndexes *self)
     return ret;
 }
 
-
 static PyObject *
 MatcherIndexes_print_state(MatcherIndexes *self, PyObject *args)
 {
@@ -1748,11 +1746,10 @@ out:
     return ret;
 }
 
-
 static PyMethodDef MatcherIndexes_methods[] = {
-    {"print_state", (PyCFunction) MatcherIndexes_print_state,
-        METH_VARARGS, "Low-level debug method"},
-    {NULL}  /* Sentinel */
+    { "print_state", (PyCFunction) MatcherIndexes_print_state, METH_VARARGS,
+        "Low-level debug method" },
+    { NULL } /* Sentinel */
 };
 
 static PyTypeObject MatcherIndexesType = {
@@ -1768,7 +1765,6 @@ static PyTypeObject MatcherIndexesType = {
     .tp_new = PyType_GenericNew,
     // clang-format on
 };
-
 
 /*===================================================================
  * AncestorMatcher2
@@ -1787,7 +1783,7 @@ AncestorMatcher2_check_state(AncestorMatcher2 *self)
 }
 
 static void
-AncestorMatcher2_dealloc(AncestorMatcher2* self)
+AncestorMatcher2_dealloc(AncestorMatcher2 *self)
 {
     if (self->ancestor_matcher != NULL) {
         ancestor_matcher2_free(self->ancestor_matcher);
@@ -1795,7 +1791,7 @@ AncestorMatcher2_dealloc(AncestorMatcher2* self)
         self->ancestor_matcher = NULL;
     }
     Py_XDECREF(self->matcher_indexes);
-    Py_TYPE(self)->tp_free((PyObject*)self);
+    Py_TYPE(self)->tp_free((PyObject *) self);
 }
 
 static int
@@ -1804,8 +1800,8 @@ AncestorMatcher2_init(AncestorMatcher2 *self, PyObject *args, PyObject *kwds)
     int ret = -1;
     int err;
     int extended_checks = 0;
-    static char *kwlist[] = {"matcher_indexes", "recombination",
-        "mismatch", "precision", "extended_checks", NULL};
+    static char *kwlist[] = { "matcher_indexes", "recombination", "mismatch",
+        "precision", "extended_checks", NULL };
     MatcherIndexes *matcher_indexes = NULL;
     PyObject *recombination = NULL;
     PyObject *mismatch = NULL;
@@ -1817,10 +1813,8 @@ AncestorMatcher2_init(AncestorMatcher2 *self, PyObject *args, PyObject *kwds)
 
     self->ancestor_matcher = NULL;
     self->matcher_indexes = NULL;
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!OO|Ii", kwlist,
-                &MatcherIndexesType, &matcher_indexes,
-                &recombination, &mismatch, &precision,
-                &extended_checks)) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!OO|Ii", kwlist, &MatcherIndexesType,
+            &matcher_indexes, &recombination, &mismatch, &precision, &extended_checks)) {
         goto out;
     }
     self->matcher_indexes = matcher_indexes;
@@ -1830,20 +1824,18 @@ AncestorMatcher2_init(AncestorMatcher2 *self, PyObject *args, PyObject *kwds)
     }
 
     recombination_array = (PyArrayObject *) PyArray_FromAny(recombination,
-            PyArray_DescrFromType(NPY_FLOAT64), 1, 1,
-            NPY_ARRAY_IN_ARRAY, NULL);
+        PyArray_DescrFromType(NPY_FLOAT64), 1, 1, NPY_ARRAY_IN_ARRAY, NULL);
     if (recombination_array == NULL) {
         goto out;
     }
     shape = PyArray_DIMS(recombination_array);
     if (shape[0] != (npy_intp) matcher_indexes->matcher_indexes->num_sites) {
-        PyErr_SetString(PyExc_ValueError,
-                "Size of recombination array must be num_sites");
+        PyErr_SetString(
+            PyExc_ValueError, "Size of recombination array must be num_sites");
         goto out;
     }
-    mismatch_array = (PyArrayObject *) PyArray_FromAny(mismatch,
-            PyArray_DescrFromType(NPY_FLOAT64), 1, 1,
-            NPY_ARRAY_IN_ARRAY, NULL);
+    mismatch_array = (PyArrayObject *) PyArray_FromAny(
+        mismatch, PyArray_DescrFromType(NPY_FLOAT64), 1, 1, NPY_ARRAY_IN_ARRAY, NULL);
     if (mismatch_array == NULL) {
         goto out;
     }
@@ -1862,10 +1854,8 @@ AncestorMatcher2_init(AncestorMatcher2 *self, PyObject *args, PyObject *kwds)
         flags = TSI_EXTENDED_CHECKS;
     }
     err = ancestor_matcher2_alloc(self->ancestor_matcher,
-            self->matcher_indexes->matcher_indexes,
-            PyArray_DATA(recombination_array),
-            PyArray_DATA(mismatch_array),
-            precision, flags);
+        self->matcher_indexes->matcher_indexes, PyArray_DATA(recombination_array),
+        PyArray_DATA(mismatch_array), precision, flags);
     if (err != 0) {
         handle_library_error(err);
         goto out;
@@ -1882,7 +1872,7 @@ AncestorMatcher2_find_path(AncestorMatcher2 *self, PyObject *args, PyObject *kwd
 {
     int err;
     PyObject *ret = NULL;
-    static char *kwlist[] = {"haplotype", "start", "end", NULL};
+    static char *kwlist[] = { "haplotype", "start", "end", NULL };
     PyObject *haplotype = NULL;
     PyArrayObject *haplotype_array = NULL;
     npy_intp *shape;
@@ -1897,12 +1887,12 @@ AncestorMatcher2_find_path(AncestorMatcher2 *self, PyObject *args, PyObject *kwd
     if (AncestorMatcher2_check_state(self) != 0) {
         goto out;
     }
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "Oii", kwlist,
-                &haplotype, &start, &end)) {
+    if (!PyArg_ParseTupleAndKeywords(
+            args, kwds, "Oii", kwlist, &haplotype, &start, &end)) {
         goto out;
     }
-    haplotype_array = (PyArrayObject *) PyArray_FROM_OTF(haplotype, NPY_INT8,
-            NPY_ARRAY_IN_ARRAY);
+    haplotype_array
+        = (PyArrayObject *) PyArray_FROM_OTF(haplotype, NPY_INT8, NPY_ARRAY_IN_ARRAY);
     if (haplotype_array == NULL) {
         goto out;
     }
@@ -1926,16 +1916,17 @@ AncestorMatcher2_find_path(AncestorMatcher2 *self, PyObject *args, PyObject *kwd
     }
 
     Py_BEGIN_ALLOW_THREADS
-    err = ancestor_matcher2_find_path(self->ancestor_matcher,
-            (tsk_id_t) start, (tsk_id_t) end, (allele_t *) PyArray_DATA(haplotype_array),
-            (allele_t *) PyArray_DATA(match),
-            &num_edges, PyArray_DATA(left), PyArray_DATA(right), PyArray_DATA(parent));
+    err = ancestor_matcher2_find_path(self->ancestor_matcher, (tsk_id_t) start,
+        (tsk_id_t) end, (allele_t *) PyArray_DATA(haplotype_array),
+        (allele_t *) PyArray_DATA(match), &num_edges, PyArray_DATA(left),
+        PyArray_DATA(right), PyArray_DATA(parent));
     Py_END_ALLOW_THREADS
     if (err != 0) {
         handle_library_error(err);
         goto out;
     }
-    ret = Py_BuildValue("(kOOOO)", (unsigned long) num_edges, left, right, parent, match);
+    ret = Py_BuildValue(
+        "(kOOOO)", (unsigned long) num_edges, left, right, parent, match);
     if (ret == NULL) {
         goto out;
     }
@@ -2008,8 +1999,8 @@ AncestorMatcher2_get_mean_traceback_size(AncestorMatcher2 *self, void *closure)
     if (AncestorMatcher2_check_state(self) != 0) {
         goto out;
     }
-    ret = Py_BuildValue("d", ancestor_matcher2_get_mean_traceback_size(
-                self->ancestor_matcher));
+    ret = Py_BuildValue(
+        "d", ancestor_matcher2_get_mean_traceback_size(self->ancestor_matcher));
 out:
     return ret;
 }
@@ -2022,30 +2013,28 @@ AncestorMatcher2_get_total_memory(AncestorMatcher2 *self, void *closure)
     if (AncestorMatcher2_check_state(self) != 0) {
         goto out;
     }
-    ret = Py_BuildValue("k", (unsigned long)
-            ancestor_matcher2_get_total_memory(self->ancestor_matcher));
+    ret = Py_BuildValue(
+        "k", (unsigned long) ancestor_matcher2_get_total_memory(self->ancestor_matcher));
 out:
     return ret;
 }
 
-
 static PyGetSetDef AncestorMatcher2_getsetters[] = {
-    {"mean_traceback_size", (getter) AncestorMatcher2_get_mean_traceback_size,
-        NULL, "The mean size of the traceback per site."},
-    {"total_memory", (getter) AncestorMatcher2_get_total_memory,
-        NULL, "The total amount of memory used by this matcher."},
-    {NULL}  /* Sentinel */
+    { "mean_traceback_size", (getter) AncestorMatcher2_get_mean_traceback_size, NULL,
+        "The mean size of the traceback per site." },
+    { "total_memory", (getter) AncestorMatcher2_get_total_memory, NULL,
+        "The total amount of memory used by this matcher." },
+    { NULL } /* Sentinel */
 };
 
 static PyMethodDef AncestorMatcher2_methods[] = {
-    {"find_path", (PyCFunction) AncestorMatcher2_find_path,
-        METH_VARARGS|METH_KEYWORDS,
-        "Returns a best match path for the specified haplotype through the ancestors."},
-    {"get_traceback", (PyCFunction) AncestorMatcher2_get_traceback,
-        METH_VARARGS, "Returns the traceback likelihood dictionary at the specified site."},
-    {NULL}  /* Sentinel */
+    { "find_path", (PyCFunction) AncestorMatcher2_find_path,
+        METH_VARARGS | METH_KEYWORDS,
+        "Returns a best match path for the specified haplotype through the ancestors." },
+    { "get_traceback", (PyCFunction) AncestorMatcher2_get_traceback, METH_VARARGS,
+        "Returns the traceback likelihood dictionary at the specified site." },
+    { NULL } /* Sentinel */
 };
-
 
 static PyTypeObject AncestorMatcher2Type = {
     // clang-format off
