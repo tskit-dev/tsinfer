@@ -7,7 +7,7 @@ from setuptools import Extension, setup
 IS_WINDOWS = platform.system() == "Windows"
 
 libdir = "lib"
-tskroot = os.path.join(libdir, "subprojects", "tskit")
+tskroot = os.path.join("git-submodules", "tskit", "c")
 tskdir = os.path.join(tskroot, "tskit")
 kasdir = os.path.join(tskroot, "subprojects", "kastore")
 includes = [libdir, tskroot, tskdir, kasdir]
