@@ -23,7 +23,7 @@ tsi_source_files = [
 ]
 # We're not actually using very much of tskit at the moment, so
 # just build the stuff we need.
-tsk_source_files = ["core.c", "tables.c", "trees.c"]
+tsk_source_files = ["core.c", "tables.c", "trees.c", "genotypes.c"]
 kas_source_files = ["kastore.c"]
 
 sources = (
