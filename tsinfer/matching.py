@@ -342,6 +342,7 @@ def extend_ts(
     *,
     paired_results: list[tuple[grouping.MatchJob, MatchResult]],
     allele_mapper: vcz.AlleleMapper,
+    provenance_record: str | None = None,
 ) -> tskit.TreeSequence:
     """
     Extend ts with the match results for one group.
@@ -416,6 +417,9 @@ def extend_ts(
     t0 = time_.monotonic()
     tables.compute_mutation_parents()
     t_mut_parents = time_.monotonic() - t0
+
+    if provenance_record is not None:
+        tables.provenances.add_row(record=provenance_record)
 
     t0 = time_.monotonic()
     result_ts = tables.tree_sequence()
