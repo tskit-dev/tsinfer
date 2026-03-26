@@ -1,3 +1,4 @@
+include lwt_interface/*.h
 include lib/*.h
 include lib/subprojects/tskit/c/*.h
 include lib/subprojects/tskit/c/tskit/*.h
