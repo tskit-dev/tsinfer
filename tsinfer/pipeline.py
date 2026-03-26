@@ -352,9 +352,9 @@ def _process_group(
     allele_mapper,
     reader,
     num_threads: int,
-    progress_desc: str | None,
     match_fh,
     config_str: str,
+    progress: bool,
 ) -> tskit.TreeSequence:
     """Match one group of haplotypes and return the extended tree sequence."""
     with provenance.TimingAndMemory() as tm:
@@ -367,13 +367,12 @@ def _process_group(
         )
         job_list = [job for _, job in group_jobs]
         match_iter = m.match(job_list, reader, num_threads=num_threads)
-        pbar = None
-        if progress_desc is not None:
-            pbar = tqdm.tqdm(
-                total=len(job_list),
-                desc=progress_desc,
-                unit="haplotypes",
-            )
+        pbar = tqdm.tqdm(
+            total=len(job_list),
+            desc="Group {group_idx}",
+            unit="haplotypes",
+            disable=not progress,
+        )
         results = []
         for job, result in match_iter:
             if match_fh is not None:
@@ -395,10 +394,8 @@ def _process_group(
                 }
                 match_fh.write(json.dumps(doc) + "\n")
             results.append((job, result))
-            if pbar is not None:
-                pbar.update(1)
-        if pbar is not None:
-            pbar.close()
+            pbar.update(1)
+        pbar.close()
         paired_results = sorted(results, key=lambda pair: pair[0].haplotype_index)
 
     prov_dict = provenance.get_provenance_dict(
@@ -563,8 +560,9 @@ def match(
             break
 
         reader.log_cache_state()
-        group_label = f"Group {group_idx + 1}/{num_groups}"
-        logger.info("%s: %d haplotypes", group_label, num_in_group)
+        logger.info(
+            "Group index %d (%d): %d haplotypes", group_idx, num_groups, num_in_group
+        )
 
         ts = _process_group(
             ts,
@@ -575,9 +573,9 @@ def match(
             allele_mapper=allele_mapper,
             reader=reader,
             num_threads=num_threads,
-            progress_desc=group_label if progress else None,
             match_fh=match_fh,
             config_str=config_str,
+            progress=progress,
         )
         completed_haps += num_in_group
         logger.info(
