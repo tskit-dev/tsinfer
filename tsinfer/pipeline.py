@@ -369,7 +369,7 @@ def _process_group(
         match_iter = m.match(job_list, reader, num_threads=num_threads)
         pbar = tqdm.tqdm(
             total=len(job_list),
-            desc="Group {group_idx}",
+            desc=f"Group {group_idx}",
             unit="haplotypes",
             disable=not progress,
         )
