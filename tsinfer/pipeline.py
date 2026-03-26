@@ -502,8 +502,8 @@ def match(
         if progress:
             pbar = tqdm.tqdm(
                 total=len(job_list),
-                desc=f"Group {gi + 1}/{num_groups}",
-                unit="haplotypes",
+                desc=f"Group {gi} ({num_groups})",
+                unit="haps",
             )
         results = []
         for job, result in match_iter:
