@@ -48,6 +48,7 @@ import pathlib
 import queue
 import threading
 import time as _time
+import warnings
 from typing import Any
 
 import numpy as np
@@ -2088,8 +2089,6 @@ class HaplotypeReader:
                 chunks_fit,
             )
             if cb > 0 and chunks_fit < 2:
-                import warnings
-
                 warnings.warn(
                     f"Cache can hold fewer than 2 chunks from source "
                     f"'{name}' (chunk={cb / (1024 * 1024):.1f} MiB, "

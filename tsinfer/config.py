@@ -41,8 +41,8 @@ FieldSpec = str | dict | int | float | None
 # Default constants
 # ---------------------------------------------------------------------------
 DEFAULT_MAX_GAP_LENGTH = 500_000
-DEFAULT_SAMPLES_CHUNK_SIZE = 1000
-DEFAULT_VARIANTS_CHUNK_SIZE = 1000
+DEFAULT_SAMPLES_CHUNK_SIZE = 100
+DEFAULT_VARIANTS_CHUNK_SIZE = 50_000
 DEFAULT_GENOTYPE_ENCODING = 0  # 0 = eight-bit, 1 = one-bit
 DEFAULT_COMPRESSOR = "zstd"
 DEFAULT_COMPRESSION_LEVEL = 7
