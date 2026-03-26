@@ -49,22 +49,17 @@ keywords = [
 ]
 dependencies = [
     "numpy>=2",
+    "numba",
+    "psutil",
     "tqdm",
     "humanize",
     "daiquiri",
     "tskit>=1.0.0",
-    "zarr<3",
-    "lmdb",
-    "sortedcontainers",
-    "numba",
-    "psutil",
+    "zarr>=3",
+    "bio2zarr",
+    "click",
+    "vcztools>=0.1.2",
 ]
-
-# TODO add these as pypi extra installs. We'd need to install
-# libnuma on the test build to support this.
-# https://github.com/tskit-dev/tsinfer/issues/1085
-# "python-prctl; sys_platform == 'linux'",
-# "numa; sys_platform == 'linux'",
 
 [project.urls]
 Homepage = "https://tskit.dev/tsinfer"
@@ -74,7 +69,7 @@ Changelog = "https://tskit.dev/tsinfer/docs/stable/CHANGELOG.html"
 "Source Code" = "https://github.com/tskit-dev/tsinfer/"
 
 [project.scripts]
-tsinfer = "tsinfer.__main__:main"
+tsinfer = "tsinfer.cli:main"
 
 [dependency-groups]
 test = [
@@ -85,6 +80,7 @@ test = [
     "pytest-cov",
     "pytest-xdist",
     "xarray",
+    "pandas",
 ]
 
 docs = [
@@ -129,7 +125,8 @@ include-package-data = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 filterwarnings = [
-    'ignore:SampleData'
+    "ignore::zarr.errors.ZarrDeprecationWarning",
+    "ignore::zarr.errors.ZarrUserWarning",
 ]
 
 [tool.ruff]
@@ -160,7 +157,7 @@ fixable = ["ALL"]
 unfixable = []
 
 [tool.ruff.lint.isort]
-known-first-party = ["_tsinfer", "tsutil"]
+known-first-party = ["_tsinfer"]
 known-third-party = [
   "msprime",
   "numpy",
@@ -180,8 +177,6 @@ build-verbosity = 1
 archs = ["x86_64"]
 skip = ["*musllinux*"]
 
-# We can only install reasonably on linux because of numba.
-# FIXME: https://github.com/tskit-dev/tsinfer/issues/1097
 test-command = [
   "python -c \"import _tsinfer\"",
   "tsinfer --help",

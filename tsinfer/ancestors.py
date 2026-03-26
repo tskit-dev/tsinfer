@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2023 University of Oxford
+# Copyright (C) 2018-2026 University of Oxford
 #
 # This file is part of tsinfer.
 #
@@ -17,202 +17,728 @@
 # along with tsinfer.  If not, see <http://www.gnu.org/licenses/>.
 #
 """
-Ancestor handling routines.
+Ancestor generation: builds the ancestor VCZ store from a samples VCZ store.
 """
 
-import logging
-import time as time_
+from __future__ import annotations
 
-import numba
+import concurrent.futures
+import dataclasses
+import logging
+import os
+import pathlib
+import time
+
+import numcodecs
 import numpy as np
+import psutil
+import tqdm as tqdm_mod
+import zarr
+
+import _tsinfer
+
+from . import config
+from . import grouping as grouping_mod
+from . import vcz as vcz_mod
 
 logger = logging.getLogger(__name__)
 
 
-def merge_overlapping_ancestors(start, end, time):
-    # Merge overlapping, same-time ancestors. We do this by scanning along a single
-    # time epoch from left to right, detecting breaks.
-    sort_indices = np.lexsort((start, time))
-    start = start[sort_indices]
-    end = end[sort_indices]
-    time = time[sort_indices]
-    old_indexes = {}
-    # For efficiency, pre-allocate the output arrays to the maximum possible size.
-    new_start = np.full_like(start, -1)
-    new_end = np.full_like(end, -1)
-    new_time = np.full_like(time, -1)
-
-    i = 0
-    new_index_pos = 0
-    while i < len(start):
-        j = i + 1
-        group_overlap = [i]
-        max_right = end[i]
-        # While we're in the same time epoch, and the next ancestor
-        # overlaps with the group, add this ancestor to the group.
-        while j < len(start) and time[j] == time[i] and start[j] < max_right:
-            max_right = max(max_right, end[j])
-            group_overlap.append(j)
-            j += 1
-
-        # Emit the found group
-        old_indexes[new_index_pos] = group_overlap
-        new_start[new_index_pos] = start[i]
-        new_end[new_index_pos] = max_right
-        new_time[new_index_pos] = time[i]
-        new_index_pos += 1
-        i = j
-    # Trim the output arrays to the actual size.
-    new_start = new_start[:new_index_pos]
-    new_end = new_end[:new_index_pos]
-    new_time = new_time[:new_index_pos]
-    return new_start, new_end, new_time, old_indexes, sort_indices
+def _memory_usage_mb():
+    """Return current RSS in MiB."""
+    return psutil.Process().memory_info().rss / (1024 * 1024)
 
 
-@numba.njit
-def run_linesweep(event_times, event_index, event_type, new_time):
-    # Run the linesweep over the ancestor start-stop events,
-    # building up the dependency graph as a count of dependencies for each ancestor,
-    # and a list of dependant children for each ancestor.
-    n = len(new_time)
-
-    # numba really likes to know the type of the list elements, so we tell it by adding
-    # a dummy element to the list and then popping it off.
-    # `active` is the list of ancestors that overlap with the current linesweep position.
-    active = [-1]
-    active.pop()
-    children = [[-1] for _ in range(n)]
-    for c in range(n):
-        children[c].pop()
-    incoming_edge_count = np.zeros(n, dtype=np.int32)
-    for i in range(len(event_times)):
-        index = event_index[i]
-        e_time = event_times[i]
-        if event_type[i] == 1:
-            for j in active:
-                if new_time[j] > e_time:
-                    incoming_edge_count[index] += 1
-                    children[j].append(index)
-                elif new_time[j] < e_time:
-                    incoming_edge_count[j] += 1
-                    children[index].append(j)
-            active.append(index)
-        else:
-            active.remove(index)
-
-    # Convert children to ragged array format so we can pass arrays to the
-    # next numba function, `find_groups`.
-    children_data = []
-    children_indices = [0]
-    for child_list in children:
-        children_data.extend(child_list)
-        children_indices.append(len(children_data))
-    children_data = np.array(children_data, dtype=np.int32)
-    children_indices = np.array(children_indices, dtype=np.int32)
-    return children_data, children_indices, incoming_edge_count
+@dataclasses.dataclass
+class InferenceSites:
+    positions: np.ndarray
+    alleles: np.ndarray
+    ancestral_allele_index: np.ndarray
 
 
-@numba.njit
-def find_groups(children_data, children_indices, incoming_edge_count):
-    # We find groups of ancestors that can be matched in parallel by topologically
-    # sorting the dependency graph. We do this by deconstructing the graph, removing
-    # nodes with no incoming edges, and adding them to a group.
-    n = len(children_indices) - 1
-    group_id = np.full(n, -1, dtype=np.int32)
-    current_group = 0
-    while True:
-        # Find the nodes with no incoming edges
-        no_incoming = np.where(incoming_edge_count == 0)[0]
-        if len(no_incoming) == 0:
-            break
-        # Remove them from the graph
-        for i in no_incoming:
-            incoming_edge_count[i] = -1
-            incoming_edge_count[
-                children_data[children_indices[i] : children_indices[i + 1]]
-            ] -= 1
-        # Add them to the group
-        group_id[no_incoming] = current_group
-        current_group += 1
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
 
-    # Check for unassigned nodes (cycles in dependency graph)
-    if np.any(group_id == -1):
-        raise ValueError(
-            "Erroneous cycle in ancestor dependancies, this is often "
-            "caused by too many unique site times. This fixed by discretising "
-            "the site times, for example rounding times to the nearest 0.1."
+
+def _assign_site_intervals(positions, intervals):
+    """
+    For each position return the index of the interval that contains it.
+
+    Intervals are half-open [start, end) pairs.  Returns -1 for any position
+    that is not inside any interval (should not happen for inference sites).
+    """
+    result = np.full(len(positions), -1, dtype=np.int32)
+    for i_idx in range(len(intervals)):
+        s, e = int(intervals[i_idx, 0]), int(intervals[i_idx, 1])
+        mask = (positions >= s) & (positions < e)
+        result[mask] = i_idx
+    return result
+
+
+def _compute_site_stats(genotype_iter, num_sites, num_haplotypes, progress=False):
+    """
+    Pass 1: iterate over inference-site genotypes, compute derived genotype
+    stats for each site, filter out fixed/all-missing.
+
+    Returns (keep_mask, times) where:
+    - keep_mask: boolean array of length num_sites
+    - times: float64 array of length sum(keep_mask)
+    """
+    keep_mask = np.zeros(num_sites, dtype=bool)
+    times_list = []
+
+    site_iter = tqdm_mod.tqdm(
+        genotype_iter,
+        total=num_sites,
+        desc="Pass 1: site stats",
+        unit="sites",
+        disable=not progress,
+    )
+
+    for i, derived_gt in enumerate(site_iter):
+        derived_count = int(np.sum(derived_gt == 1))
+        n_non_missing = int(np.sum(derived_gt >= 0))
+
+        if n_non_missing == 0 or derived_count == 0 or derived_count == n_non_missing:
+            continue
+
+        keep_mask[i] = True
+        times_list.append(derived_count / num_haplotypes)
+
+    times = (
+        np.array(times_list, dtype=np.float64)
+        if times_list
+        else np.zeros(0, dtype=np.float64)
+    )
+    return keep_mask, times
+
+
+# ---------------------------------------------------------------------------
+# Public functions
+# ---------------------------------------------------------------------------
+
+
+def compute_inference_sites(
+    store: zarr.Group,
+    ancestral_state: config.AncestralState,
+    *,
+    include: str | None = None,
+    exclude: str | None = None,
+    regions: str | None = None,
+    targets: str | None = None,
+):
+    """
+    Return an InferenceSites dataclass for sites that pass filtering and
+    have a valid ancestral allele.
+
+    Variant filtering (include/exclude/regions/targets) is delegated to
+    vcztools via ``iter_variants``.
+    """
+    # Detect duplicate positions upfront so we can skip them
+    positions = np.asarray(store["variant_position"][:], dtype=np.int32)
+    dup_positions = vcz_mod._find_duplicate_positions(positions)
+
+    # Build ancestral state lookup
+    ann_store = vcz_mod.open_store(ancestral_state.path)
+    ann_positions = np.asarray(ann_store["variant_position"][:])
+    ann_values = np.asarray(ann_store[ancestral_state.field][:])
+    ann_lookup = {
+        int(k): str(v) for k, v in zip(ann_positions.tolist(), ann_values.tolist())
+    }
+
+    # Iterate variants that pass vcztools filters, collecting metadata
+    fields = ["variant_position", "variant_allele"]
+
+    pos_list = []
+    allele_list = []
+    anc_idx_list = []
+    num_filtered = 0
+    num_no_ancestral = 0
+    num_duplicate = 0
+
+    for variant in vcz_mod.iter_variants(
+        store,
+        fields=fields,
+        include=include,
+        exclude=exclude,
+        regions=regions,
+        targets=targets,
+    ):
+        num_filtered += 1
+        pos = int(variant["variant_position"])
+
+        if pos in dup_positions:
+            num_duplicate += 1
+            continue
+
+        site_alleles = variant["variant_allele"]
+
+        anc_str = ann_lookup.get(pos, "")
+
+        # Find ancestral allele index
+        anc_idx = -1
+        for j, a in enumerate(site_alleles.tolist()):
+            if a is not None and a != "" and a == anc_str:
+                anc_idx = j
+                break
+
+        if anc_idx < 0:
+            num_no_ancestral += 1
+            continue
+
+        pos_list.append(pos)
+        allele_list.append(site_alleles)
+        anc_idx_list.append(anc_idx)
+
+    logger.info(
+        "Sites passing variant filters: %d; skipped %d (no ancestral allele match)"
+        ", %d (duplicate positions)",
+        num_filtered,
+        num_no_ancestral,
+        num_duplicate,
+    )
+
+    if not pos_list:
+        return InferenceSites(
+            positions=np.zeros(0, dtype=np.int32),
+            alleles=np.zeros((0, 0), dtype=object),
+            ancestral_allele_index=np.zeros(0, dtype=np.int8),
         )
-    return group_id
+
+    return InferenceSites(
+        positions=np.array(pos_list, dtype=np.int32),
+        alleles=np.stack(allele_list),
+        ancestral_allele_index=np.array(anc_idx_list, dtype=np.int8),
+    )
 
 
-def group_ancestors_by_linesweep(start, end, time):
-    # For a given set of ancestors, we want to group them for matching in parallel.
-    # For each ancestor, any overlapping, older ancestors must be in an earlier group,
-    # and any overlapping, younger ancestors in a later group. Any overlapping same-age
-    # ancestors must be in the same group so they don't match to each other.
-    # We do this by first merging the overlapping same-age ancestors. Then build a
-    # dependency graph of the ancestors by linesweep. Then form groups by topological
-    # sort. Finally, we un-merge the same-age ancestors.
+def compute_sequence_intervals(
+    positions,
+    sequence_length: int,
+    max_gap_length: int,
+) -> np.ndarray:
+    """
+    Return an (n_intervals, 2) int32 array of [start, end) pairs for regions
+    containing inference sites, splitting where consecutive positions are more
+    than max_gap_length apart.
 
-    assert len(start) == len(end)
-    assert len(start) == len(time)
-    t = time_.time()
-    (
-        new_start,
-        new_end,
-        new_time,
-        old_indexes,
-        sort_indices,
-    ) = merge_overlapping_ancestors(start, end, time)
-    logger.info(f"Merged to {len(new_start)} ancestors in {time_.time() - t:.2f}s")
+    start is the genomic position of the first inference site in the interval;
+    end is the last position + 1 (Python half-open convention).
+    """
+    positions = np.asarray(positions, dtype=np.int32)
+    n = len(positions)
+    if n == 0:
+        return np.zeros((0, 2), dtype=np.int32)
 
-    # Build a list of events for the linesweep
-    t = time_.time()
-    n = len(new_time)
-    # Create events arrays by copying and concatenating inputs
-    event_times = np.concatenate([new_time, new_time])
-    event_pos = np.concatenate([new_start, new_end])
-    event_index = np.concatenate([np.arange(n), np.arange(n)])
-    event_type = np.concatenate([np.ones(n, dtype=np.int8), np.zeros(n, dtype=np.int8)])
-    # Sort events by position, then ends before starts
-    event_sort_indices = np.lexsort((event_type, event_pos))
-    event_times = event_times[event_sort_indices]
-    event_index = event_index[event_sort_indices]
-    event_type = event_type[event_sort_indices]
-    logger.info(f"Built {len(event_times)} events in {time_.time() - t:.2f}s")
+    intervals = []
+    start_pos = int(positions[0])
+    prev_pos = int(positions[0])
 
-    t = time_.time()
-    children_data, children_indices, incoming_edge_count = run_linesweep(
-        event_times, event_index, event_type, new_time
+    for i in range(1, n):
+        cur_pos = int(positions[i])
+        if cur_pos - prev_pos > max_gap_length:
+            intervals.append([start_pos, prev_pos + 1])
+            start_pos = cur_pos
+        prev_pos = cur_pos
+
+    intervals.append([start_pos, prev_pos + 1])
+    return np.array(intervals, dtype=np.int32)
+
+
+@dataclasses.dataclass
+class Ancestor:
+    """
+    A single ancestor haplotype, storing only the active fragment.
+
+    The haplotype covers only the site index range
+    ``[start_site_idx, end_site_idx)``; all other sites are implicitly
+    missing (-1).  Call :meth:`expand_haplotype` to materialise the
+    full-length array (done at flush time in :class:`AncestorWriter`).
+    """
+
+    index: int
+    time: float
+    haplotype: np.ndarray  # fragment: sites[start_site_idx:end_site_idx]
+    focal_positions: np.ndarray
+    start_site_idx: int  # global site index, inclusive
+    end_site_idx: int  # global site index, exclusive
+    start_position: int  # genomic position
+    end_position: int  # genomic position
+
+    def expand_haplotype(self, num_sites):
+        """Return a full-length haplotype array with missing = -1."""
+        full = np.full(num_sites, np.int8(-1), dtype=np.int8)
+        full[self.start_site_idx : self.end_site_idx] = self.haplotype
+        return full
+
+
+def _apply_site_stats(genotype_iter, inf_sites, num_haplotypes, progress):
+    """
+    Run Pass 1: compute site stats and filter sites.
+
+    Returns (final_positions, final_alleles, final_anc_indices, times).
+    """
+    t0 = time.monotonic()
+    logger.info("Pass 1: computing site stats")
+    keep_mask, times = _compute_site_stats(
+        genotype_iter, len(inf_sites.positions), num_haplotypes, progress=progress
+    )
+
+    final_positions = inf_sites.positions[keep_mask]
+    final_alleles = inf_sites.alleles[keep_mask]
+    final_anc_indices = inf_sites.ancestral_allele_index[keep_mask]
+
+    num_inf = len(final_positions)
+    num_dropped = len(inf_sites.positions) - num_inf
+    elapsed = time.monotonic() - t0
+    logger.info(
+        "Pass 1 complete: %d sites kept, %d dropped (fixed or all-missing)"
+        " in %.1fs (RSS=%.1fMiB)",
+        num_inf,
+        num_dropped,
+        elapsed,
+        _memory_usage_mb(),
+    )
+    if num_inf > 0:
+        logger.info(
+            "Inference site range: %d–%d",
+            int(final_positions[0]),
+            int(final_positions[-1]),
+        )
+
+    return final_positions, final_alleles, final_anc_indices, times
+
+
+def _compute_bounds(ab, focal_sites, j, anc_time, local_mask, final_positions, n_local):
+    """Compute ancestor bounds via make_ancestor (thread-safe)."""
+    temp = np.empty(n_local, dtype=np.int8)
+    start_local, end_local = ab.make_ancestor(focal_sites, temp)
+    start_pos = int(final_positions[int(local_mask[start_local])])
+    end_pos = int(final_positions[int(local_mask[end_local - 1])])
+    return j, anc_time, start_pos, end_pos
+
+
+def _process_interval(
+    view,
+    i_idx,
+    local_mask,
+    final_positions,
+    times,
+    num_haplotypes,
+    cfg,
+    zarr_root,
+    num_threads,
+    write_threads,
+    ancestor_index,
+    progress,
+    compressor,
+    genotype_encoding,
+):
+    """
+    Process a single sequence interval: load genotypes, build ancestors.
+
+    Two sub-passes within each interval:
+      1. Bounds pass — call make_ancestor to get (start, end) for each
+         ancestor, then compute per-partition grouping order.
+      2. Write pass — submit ancestors to AncestorWriter in grouping order.
+
+    Returns (updated_ancestor_index, interval_focal_positions).
+    """
+    n_local = len(local_mask)
+    local_positions = final_positions[local_mask]
+    local_times = times[local_mask]
+    n_ab_sites = n_local
+    ab = _tsinfer.AncestorBuilder(
+        num_samples=num_haplotypes,
+        max_sites=n_ab_sites,
+        genotype_encoding=genotype_encoding,
+    )
+
+    genotype_iter = view.iter_genotypes(local_positions)
+    gt_iter = tqdm_mod.tqdm(
+        genotype_iter,
+        total=n_local,
+        desc=f"Interval {i_idx}: loading sites",
+        unit="sites",
+        disable=not progress,
+    )
+    for j, var in enumerate(gt_iter):
+        derived_gt = np.where(var.genotypes > 0, np.int8(1), var.genotypes)
+        ab.add_site(time=float(local_times[j]), genotypes=derived_gt)
+
+    ancestor_descriptors = list(ab.ancestor_descriptors())
+    ab_mem_mb = ab.mem_size / (1024 * 1024)
+    n_ancestors = len(ancestor_descriptors)
+    logger.info(
+        "Interval %d: %d sites (%d–%d), %d ancestors (builder=%.1fMiB, RSS=%.1fMiB)",
+        i_idx,
+        n_local,
+        int(local_positions[0]),
+        int(local_positions[-1]),
+        n_ancestors,
+        ab_mem_mb,
+        _memory_usage_mb(),
+    )
+
+    if n_ancestors == 0:
+        return ancestor_index, []
+
+    # --- Bounds sub-pass: get (start, end) for each ancestor ---
+    t_bounds = time.monotonic()
+    anc_starts = np.empty(n_ancestors, dtype=np.int32)
+    anc_ends = np.empty(n_ancestors, dtype=np.int32)
+    anc_times = np.empty(n_ancestors, dtype=np.float64)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(num_threads, 1)) as pool:
+        futures = {
+            pool.submit(
+                _compute_bounds,
+                ab,
+                focal_sites,
+                j,
+                anc_time,
+                local_mask,
+                final_positions,
+                n_local,
+            ): j
+            for j, (anc_time, focal_sites) in enumerate(ancestor_descriptors)
+        }
+        results = []
+        pbar = tqdm_mod.tqdm(
+            total=n_ancestors,
+            desc=f"Interval {i_idx}: bounds",
+            unit="haps",
+            disable=not progress,
+        )
+        for fut in concurrent.futures.as_completed(futures):
+            results.append(fut.result())
+            pbar.update(1)
+        pbar.close()
+
+    results.sort(key=lambda r: r[0])
+    for j, anc_time, start_pos, end_pos in results:
+        anc_times[j] = anc_time
+        anc_starts[j] = start_pos
+        anc_ends[j] = end_pos
+
+    logger.info(
+        "Interval %d: bounds pass %.3fs",
+        i_idx,
+        time.monotonic() - t_bounds,
+    )
+
+    # --- Compute per-partition grouping ---
+    t_group = time.monotonic()
+    if n_ancestors <= 1:
+        # Trivial case: single ancestor, no need for linesweep
+        grouping = {0: [0]} if n_ancestors == 1 else {}
+    else:
+        grouping = grouping_mod.group_haplotypes_by_linesweep(
+            anc_starts, anc_ends, anc_times
+        )
+
+    # Build write order (group-sorted)
+    write_order = []
+    for gid in sorted(grouping.keys()):
+        for idx in grouping[gid]:
+            write_order.append(idx)
+
+    n_groups = len(grouping)
+    logger.info(
+        "Interval %d: %d groups in %.3fs",
+        i_idx,
+        n_groups,
+        time.monotonic() - t_group,
+    )
+
+    # --- Write pass: submit ancestors in grouping order ---
+    num_sites = len(final_positions)
+    writer = vcz_mod.AncestorWriter(
+        zarr_root=zarr_root,
+        num_sites=num_sites,
+        chunk_size=cfg.samples_chunk_size,
+        n_ancestors=n_ancestors,
+        local_mask=local_mask,
+        final_positions=final_positions,
+        num_threads=num_threads,
+        write_threads=write_threads,
+        compressor=compressor,
+    )
+
+    t_wall_start = time.monotonic()
+
+    pbar = tqdm_mod.tqdm(
+        total=n_ancestors,
+        desc=f"Interval {i_idx}: ancestors",
+        unit="haps",
+        disable=not progress,
+    )
+
+    for write_idx, orig_idx in enumerate(write_order):
+        anc_time, focal_sites = ancestor_descriptors[orig_idx]
+        writer.submit(
+            ab,
+            focal_sites,
+            anc_time,
+            write_idx,
+        )
+        pbar.update(1)
+
+    t_submit_wall = time.monotonic() - t_wall_start
+    pbar.close()
+
+    interval_focals = writer.finalize()
+
+    t_wall = time.monotonic() - t_wall_start
+    s = writer.stats
+    if n_ancestors > 0:
+        make_mean = s.worker_make_ancestor / n_ancestors
+        make_min = s.worker_make_min if s.worker_make_min < float("inf") else 0
+        make_max = s.worker_make_max
+        logger.info(
+            "Interval %d: %d ancestors, %d chunks in %.3fs | "
+            "submit: wall=%.3fs put_block=%.3fs | "
+            "workers: make_ancestor=%.3fs"
+            " (mean=%.4fs min=%.4fs max=%.4fs) "
+            "buf_fill=%.3fs registry_wait=%.3fs | "
+            "writers: scatter=%.3fs zarr=%.3fs release=%.3fs | "
+            "finalize: worker_join=%.3fs seal=%.3fs"
+            " writer_join=%.3fs",
+            i_idx,
+            n_ancestors,
+            s.writer_chunks,
+            t_wall,
+            t_submit_wall,
+            s.submit_put,
+            s.worker_make_ancestor,
+            make_mean,
+            make_min,
+            make_max,
+            s.worker_buf_fill,
+            s.worker_registry_wait,
+            s.writer_scatter,
+            s.writer_zarr,
+            s.writer_release,
+            s.finalize_worker_join,
+            s.finalize_seal,
+            s.finalize_writer_join,
+        )
+
+    ancestor_index += n_ancestors
+    return ancestor_index, interval_focals
+
+
+def infer_ancestors(
+    sources: list[config.Source] | config.Source,
+    cfg: config.AncestorsConfig,
+    ancestral_state: config.AncestralState,
+    progress: bool = False,
+    num_threads: int | None = None,
+    write_threads: int | None = None,
+    genotype_encoding: int | None = None,
+) -> zarr.Group:
+    """
+    Build the ancestor VCZ store from one or more samples VCZ stores.
+
+    Two-pass approach:
+      Pass 1 — Identify inference sites and compute times (chunk-aware).
+      Pass 2 — Per-interval AncestorBuilder instances; stream ancestors to output.
+
+    No virtual root is inserted; that is the responsibility of the match step.
+    Ancestors are not sorted by time.
+    """
+    if num_threads is None:
+        num_threads = config.DEFAULT_NUM_THREADS
+    if write_threads is None:
+        write_threads = config.DEFAULT_WRITE_THREADS
+    if genotype_encoding is None:
+        genotype_encoding = config.DEFAULT_GENOTYPE_ENCODING
+    if isinstance(sources, config.Source):
+        sources = [sources]
+
+    t_start = time.monotonic()
+    logger.info("Starting ancestor inference (RSS=%.1fMiB)", _memory_usage_mb())
+
+    # Build compressor from config
+    compressor = numcodecs.Blosc(
+        cname=cfg.compressor,
+        clevel=cfg.compression_level,
+        shuffle=numcodecs.Blosc.BITSHUFFLE,
+    )
+
+    # --- 1. Build MultiSourceView ---
+    for source in sources:
+        if source.include is not None:
+            logger.info("Variant filter (include): %s", source.include)
+        if source.exclude is not None:
+            logger.info("Variant filter (exclude): %s", source.exclude)
+        if source.regions is not None:
+            logger.info("Region filter: %s", source.regions)
+        if source.targets is not None:
+            logger.info("Targets filter: %s", source.targets)
+
+    view = vcz_mod.MultiSourceView(sources, ancestral_state)
+    total_haplotypes = view.num_haplotypes
+    logger.info(
+        "Inference sites identified: %d (%d total haplotypes)",
+        view.num_sites,
+        total_haplotypes,
+    )
+
+    # Prepare the view for all positions (pass 1 needs alleles + genotypes)
+    view.prepare(view.positions)
+
+    # Build InferenceSites-compatible arrays from the view
+    unified_positions = view.positions
+    unified_alleles = view.alleles
+    # ancestral_allele_index is always 0 in canonical encoding
+    unified_anc_indices = np.zeros(view.num_sites, dtype=np.int8)
+
+    # --- 2. Pass 1: compute site stats ---
+    def _pass1_genotype_iter():
+        for var in view.iter_genotypes():
+            yield np.where(var.genotypes > 0, np.int8(1), var.genotypes)
+
+    unified_inf_sites = InferenceSites(
+        positions=unified_positions,
+        alleles=unified_alleles,
+        ancestral_allele_index=unified_anc_indices,
+    )
+    final_positions, final_alleles, final_anc_indices, times = _apply_site_stats(
+        _pass1_genotype_iter(), unified_inf_sites, total_haplotypes, progress
+    )
+    num_inf = len(final_positions)
+
+    # Use first source's store for contig metadata
+    first_store = view.source_store(0)
+
+    # Determine the write path: use a PID-suffixed temp path for atomicity
+    if cfg.path is not None:
+        final_path = pathlib.Path(cfg.path)
+        if final_path.exists():
+            raise FileExistsError(f"Ancestor output path already exists: {final_path}")
+        tmp_path = final_path.with_suffix(f".{os.getpid()}.tmp")
+        store_path = tmp_path
+    else:
+        final_path = None
+        tmp_path = None
+        store_path = None  # in-memory
+
+    if num_inf == 0:
+        seq_len = vcz_mod.sequence_length(first_store)
+        seq_intervals = compute_sequence_intervals(
+            final_positions, seq_len, cfg.max_gap_length
+        )
+        contig_id = str(first_store["contig_id"][0])
+        contig_length = int(first_store["contig_length"][0])
+        result = vcz_mod.write_empty_ancestor_vcz(
+            seq_intervals,
+            store=store_path,
+            contig_id=contig_id,
+            contig_length=contig_length,
+            compressor=compressor,
+        )
+        if tmp_path is not None:
+            tmp_path.rename(final_path)
+            result = vcz_mod.open_store(final_path)
+        return result
+
+    # --- 3. Compute sequence intervals ---
+    seq_len = vcz_mod.sequence_length(first_store)
+    seq_intervals = compute_sequence_intervals(
+        final_positions, seq_len, cfg.max_gap_length
     )
     logger.info(
-        f"Linesweep generated {np.sum(incoming_edge_count)} dependencies in"
-        f" {time_.time() - t:.2f}s"
+        "Sequence intervals: %d (max_gap_length=%d)",
+        len(seq_intervals),
+        cfg.max_gap_length,
     )
 
-    t = time_.time()
-    group_id = find_groups(children_data, children_indices, incoming_edge_count)
-    logger.info(f"Found groups in {time_.time() - t:.2f}s")
-
-    t = time_.time()
-    # Convert the group id array to lists of ids for each group
-    ancestor_grouping = {}
-    for group in np.unique(group_id):
-        ancestor_grouping[group] = np.where(group_id == group)[0]
-
-    # Now un-merge the same-age ancestors, simultaneously mapping back to the original,
-    # unsorted indexes
-    for group in ancestor_grouping:
-        ancestor_grouping[group] = sorted(
-            [
-                sort_indices[item]
-                for i in ancestor_grouping[group]
-                for item in old_indexes[i]
-            ]
+    # --- 4. Pass 2: per-interval ancestor building ---
+    t_pass2 = time.monotonic()
+    encoding_name = "one_bit" if genotype_encoding == 1 else "eight_bit"
+    write_threads = max(1, write_threads)
+    if num_threads > 0:
+        logger.info(
+            "Pass 2: building ancestors per interval "
+            "(%d worker threads, %d write threads, encoding=%s, RSS=%.1fMiB)",
+            num_threads,
+            write_threads,
+            encoding_name,
+            _memory_usage_mb(),
         )
-    logger.info(f"Un-merged in {time_.time() - t:.2f}s")
-    logger.info(
-        f"{len(ancestor_grouping)} groups with median size "
-        f"{np.median([len(ancestor_grouping[group]) for group in ancestor_grouping])}"
+    else:
+        logger.info(
+            "Pass 2: building ancestors per interval "
+            "(synchronous, %d write threads, encoding=%s, RSS=%.1fMiB)",
+            write_threads,
+            encoding_name,
+            _memory_usage_mb(),
+        )
+    site_interval_idx = _assign_site_intervals(final_positions, seq_intervals)
+
+    contig_id = str(first_store["contig_id"][0])
+    contig_length = int(first_store["contig_length"][0])
+
+    # Create zarr group with fixed arrays
+    zarr_root = vcz_mod.setup_ancestor_zarr(
+        num_inf,
+        final_positions,
+        final_alleles,
+        final_anc_indices,
+        seq_intervals,
+        store=store_path,
+        samples_chunk_size=cfg.samples_chunk_size,
+        variants_chunk_size=cfg.variants_chunk_size,
+        contig_id=contig_id,
+        contig_length=contig_length,
+        compressor=compressor,
     )
-    return ancestor_grouping
+
+    ancestor_index = 0
+    all_focal_positions = []
+
+    for i_idx in range(len(seq_intervals)):
+        in_interval = site_interval_idx == i_idx
+        if not np.any(in_interval):
+            continue
+        local_mask = np.where(in_interval)[0]
+        ancestor_index, interval_focals = _process_interval(
+            view,
+            i_idx,
+            local_mask,
+            final_positions,
+            times,
+            total_haplotypes,
+            cfg,
+            zarr_root,
+            num_threads,
+            write_threads,
+            ancestor_index,
+            progress,
+            compressor,
+            genotype_encoding,
+        )
+        all_focal_positions.extend(interval_focals)
+
+    elapsed_pass2 = time.monotonic() - t_pass2
+    logger.info("Pass 2 complete in %.1fs", elapsed_pass2)
+
+    # Write sample_id and sample_focal_positions
+    result = vcz_mod.finalize_ancestor_zarr(
+        zarr_root, all_focal_positions, compressor=compressor
+    )
+    if tmp_path is not None:
+        tmp_path.rename(final_path)
+        result = vcz_mod.open_store(final_path)
+    elapsed_total = time.monotonic() - t_start
+    logger.info(
+        "Ancestor inference complete: %d ancestors across %d sites"
+        " in %.1fs total (RSS=%.1fMiB)",
+        result["call_genotype"].shape[1],
+        num_inf,
+        elapsed_total,
+        _memory_usage_mb(),
+    )
+    return result

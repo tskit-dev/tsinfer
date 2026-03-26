@@ -104,7 +104,8 @@ AncestorBuilder_init(AncestorBuilder *self, PyObject *args, PyObject *kwds)
     int err;
     static char *kwlist[]
         = { "num_samples", "max_sites", "genotype_encoding", "mmap_fd", NULL };
-    int num_samples, max_sites, genotype_encoding;
+    int num_samples, max_sites;
+    int genotype_encoding = 0;
     int flags = 0;
     int mmap_fd = -1;
 

@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2018 University of Oxford
+# Copyright (C) 2018-2026 University of Oxford
 #
 # This file is part of tsinfer.
 #
@@ -17,36 +17,24 @@
 # along with tsinfer.  If not, see <http://www.gnu.org/licenses/>.
 #
 """
-Exceptions raised by tsinfer.
+Utility classes for tsinfer.
 """
 
+from __future__ import annotations
 
-class TsinferException(Exception):
-    """
-    Superclass of all exceptions thrown by tsinfer.
-    """
+import concurrent.futures as cf
 
 
-class FileError(TsinferException):
+class SynchronousExecutor(cf.Executor):
     """
-    Exception raised when some non-specific error happens during file handling.
+    An executor that runs tasks synchronously in the calling thread.
+
+    Implements the :class:`concurrent.futures.Executor` interface so that
+    threaded and non-threaded code paths share the same API.  Used when
+    ``num_threads <= 0`` for testing and debugging.
     """
 
-
-class FileFormatError(FileError):
-    """
-    Exception raised when a malformed file is encountered.
-    """
-
-
-class FileFormatTooOld(FileError):
-    """
-    Exception raised when a file with a version too old is detected.
-    """
-
-
-class FileFormatTooNew(FileError):
-    """
-    Exception raised when a file with a version from a newer version
-    of tsinfer is detected.
-    """
+    def submit(self, fn, /, *args, **kwargs):
+        future = cf.Future()
+        future.set_result(fn(*args, **kwargs))
+        return future

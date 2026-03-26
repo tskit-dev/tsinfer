@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2018 University of Oxford
+# Copyright (C) 2018-2026 University of Oxford
 #
 # This file is part of tsinfer.
 #
@@ -17,563 +17,601 @@
 # along with tsinfer.  If not, see <http://www.gnu.org/licenses/>.
 #
 """
-Tests for the tsinfer CLI.
+Tests for the tsinfer CLI (click commands).
 """
 
-import io
-import json
-import os.path
+from __future__ import annotations
+
+import os
 import pathlib
-import sys
+import shutil
 import tempfile
-import unittest
-import unittest.mock as mock
 
-import msprime
+import helpers
 import numpy as np
-import pytest
 import tskit
+import zarr
+from click.testing import CliRunner
 
-import tsinfer
-import tsinfer.__main__ as main
-import tsinfer.cli as cli
-import tsinfer.exceptions as exceptions
+from tsinfer import cli
 
-
-def capture_output(func, *args, **kwargs):
-    """
-    Runs the specified function and arguments, and returns the
-    tuple (stdout, stderr) as strings.
-    """
-    stdout = sys.stdout
-    sys.stdout = io.StringIO()
-    stderr = sys.stderr
-    sys.stderr = io.StringIO()
-
-    try:
-        func(*args, **kwargs)
-        stdout_output = sys.stdout.getvalue()
-        stderr_output = sys.stderr.getvalue()
-    finally:
-        sys.stdout.close()
-        sys.stdout = stdout
-        sys.stderr.close()
-        sys.stderr = stderr
-    return stdout_output, stderr_output
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 
-class TestMain:
-    """
-    Simple tests for the main function.
-    """
-
-    def test_cli_main(self):
-        with mock.patch("argparse.ArgumentParser.parse_args") as mocked_parse:
-            cli.tsinfer_main()
-            mocked_parse.assert_called_once_with(None)
-
-    def test_main(self):
-        with mock.patch("argparse.ArgumentParser.parse_args") as mocked_parse:
-            main.main()
-            mocked_parse.assert_called_once_with(None)
-
-
-class TestDefaultPaths:
-    """
-    Tests for the default path creation routines.
-    """
-
-    def test_get_default_path(self):
-        # The second argument is ignored if the input path is specified.
-        for path in ["a", "a/b/c", "a.stuff"]:
-            assert cli.get_default_path(path, "a", "b") == path
-        assert cli.get_default_path(None, "a", ".x") == "a.x"
-        assert cli.get_default_path(None, "a.y", ".z") == "a.z"
-        assert cli.get_default_path(None, "a/b/c/a.y", ".z") == "a/b/c/a.z"
-
-    def test_get_ancestors_path(self):
-        assert cli.get_ancestors_path(None, "a") == "a.ancestors"
-
-    def test_get_ancestors_trees_path(self):
-        assert cli.get_ancestors_trees_path(None, "a") == "a.ancestors.trees"
-
-    def test_get_output_trees_path(self):
-        assert cli.get_output_trees_path(None, "a") == "a.trees"
-
-
-class TestCli(unittest.TestCase):
-    """
-    Parent of all CLI test cases.
-    """
-
-    def setUp(self):
-        self.tempdir = tempfile.TemporaryDirectory(prefix="tsinfer_cli_test")
-        self.sample_file = str(pathlib.Path(self.tempdir.name, "input-data.samples"))
-        self.ancestor_file = str(pathlib.Path(self.tempdir.name, "input-data.ancestors"))
-        self.ancestor_trees = str(
-            pathlib.Path(self.tempdir.name, "input-data.ancestors.trees")
-        )
-        self.output_trees = str(pathlib.Path(self.tempdir.name, "input-data.trees"))
-        self.input_ts = msprime.simulate(
-            10, length=10, mutation_rate=1, recombination_rate=1, random_seed=10
-        )
-        sample_data = tsinfer.SampleData(
-            sequence_length=self.input_ts.sequence_length, path=self.sample_file
-        )
-        for var in self.input_ts.variants():
-            sample_data.add_site(var.site.position, var.genotypes, var.alleles)
-        sample_data.finalise()
-        tsinfer.generate_ancestors(sample_data, path=self.ancestor_file, chunk_size=10)
-        ancestor_data = tsinfer.load(self.ancestor_file)
-        ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data)
-        ancestors_ts.dump(self.ancestor_trees)
-        ts = tsinfer.match_samples(sample_data, ancestors_ts)
-        ts.dump(self.output_trees)
-        sample_data.close()
-
-    # Need to mock out setup_logging here or we spew logging to the console
-    # in later tests.
-    @mock.patch("tsinfer.cli.setup_logging")
-    def run_command(self, command, mock_setup_logging):
-        stdout, stderr = capture_output(cli.tsinfer_main, command)
-        assert stderr == ""
-        assert stdout == ""
-        assert mock_setup_logging.called
-
-
-class TestCommandsDefaults(TestCli):
-    """
-    Tests that the basic commands work if we provide the default arguments.
-    """
-
-    def verify_output(self, output_path):
-        output_trees = tskit.load(output_path)
-        assert output_trees.num_samples == self.input_ts.num_samples
-        assert output_trees.sequence_length == self.input_ts.sequence_length
-        assert output_trees.num_sites == self.input_ts.num_sites
-        assert output_trees.num_sites > 1
-        assert np.array_equal(
-            output_trees.genotype_matrix(), self.input_ts.genotype_matrix()
-        )
-
-    def test_infer(self):
-        output_trees = os.path.join(self.tempdir.name, "output.trees")
-        self.run_command(["infer", self.sample_file, "-O", output_trees])
-        self.verify_output(output_trees)
-
-    def test_infer_from_ts(self):
-        output_trees = os.path.join(self.tempdir.name, "output.trees")
-        self.run_command(["infer", self.sample_file, "-O", output_trees])
-        with pytest.raises(exceptions.FileFormatError, match="from_tree_sequence"):
-            self.run_command(["infer", output_trees])
-
-    def test_infer_bad_file(self):
-        output_trees = os.path.join(self.tempdir.name, "output.trees")
-        with open(output_trees, "w") as bad_file:
-            bad_file.write("xxx")
-        with pytest.raises(exceptions.FileFormatError, match="Unknown file format"):
-            self.run_command(["infer", output_trees])
-
-    @pytest.mark.skipif(
-        sys.platform == "win32", reason="windows simultaneous file permissions issue"
+def _write_sample_vcz_to_disk(tmp_dir: str) -> str:
+    """Create a sample VCZ on disk and return its path."""
+    store = helpers.make_sample_vcz(
+        genotypes=np.array([[[0], [1]], [[1], [0]]], dtype=np.int8),
+        positions=np.array([100, 200], dtype=np.int32),
+        alleles=np.array([["A", "T"], ["A", "T"]]),
+        ancestral_state=np.array(["A", "A"]),
+        sequence_length=1000,
     )
-    def test_nominal_chain(self):
-        output_trees = os.path.join(self.tempdir.name, "output.trees")
-        self.run_command(["generate-ancestors", self.sample_file])
-        self.run_command(["match-ancestors", self.sample_file])
-        self.run_command(["match-samples", self.sample_file, "-O", output_trees])
-        self.verify_output(output_trees)
-
-    def test_verify(self):
-        output_trees = os.path.join(self.tempdir.name, "output.trees")
-        self.run_command(["infer", self.sample_file, "-O", output_trees])
-        self.run_command(["verify", self.sample_file, output_trees])
-
-    @pytest.mark.skipif(
-        sys.platform == "win32",
-        reason="windows simultaneous file access permissions issue",
-    )
-    def test_augment_ancestors(self):
-        output_trees = os.path.join(self.tempdir.name, "output.trees")
-        augmented_ancestors = os.path.join(
-            self.tempdir.name, "augmented_ancestors.trees"
-        )
-        self.run_command(["generate-ancestors", self.sample_file])
-        self.run_command(["match-ancestors", self.sample_file])
-        self.run_command(["augment-ancestors", self.sample_file, augmented_ancestors])
-        self.run_command(
-            [
-                "match-samples",
-                self.sample_file,
-                "-O",
-                output_trees,
-                "-A",
-                augmented_ancestors,
-            ]
-        )
-        self.verify_output(output_trees)
+    vcz_path = os.path.join(tmp_dir, "samples.vcz")
+    zarr.save(vcz_path, **{k: store[k][:] for k in store})
+    # Re-open to verify it's a valid zarr store
+    zarr.open(vcz_path, mode="r")
+    return vcz_path
 
 
-class TestCommandsExtra(TestCli):
-    """
-    Test miscellaneous extra options for standard commands
-    """
-
-    def test_filenames_without_keeping_intermediates(self):
-        output_anc = os.path.join(self.tempdir.name, "test1")
-        output_anc_ts = os.path.join(self.tempdir.name, "test2")
-        with pytest.raises(ValueError, match="--keep-intermediates"):
-            self.run_command(["infer", self.sample_file, "-a", output_anc])
-        with pytest.raises(ValueError, match="--keep-intermediates"):
-            self.run_command(["infer", self.sample_file, "-A", output_anc_ts])
-
-    def test_keep_intermediates(self):
-        output_anc = os.path.join(self.tempdir.name, "test1")
-        output_anc_ts = os.path.join(self.tempdir.name, "test2")
-        self.run_command(
-            [
-                "infer",
-                self.sample_file,
-                "--keep-intermediates",
-                "-a",
-                output_anc,
-                "-A",
-                output_anc_ts,
-            ]
-        )
-        assert os.path.exists(output_anc)
-        ancestors = tsinfer.load(output_anc)
-        assert ancestors.num_ancestors > 0
-
-        assert os.path.exists(output_anc_ts)
-        anc_ts = tskit.load(output_anc_ts)
-        assert anc_ts.num_samples > 0
+def _toml_path(path: str) -> str:
+    """Convert a filesystem path to a TOML-safe string (forward slashes)."""
+    return path.replace("\\", "/")
 
 
-class TestProgress(TestCli):
-    """
-    Tests that we get some output when we use the progress bar.
-    """
+def _write_config(tmp_dir: str, sample_path: str, output_name: str = "out.trees"):
+    """Write a minimal TOML config and return its path."""
+    output_path = _toml_path(os.path.join(tmp_dir, output_name))
+    ancestors_path = _toml_path(os.path.join(tmp_dir, "ancestors.vcz"))
+    sample_path = _toml_path(sample_path)
+    config_content = f"""\
+[[source]]
+name = "test"
+path = "{sample_path}"
 
-    # Need to mock out setup_logging here or we spew logging to the console
-    # in later tests.
-    @mock.patch("tsinfer.cli.setup_logging")
-    def run_command(self, command, mock_setup_logging):
-        stdout, stderr = capture_output(cli.tsinfer_main, command + ["--progress"])
-        assert len(stderr) > 0
-        assert stdout == ""
-        assert mock_setup_logging.called
+[[ancestors]]
+name = "ancestors"
+path = "{ancestors_path}"
+sources = ["test"]
 
-    def test_infer(self):
-        output_trees = os.path.join(self.tempdir.name, "output.trees")
-        self.run_command(["infer", self.sample_file, "-O", output_trees])
+[match]
+output = "{output_path}"
 
-    @pytest.mark.skipif(
-        sys.platform == "win32", reason="windows simultaneous file permissions issue"
-    )
-    def test_nominal_chain(self):
-        output_trees = os.path.join(self.tempdir.name, "output.trees")
-        self.run_command(["generate-ancestors", self.sample_file])
-        self.run_command(["match-ancestors", self.sample_file])
-        self.run_command(["match-samples", self.sample_file, "-O", output_trees])
+[match.sources.ancestors]
+node_flags = 0
+create_individuals = false
 
-    def test_verify(self):
-        output_trees = os.path.join(self.tempdir.name, "output.trees")
-        self.run_command(["infer", self.sample_file, "-O", output_trees])
-        self.run_command(["verify", self.sample_file, output_trees])
+[match.sources.test]
 
-    @pytest.mark.skipif(
-        sys.platform == "win32", reason="windows simultaneous file permissions issue"
-    )
-    def test_augment_ancestors(self):
-        output_trees = os.path.join(self.tempdir.name, "output.trees")
-        augmented_ancestors = os.path.join(
-            self.tempdir.name, "augmented_ancestors.trees"
-        )
-        self.run_command(["generate-ancestors", self.sample_file])
-        self.run_command(["match-ancestors", self.sample_file])
-        self.run_command(["augment-ancestors", self.sample_file, augmented_ancestors])
-        self.run_command(
-            [
-                "match-samples",
-                self.sample_file,
-                "-O",
-                output_trees,
-                "-A",
-                augmented_ancestors,
-            ]
-        )
+[ancestral_state]
+path = "{sample_path}"
+field = "variant_ancestral_allele"
+"""
+    config_path = os.path.join(tmp_dir, "config.toml")
+    with open(config_path, "w") as f:
+        f.write(config_content)
+    return config_path
 
 
-class TestProvenance(TestCli):
-    """
-    Tests that we get provenance in the output trees
-    """
+def _write_run_config(tmp_dir: str, sample_path: str, output_name: str = "out.trees"):
+    """Write a TOML config for the run command (no ancestors path needed)."""
+    output_path = _toml_path(os.path.join(tmp_dir, output_name))
+    ancestors_path = _toml_path(os.path.join(tmp_dir, "ancestors.vcz"))
+    sample_path = _toml_path(sample_path)
+    config_content = f"""\
+[[source]]
+name = "test"
+path = "{sample_path}"
 
-    # Need to mock out setup_logging here or we spew logging to the console
-    # in later tests.
-    @mock.patch("tsinfer.cli.setup_logging")
-    def run_command(self, command, mock_setup_logging):
-        stdout, stderr = capture_output(cli.tsinfer_main, command)
-        assert stderr == ""
-        assert stdout == ""
+[[ancestors]]
+name = "ancestors"
+path = "{ancestors_path}"
+sources = ["test"]
 
-    def verify_ts_provenance(self, treefile, expected_num_provenances):
-        ts = tskit.load(treefile)
-        prov = json.loads(ts.provenance(-1).record)
-        assert ts.num_provenances == expected_num_provenances
-        # Getting actual values out of the JSON is problematic here because
-        # we're getting the pytest command line.
-        assert isinstance(prov["parameters"]["command"], str)
-        assert isinstance(prov["parameters"]["args"], list)
+[match]
+output = "{output_path}"
 
-    def test_infer(self):
-        output_trees = os.path.join(self.tempdir.name, "output.trees")
-        sd = tsinfer.load(self.sample_file)
-        self.run_command(["infer", self.sample_file, "-O", output_trees])
-        self.verify_ts_provenance(output_trees, sd.num_provenances + 1)
+[match.sources.ancestors]
+node_flags = 0
+create_individuals = false
 
-    @pytest.mark.skip(
-        reason="Ancestors not saving provenance:"
-        "see https://github.com/tskit-dev/tsinfer/issues/753"
-    )
-    def test_ancestors(self):
-        sd = tsinfer.load(self.sample_file)
-        self.run_command(["generate-ancestors", self.sample_file])
-        ancestors = tsinfer.load(self.ancestor_file)
-        assert ancestors.num_provenances == sd.num_provenances + 1
+[match.sources.test]
 
-    @pytest.mark.skipif(
-        sys.platform == "win32", reason="windows simultaneous file permissions issue"
-    )
-    def test_chain(self):
-        output_trees = os.path.join(self.tempdir.name, "output.trees")
-        ancestors_trees = os.path.join(self.tempdir.name, "ancestors.trees")
-        self.run_command(["generate-ancestors", self.sample_file])
-        num_provenances_ancestors = tsinfer.load(self.ancestor_file).num_provenances
-        self.run_command(["match-ancestors", self.sample_file, "-A", ancestors_trees])
-        self.verify_ts_provenance(ancestors_trees, num_provenances_ancestors + 1)
-        self.run_command(
-            [
-                "match-samples",
-                self.sample_file,
-                "-A",
-                ancestors_trees,
-                "-O",
-                output_trees,
-            ]
-        )
-        self.verify_ts_provenance(output_trees, num_provenances_ancestors + 2)
+[ancestral_state]
+path = "{sample_path}"
+field = "variant_ancestral_allele"
+"""
+    config_path = os.path.join(tmp_dir, "config.toml")
+    with open(config_path, "w") as f:
+        f.write(config_content)
+    return config_path
 
 
-class TestRecombinationAndMismatch(TestCli):
-    """
-    Test that we correctly parse and use recombination and mismatch arguments
-    """
+# ---------------------------------------------------------------------------
+# TestMainGroup
+# ---------------------------------------------------------------------------
 
-    @pytest.mark.skipif(
-        sys.platform == "win32", reason="windows simultaneous file permissions issue"
-    )
-    def test_separate_calls(self):
-        self.run_command(["generate-ancestors", self.sample_file])
-        with mock.patch("tsinfer.match_ancestors") as ma:
-            self.run_command(
-                [
-                    "match-ancestors",
-                    self.sample_file,
-                    "--recombination-rate",
-                    "0.001",
-                    "--mismatch-ratio",
-                    "0.01",
-                ]
+
+class TestMainGroup:
+    def test_help(self):
+        runner = CliRunner()
+        result = runner.invoke(cli.main, ["--help"])
+        assert result.exit_code == 0
+        assert "tsinfer" in result.output
+
+    def test_version(self):
+        runner = CliRunner()
+        result = runner.invoke(cli.main, ["--version"])
+        assert result.exit_code == 0
+
+
+# ---------------------------------------------------------------------------
+# TestConfigShow
+# ---------------------------------------------------------------------------
+
+
+class TestConfigShow:
+    def test_show_prints_config(self):
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sample_path = _write_sample_vcz_to_disk(tmp_dir)
+            config_path = _write_config(tmp_dir, sample_path)
+            result = runner.invoke(cli.main, ["config", "show", config_path])
+            assert result.exit_code == 0, result.output
+            assert "[source.test]" in result.output
+            assert "[match]" in result.output
+            assert "path_compression" in result.output
+
+    def test_show_includes_ancestors(self):
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sample_path = _write_sample_vcz_to_disk(tmp_dir)
+            config_path = _write_config(tmp_dir, sample_path)
+            result = runner.invoke(cli.main, ["config", "show", config_path])
+            assert result.exit_code == 0, result.output
+            assert "[[ancestors]]" in result.output
+
+
+# ---------------------------------------------------------------------------
+# TestConfigCheck
+# ---------------------------------------------------------------------------
+
+
+class TestConfigCheck:
+    def test_check_valid(self):
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sample_path = _write_sample_vcz_to_disk(tmp_dir)
+            config_path = _write_config(tmp_dir, sample_path)
+            result = runner.invoke(cli.main, ["config", "check", config_path])
+            assert result.exit_code == 0, result.output
+
+    def test_check_missing_source_path(self):
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            # Write config with nonexistent source path
+            config_content = """\
+[[source]]
+name = "test"
+path = "/nonexistent/path.vcz"
+
+[[ancestors]]
+name = "ancestors"
+path = "/nonexistent/ancestors.vcz"
+sources = ["test"]
+
+[match]
+output = "out.trees"
+
+[match.sources.ancestors]
+node_flags = 0
+create_individuals = false
+
+[match.sources.test]
+
+[ancestral_state]
+path = "/nonexistent/path.vcz"
+field = "variant_ancestral_allele"
+"""
+            config_path = os.path.join(tmp_dir, "config.toml")
+            with open(config_path, "w") as f:
+                f.write(config_content)
+            result = runner.invoke(cli.main, ["config", "check", config_path])
+            assert result.exit_code != 0
+            assert "does not exist" in result.output
+
+    def test_check_ancestors_path_not_required_to_exist(self):
+        """ancestors.path is an output; it should not need to exist."""
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sample_path = _write_sample_vcz_to_disk(tmp_dir)
+            config_path = _write_config(tmp_dir, sample_path)
+            # ancestors.vcz does not exist on disk — should still pass
+            result = runner.invoke(cli.main, ["config", "check", config_path])
+            assert result.exit_code == 0, result.output
+
+    def test_check_unknown_ancestor_source(self):
+        """Error when ancestors.sources references a name not in [[source]]."""
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sample_path = _write_sample_vcz_to_disk(tmp_dir)
+            sample_path_toml = _toml_path(sample_path)
+            out_path = _toml_path(os.path.join(tmp_dir, "out.trees"))
+            anc_path = _toml_path(os.path.join(tmp_dir, "ancestors.vcz"))
+            config_content = f"""\
+[[source]]
+name = "test"
+path = "{sample_path_toml}"
+
+[[ancestors]]
+name = "ancestors"
+path = "{anc_path}"
+sources = ["nonexistent"]
+
+[match]
+output = "{out_path}"
+
+[match.sources.ancestors]
+node_flags = 0
+create_individuals = false
+
+[match.sources.test]
+
+[ancestral_state]
+path = "{sample_path_toml}"
+field = "variant_ancestral_allele"
+"""
+            config_path = os.path.join(tmp_dir, "config.toml")
+            with open(config_path, "w") as f:
+                f.write(config_content)
+            result = runner.invoke(cli.main, ["config", "check", config_path])
+            assert result.exit_code != 0
+            assert "unknown source" in result.output.lower()
+
+
+# ---------------------------------------------------------------------------
+# TestRun
+# ---------------------------------------------------------------------------
+
+
+class TestRun:
+    def test_run_produces_output(self):
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sample_path = _write_sample_vcz_to_disk(tmp_dir)
+            config_path = _write_run_config(tmp_dir, sample_path)
+            result = runner.invoke(cli.main, ["run", config_path])
+            assert result.exit_code == 0, result.output
+            output_path = os.path.join(tmp_dir, "out.trees")
+            assert pathlib.Path(output_path).exists()
+
+    def test_run_force_overwrites(self):
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sample_path = _write_sample_vcz_to_disk(tmp_dir)
+            config_path = _write_run_config(tmp_dir, sample_path)
+            # First run
+            result = runner.invoke(cli.main, ["run", config_path])
+            assert result.exit_code == 0, result.output
+            # Second run without --force should fail
+            result = runner.invoke(cli.main, ["run", config_path])
+            assert result.exit_code != 0
+            assert "already exists" in result.output
+            # Remove ancestor store (user's responsibility) then --force
+            anc_path = pathlib.Path(tmp_dir) / "ancestors.vcz"
+            shutil.rmtree(anc_path)
+            result = runner.invoke(cli.main, ["run", config_path, "--force"])
+            assert result.exit_code == 0, result.output
+
+    def test_run_verbose(self):
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sample_path = _write_sample_vcz_to_disk(tmp_dir)
+            config_path = _write_run_config(tmp_dir, sample_path)
+            result = runner.invoke(cli.main, ["run", config_path, "-v"])
+            assert result.exit_code == 0, result.output
+
+    def test_run_nonexistent_config(self):
+        runner = CliRunner()
+        result = runner.invoke(cli.main, ["run", "/nonexistent/config.toml"])
+        assert result.exit_code != 0
+
+    def test_cache_size_in_help(self):
+        runner = CliRunner()
+        result = runner.invoke(cli.main, ["run", "--help"])
+        assert "--cache-size" in result.output
+
+    def test_run_with_cache_size(self):
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sample_path = _write_sample_vcz_to_disk(tmp_dir)
+            config_path = _write_run_config(tmp_dir, sample_path)
+            result = runner.invoke(cli.main, ["run", config_path, "--cache-size", "128"])
+            assert result.exit_code == 0, result.output
+            output_path = os.path.join(tmp_dir, "out.trees")
+            assert pathlib.Path(output_path).exists()
+
+
+# ---------------------------------------------------------------------------
+# TestInferAncestors
+# ---------------------------------------------------------------------------
+
+
+class TestInferAncestors:
+    def test_help(self):
+        runner = CliRunner()
+        result = runner.invoke(cli.main, ["infer-ancestors", "--help"])
+        assert result.exit_code == 0
+        assert "ancestor" in result.output.lower()
+
+
+# ---------------------------------------------------------------------------
+# TestMatch
+# ---------------------------------------------------------------------------
+
+
+class TestMatch:
+    def test_help(self):
+        runner = CliRunner()
+        result = runner.invoke(cli.main, ["match", "--help"])
+        assert result.exit_code == 0
+        assert "match" in result.output.lower()
+
+    def test_cache_size_in_help(self):
+        runner = CliRunner()
+        result = runner.invoke(cli.main, ["match", "--help"])
+        assert "--cache-size" in result.output
+
+
+# ---------------------------------------------------------------------------
+# TestPostProcess
+# ---------------------------------------------------------------------------
+
+
+class TestPostProcess:
+    def test_help(self):
+        runner = CliRunner()
+        result = runner.invoke(cli.main, ["post-process", "--help"])
+        assert result.exit_code == 0
+
+
+# ---------------------------------------------------------------------------
+# TestAugmentSites
+# ---------------------------------------------------------------------------
+
+
+class TestAugmentSites:
+    def test_help(self):
+        runner = CliRunner()
+        result = runner.invoke(cli.main, ["augment-sites", "--help"])
+        assert result.exit_code == 0
+        assert "--input" in result.output
+        assert "--output" in result.output
+
+    def test_augment_sites_adds_sites(self):
+        """augment-sites places new sites from the configured source."""
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            # Create sample VCZ with 2 inference sites + 1 singleton
+            store = helpers.make_sample_vcz(
+                genotypes=np.array(
+                    [[[0], [1], [1]], [[0], [0], [1]], [[1], [0], [1]]],
+                    dtype=np.int8,
+                ),
+                positions=np.array([100, 200, 300], dtype=np.int32),
+                alleles=np.array([["A", "T"], ["C", "G"], ["A", "T"]]),
+                ancestral_state=np.array(["A", "C", "A"]),
+                sequence_length=1000,
             )
-            args, kwargs = ma.call_args
-            assert kwargs["recombination_rate"] == 0.001
-            assert kwargs["mismatch_ratio"] == 0.01
+            vcz_path = os.path.join(tmp_dir, "samples.vcz")
+            zarr.save(vcz_path, **{k: store[k][:] for k in store})
 
-        with mock.patch("tsinfer.match_samples") as ms:
-            self.run_command(
+            # Write config with augment_sites pointing at the same source
+            output_path = _toml_path(os.path.join(tmp_dir, "out.trees"))
+            ancestors_path = _toml_path(os.path.join(tmp_dir, "ancestors.vcz"))
+            vcz_toml = _toml_path(vcz_path)
+            augmented_path = _toml_path(os.path.join(tmp_dir, "augmented.trees"))
+            config_content = f"""\
+[[source]]
+name = "test"
+path = "{vcz_toml}"
+
+[[source]]
+name = "augment"
+path = "{vcz_toml}"
+
+[[ancestors]]
+name = "ancestors"
+path = "{ancestors_path}"
+sources = ["test"]
+
+[match]
+output = "{output_path}"
+
+[match.sources.ancestors]
+node_flags = 0
+create_individuals = false
+
+[match.sources.test]
+
+[ancestral_state]
+path = "{vcz_toml}"
+field = "variant_ancestral_allele"
+
+[augment_sites]
+sources = ["augment"]
+"""
+            config_path = os.path.join(tmp_dir, "config.toml")
+            with open(config_path, "w") as f:
+                f.write(config_content)
+
+            # Run infer-ancestors + match to produce the input TS
+            result = runner.invoke(cli.main, ["infer-ancestors", config_path])
+            assert result.exit_code == 0, result.output
+            result = runner.invoke(cli.main, ["match", config_path])
+            assert result.exit_code == 0, result.output
+
+            # Run augment-sites
+            result = runner.invoke(
+                cli.main,
                 [
-                    "match-samples",
-                    self.sample_file,
-                    "--recombination-rate",
-                    "10",
-                    "--mismatch-ratio",
-                    "100",
-                ]
+                    "augment-sites",
+                    config_path,
+                    "--input",
+                    output_path,
+                    "--output",
+                    augmented_path,
+                ],
             )
-            args, kwargs = ms.call_args
-            assert kwargs["recombination_rate"] == 10
-            assert kwargs["mismatch_ratio"] == 100
+            assert result.exit_code == 0, result.output
+            assert pathlib.Path(augmented_path).exists()
 
-    def test_infer(self):
-        command = [
-            "infer",
-            self.sample_file,
-            "--recombination-rate",
-            "0.1",
-            "--mismatch-ratio",
-            "10",
-        ]
-        with mock.patch("tsinfer.infer") as infer:
-            self.run_command(command)
-            args, kwargs = infer.call_args
-            assert kwargs["recombination_rate"] == 0.1
-            assert kwargs["mismatch_ratio"] == 10
+            original = tskit.load(output_path)
+            augmented = tskit.load(augmented_path)
+            assert augmented.num_sites >= original.num_sites
 
-    @pytest.mark.skip(reason="https://github.com/tskit-dev/tsinfer/issues/753")
-    @pytest.mark.skipif(
-        sys.platform == "win32", reason="windows simultaneous file permissions issue"
-    )
-    def test_map(self):
-        ratemap = os.path.join(self.tempdir.name, "ratemap.txt")
-        with open(ratemap, "w") as map:
-            print("Chromosome  Position(bp)  Rate(cM/Mb)  Map(cM)", file=map)
-            print("chr1 0 0.1 0", file=map)
-            print("chr1 1 0.2 0.002", file=map)
-        command = [
-            "infer",
-            self.sample_file,
-            "--recombination-map",
-            ratemap,
-        ]
-        with mock.patch("tsinfer.infer") as infer:
-            self.run_command(command)
-            args, kwargs = infer.call_args
-            assert isinstance(kwargs["recombination_rate"], msprime.RateMap)
+    def test_augment_sites_force(self):
+        """augment-sites --force overwrites existing output."""
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sample_path = _write_sample_vcz_to_disk(tmp_dir)
+            output_path = _toml_path(os.path.join(tmp_dir, "out.trees"))
+            ancestors_path = _toml_path(os.path.join(tmp_dir, "ancestors.vcz"))
+            sample_toml = _toml_path(sample_path)
+            augmented_path = _toml_path(os.path.join(tmp_dir, "augmented.trees"))
+            config_content = f"""\
+[[source]]
+name = "test"
+path = "{sample_toml}"
 
-    @pytest.mark.skip(reason="https://github.com/tskit-dev/tsinfer/issues/753")
-    @pytest.mark.skipif(
-        sys.platform == "win32", reason="windows simultaneous file permissions issue"
-    )
-    def test_fails_on_bad_map(self):
-        output_trees = os.path.join(self.tempdir.name, "output_test_map.trees")
-        ratemap = os.path.join(self.tempdir.name, "ratemap.txt")
-        sd = tsinfer.load(self.sample_file)
-        last_pos = sd.sites_position[-1]
-        assert last_pos > 2
-        with open(ratemap, "w") as map:
-            print("Chromosome  Position(bp)  Rate(cM/Mb)  Map(cM)", file=map)
-            print("chr1 0 0.1 0.0", file=map)
-            print(f"chr1 {int(last_pos) - 1} 0.2 0.001", file=map)
-        command = [
-            "infer",
-            self.sample_file,
-            "--recombination-map",
-            ratemap,
-            "-O",
-            output_trees,
-        ]
-        with pytest.raises(ValueError, match="Cannot have positions"):
-            self.run_command(command)
+[[source]]
+name = "augment"
+path = "{sample_toml}"
 
+[[ancestors]]
+name = "ancestors"
+path = "{ancestors_path}"
+sources = ["test"]
 
-class TestMatchSamples(TestCli):
-    """
-    Tests for the match samples options.
-    """
+[match]
+output = "{output_path}"
 
-    @pytest.mark.skipif(
-        sys.platform == "win32", reason="windows simultaneous file permissions issue"
-    )
-    def test_no_simplify(self):
-        output_trees = os.path.join(self.tempdir.name, "output.trees")
-        output_trees_no_simplify = os.path.join(
-            self.tempdir.name, "output-nosimplify.trees"
-        )
-        output_trees_no_post_process = os.path.join(
-            self.tempdir.name, "output-nopostprocess.trees"
-        )
-        self.run_command(["generate-ancestors", self.sample_file])
-        self.run_command(["match-ancestors", self.sample_file])
-        self.run_command(["match-samples", self.sample_file, "-O", output_trees])
-        self.run_command(
-            [
-                "match-samples",
-                self.sample_file,
-                "--no-post-process",
-                "-O",
-                output_trees_no_post_process,
+[match.sources.ancestors]
+node_flags = 0
+create_individuals = false
+
+[match.sources.test]
+
+[ancestral_state]
+path = "{sample_toml}"
+field = "variant_ancestral_allele"
+
+[augment_sites]
+sources = ["augment"]
+"""
+            config_path = os.path.join(tmp_dir, "config.toml")
+            with open(config_path, "w") as f:
+                f.write(config_content)
+
+            # Produce the input TS
+            result = runner.invoke(cli.main, ["infer-ancestors", config_path])
+            assert result.exit_code == 0, result.output
+            result = runner.invoke(cli.main, ["match", config_path])
+            assert result.exit_code == 0, result.output
+
+            args = [
+                "augment-sites",
+                config_path,
+                "--input",
+                output_path,
+                "--output",
+                augmented_path,
             ]
-        )
-        t1 = tskit.load(output_trees).tables
-        t2 = tskit.load(output_trees_no_post_process).tables
-        assert t1.nodes != t2.nodes
-        # --no-simplify is an alias
-        self.run_command(
-            [
-                "match-samples",
-                self.sample_file,
-                "--no-simplify",
-                "-O",
-                output_trees_no_simplify,
-            ]
-        )
-        t3 = tskit.load(output_trees_no_simplify).tables
-        assert t2.nodes == t3.nodes
+            # First run
+            result = runner.invoke(cli.main, args)
+            assert result.exit_code == 0, result.output
+
+            # Second run without --force should fail
+            result = runner.invoke(cli.main, args)
+            assert result.exit_code != 0
+            assert "already exists" in result.output
+
+            # With --force should succeed
+            result = runner.invoke(cli.main, args + ["--force"])
+            assert result.exit_code == 0, result.output
 
 
-class TestList(TestCli):
-    """
-    Tests cases for the list command.
-    """
+# ---------------------------------------------------------------------------
+# TestMatchWorkdirCLI
+# ---------------------------------------------------------------------------
 
-    # Need to mock out setup_logging here or we spew logging to the console
-    # in later tests.
-    @mock.patch("tsinfer.cli.setup_logging")
-    def run_command(self, command, mock_setup_logging):
-        stdout, stderr = capture_output(cli.tsinfer_main, command)
-        assert stderr == ""
-        assert mock_setup_logging.called
-        return stdout
 
-    def test_list_samples(self):
-        output1 = self.run_command(["list", self.sample_file])
-        assert len(output1) > 0
-        output2 = self.run_command(["ls", self.sample_file])
-        assert output1 == output2
+class TestMatchWorkdirCLI:
+    def test_match_with_workdir(self):
+        """match --workdir creates match-jobs.json and checkpoint files."""
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sample_path = _write_sample_vcz_to_disk(tmp_dir)
+            config_path = _write_run_config(tmp_dir, sample_path)
+            result = runner.invoke(cli.main, ["infer-ancestors", config_path])
+            assert result.exit_code == 0, result.output
+            workdir = os.path.join(tmp_dir, "workdir")
+            result = runner.invoke(
+                cli.main,
+                ["match", config_path, "--workdir", workdir],
+            )
+            assert result.exit_code == 0, result.output
+            output_path = os.path.join(tmp_dir, "out.trees")
+            assert pathlib.Path(output_path).exists()
+            assert pathlib.Path(workdir, "match-jobs.json").exists()
 
-    def test_list_samples_storage(self):
-        output1 = self.run_command(["list", "-s", self.sample_file])
-        assert len(output1) > 0
-        output2 = self.run_command(["list", "--storage", self.sample_file])
-        assert output1 == output2
+    def test_match_with_keep_intermediates(self):
+        """match --workdir --keep-intermediates retains all .trees files."""
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sample_path = _write_sample_vcz_to_disk(tmp_dir)
+            config_path = _write_run_config(tmp_dir, sample_path)
+            result = runner.invoke(cli.main, ["infer-ancestors", config_path])
+            assert result.exit_code == 0, result.output
+            workdir = os.path.join(tmp_dir, "workdir")
+            result = runner.invoke(
+                cli.main,
+                [
+                    "match",
+                    config_path,
+                    "--workdir",
+                    workdir,
+                    "--keep-intermediates",
+                ],
+            )
+            assert result.exit_code == 0, result.output
+            trees_files = list(pathlib.Path(workdir).glob("group_*.trees"))
+            assert len(trees_files) >= 1
 
-    def test_list_ancestors(self):
-        output1 = self.run_command(["list", self.ancestor_file])
-        assert len(output1) > 0
-        output2 = self.run_command(["ls", self.ancestor_file])
-        assert output1 == output2
 
-    def test_list_ancestors_storage(self):
-        output1 = self.run_command(["list", "-s", self.ancestor_file])
-        assert len(output1) > 0
-        output2 = self.run_command(["list", "--storage", self.ancestor_file])
-        assert output1 == output2
-
-    def test_list_trees(self):
-        output1 = self.run_command(["list", self.output_trees])
-        assert len(output1) > 0
-        output2 = self.run_command(["ls", self.output_trees])
-        assert output1 == output2
-
-    def test_list_ancestor_trees(self):
-        output1 = self.run_command(["list", self.ancestor_trees])
-        assert len(output1) > 0
-        output2 = self.run_command(["ls", self.ancestor_trees])
-        assert output1 == output2
-
-    def test_list_unknown_files(self):
-        zero_file = os.path.join(self.tempdir.name, "zeros")
-        with open(zero_file, "wb") as f:
-            f.write(bytearray(100))
-        for bad_file in [zero_file]:
-            with pytest.raises(exceptions.FileFormatError):
-                self.run_command(["list", bad_file])
-        if sys.platform == "win32":
-            # Windows raises a PermissionError not IsADirectoryError when opening a dir
-            with pytest.raises(PermissionError):
-                self.run_command(["list", "/"])
-        else:
-            with pytest.raises(IsADirectoryError):
-                self.run_command(["list", "/"])
+class TestShowMatchJobs:
+    def test_show_match_jobs(self):
+        """show-match-jobs prints a histogram from a match-jobs.json file."""
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sample_path = _write_sample_vcz_to_disk(tmp_dir)
+            config_path = _write_run_config(tmp_dir, sample_path)
+            result = runner.invoke(cli.main, ["infer-ancestors", config_path])
+            assert result.exit_code == 0, result.output
+            workdir = os.path.join(tmp_dir, "workdir")
+            result = runner.invoke(
+                cli.main,
+                ["match", config_path, "--workdir", workdir],
+            )
+            assert result.exit_code == 0, result.output
+            json_path = os.path.join(workdir, "match-jobs.json")
+            result = runner.invoke(cli.main, ["show-match-jobs", json_path])
+            assert result.exit_code == 0, result.output
+            assert "Group" in result.output
+            assert "Chunks" in result.output
+            assert "Mean kb" in result.output
+            assert "Var kb" in result.output
+            assert "#" in result.output
+            assert "jobs in" in result.output

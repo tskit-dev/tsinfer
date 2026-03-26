@@ -27,14 +27,31 @@ first.
 """
 
 import collections
+import enum
 
 import attr
 import numpy as np
-import sortedcontainers
 import tskit
 
 import _tsinfer
-import tsinfer.constants as constants
+
+try:
+    import sortedcontainers
+except ImportError:
+    sortedcontainers = None  # Only needed for TreeSequenceBuilder
+
+
+class _GenotypeEncoding(enum.IntEnum):
+    EIGHT_BIT = 0
+    ONE_BIT = 1
+
+
+class _Constants:
+    GenotypeEncoding = _GenotypeEncoding
+    NODE_IS_PC_ANCESTOR = 1 << 16
+
+
+constants = _Constants()
 
 
 @attr.s
@@ -231,8 +248,6 @@ class AncestorBuilder:
         disagree = np.zeros(self.num_samples, dtype=bool)
 
         for site_index in sites:
-            if self.sites[site_index].terminal:
-                break
             a[site_index] = 0
             last_site = site_index
             g_l = self.get_site_genotypes(site_index)
