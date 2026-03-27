@@ -1,5 +1,5 @@
 /*
-** Copyright (C) 2018-2023 University of Oxford
+** Copyright (C) 2018-2026 University of Oxford
 **
 ** This file is part of tsinfer.
 **
@@ -49,13 +49,11 @@
 #define NULL_NODE   (-1)
 #define CACHE_UNSET (-1)
 
-#define TSI_COMPRESS_PATH       1
-#define TSI_EXTENDED_CHECKS     2
-#define TSI_DISABLE_WEIGHT_BY_N 4
+#define TSI_EXTENDED_CHECKS     1
+#define TSI_DISABLE_WEIGHT_BY_N 2
 
 #define TSI_GENOTYPE_ENCODING_ONE_BIT 1
 
-#define TSI_NODE_IS_PC_ANCESTOR ((tsk_flags_t) (1u << 16))
 
 typedef int8_t allele_t;
 /* TODO should probably change to uint32 when we have removed the old code.*/
