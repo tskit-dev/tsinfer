@@ -1173,6 +1173,240 @@ test_matching_multi_tree_multi_switch(void)
     check_matching_multi_switch(&_multi_tree_ex_ts);
 }
 
+/* ===================================================================
+ * tsinfer-topology fixture builders
+ *
+ * These mirror the Python fixtures in test_matcher_fixtures.py.
+ * Each builds a tsk_treeseq_t with the exact same nodes, edges,
+ * sites and mutations.
+ * =================================================================== */
+
+static void
+build_star_ts(tsk_treeseq_t *ts)
+{
+    int ret;
+    tsk_table_collection_t tables;
+
+    ret = tsk_table_collection_init(&tables, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    tables.sequence_length = 100;
+    /* Nodes: 0=ultimate root, 1=virtual root, 2,3=leaves */
+    tsk_node_table_add_row(&tables.nodes, 0, 2.0, TSK_NULL, TSK_NULL, NULL, 0);
+    tsk_node_table_add_row(&tables.nodes, 0, 1.0, TSK_NULL, TSK_NULL, NULL, 0);
+    tsk_node_table_add_row(&tables.nodes, 0, 0.5, TSK_NULL, TSK_NULL, NULL, 0);
+    tsk_node_table_add_row(&tables.nodes, 0, 0.3, TSK_NULL, TSK_NULL, NULL, 0);
+    /* Edges: all span [0,100) for valid tree sequence coverage */
+    tsk_edge_table_add_row(&tables.edges, 0, 100, 1, 2, NULL, 0);
+    tsk_edge_table_add_row(&tables.edges, 0, 100, 1, 3, NULL, 0);
+    tsk_edge_table_add_row(&tables.edges, 0, 100, 0, 1, NULL, 0);
+    /* Sites at positions 10, 20, 30 */
+    tsk_site_table_add_row(&tables.sites, 10, "A", 1, NULL, 0);
+    tsk_site_table_add_row(&tables.sites, 20, "A", 1, NULL, 0);
+    tsk_site_table_add_row(&tables.sites, 30, "A", 1, NULL, 0);
+    /* Mutations: node 3 at site 0, node 2 at site 1 */
+    tsk_mutation_table_add_row(
+        &tables.mutations, 0, 3, TSK_NULL, TSK_UNKNOWN_TIME, "T", 1, NULL, 0);
+    tsk_mutation_table_add_row(
+        &tables.mutations, 1, 2, TSK_NULL, TSK_UNKNOWN_TIME, "T", 1, NULL, 0);
+
+    ret = tsk_table_collection_sort(&tables, NULL, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = tsk_treeseq_init(ts, &tables, TSK_TS_INIT_BUILD_INDEXES);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    tsk_table_collection_free(&tables);
+}
+
+static void
+build_binary_ts(tsk_treeseq_t *ts)
+{
+    int ret;
+    tsk_table_collection_t tables;
+
+    ret = tsk_table_collection_init(&tables, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    tables.sequence_length = 100;
+    /* Nodes */
+    tsk_node_table_add_row(&tables.nodes, 0, 2.0, TSK_NULL, TSK_NULL, NULL, 0);
+    tsk_node_table_add_row(&tables.nodes, 0, 1.0, TSK_NULL, TSK_NULL, NULL, 0);
+    tsk_node_table_add_row(&tables.nodes, 0, 0.7, TSK_NULL, TSK_NULL, NULL, 0);
+    tsk_node_table_add_row(&tables.nodes, 0, 0.4, TSK_NULL, TSK_NULL, NULL, 0);
+    tsk_node_table_add_row(&tables.nodes, 0, 0.2, TSK_NULL, TSK_NULL, NULL, 0);
+    /* Edges */
+    tsk_edge_table_add_row(&tables.edges, 0, 100, 2, 3, NULL, 0);
+    tsk_edge_table_add_row(&tables.edges, 0, 100, 2, 4, NULL, 0);
+    tsk_edge_table_add_row(&tables.edges, 0, 100, 1, 2, NULL, 0);
+    tsk_edge_table_add_row(&tables.edges, 0, 100, 0, 1, NULL, 0);
+    /* Sites at 10, 20, 30, 40 */
+    tsk_site_table_add_row(&tables.sites, 10, "A", 1, NULL, 0);
+    tsk_site_table_add_row(&tables.sites, 20, "A", 1, NULL, 0);
+    tsk_site_table_add_row(&tables.sites, 30, "A", 1, NULL, 0);
+    tsk_site_table_add_row(&tables.sites, 40, "A", 1, NULL, 0);
+    /* Mutations: node 2 at site 0, node 3 at site 2, node 4 at site 3 */
+    tsk_mutation_table_add_row(
+        &tables.mutations, 0, 2, TSK_NULL, TSK_UNKNOWN_TIME, "T", 1, NULL, 0);
+    tsk_mutation_table_add_row(
+        &tables.mutations, 2, 3, TSK_NULL, TSK_UNKNOWN_TIME, "T", 1, NULL, 0);
+    tsk_mutation_table_add_row(
+        &tables.mutations, 3, 4, TSK_NULL, TSK_UNKNOWN_TIME, "T", 1, NULL, 0);
+
+    ret = tsk_table_collection_sort(&tables, NULL, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = tsk_treeseq_init(ts, &tables, TSK_TS_INIT_BUILD_INDEXES);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    tsk_table_collection_free(&tables);
+}
+
+static void
+build_two_tree_ts(tsk_treeseq_t *ts)
+{
+    int ret;
+    tsk_table_collection_t tables;
+
+    ret = tsk_table_collection_init(&tables, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    tables.sequence_length = 100;
+    /* Nodes */
+    tsk_node_table_add_row(&tables.nodes, 0, 2.0, TSK_NULL, TSK_NULL, NULL, 0);
+    tsk_node_table_add_row(&tables.nodes, 0, 1.0, TSK_NULL, TSK_NULL, NULL, 0);
+    tsk_node_table_add_row(&tables.nodes, 0, 0.6, TSK_NULL, TSK_NULL, NULL, 0);
+    tsk_node_table_add_row(&tables.nodes, 0, 0.3, TSK_NULL, TSK_NULL, NULL, 0);
+    /* Edges: breakpoint at 30 */
+    tsk_edge_table_add_row(&tables.edges, 30, 100, 2, 3, NULL, 0);
+    tsk_edge_table_add_row(&tables.edges, 0, 100, 1, 2, NULL, 0);
+    tsk_edge_table_add_row(&tables.edges, 0, 30, 1, 3, NULL, 0);
+    tsk_edge_table_add_row(&tables.edges, 0, 100, 0, 1, NULL, 0);
+    /* Sites at 10, 20, 30, 40 */
+    tsk_site_table_add_row(&tables.sites, 10, "A", 1, NULL, 0);
+    tsk_site_table_add_row(&tables.sites, 20, "A", 1, NULL, 0);
+    tsk_site_table_add_row(&tables.sites, 30, "A", 1, NULL, 0);
+    tsk_site_table_add_row(&tables.sites, 40, "A", 1, NULL, 0);
+    /* Mutations: node 2 at site 0, node 3 at site 2 */
+    tsk_mutation_table_add_row(
+        &tables.mutations, 0, 2, TSK_NULL, TSK_UNKNOWN_TIME, "T", 1, NULL, 0);
+    tsk_mutation_table_add_row(
+        &tables.mutations, 2, 3, TSK_NULL, TSK_UNKNOWN_TIME, "T", 1, NULL, 0);
+
+    ret = tsk_table_collection_sort(&tables, NULL, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = tsk_treeseq_init(ts, &tables, TSK_TS_INIT_BUILD_INDEXES);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    tsk_table_collection_free(&tables);
+}
+
+static void
+build_deep_chain_ts(tsk_treeseq_t *ts)
+{
+    int ret;
+    tsk_table_collection_t tables;
+
+    ret = tsk_table_collection_init(&tables, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    tables.sequence_length = 100;
+    /* Nodes: root -> A -> B -> C */
+    tsk_node_table_add_row(&tables.nodes, 0, 2.0, TSK_NULL, TSK_NULL, NULL, 0);
+    tsk_node_table_add_row(&tables.nodes, 0, 1.0, TSK_NULL, TSK_NULL, NULL, 0);
+    tsk_node_table_add_row(&tables.nodes, 0, 0.8, TSK_NULL, TSK_NULL, NULL, 0);
+    tsk_node_table_add_row(&tables.nodes, 0, 0.5, TSK_NULL, TSK_NULL, NULL, 0);
+    tsk_node_table_add_row(&tables.nodes, 0, 0.2, TSK_NULL, TSK_NULL, NULL, 0);
+    /* Edges */
+    tsk_edge_table_add_row(&tables.edges, 0, 100, 3, 4, NULL, 0);
+    tsk_edge_table_add_row(&tables.edges, 0, 100, 2, 3, NULL, 0);
+    tsk_edge_table_add_row(&tables.edges, 0, 100, 1, 2, NULL, 0);
+    tsk_edge_table_add_row(&tables.edges, 0, 100, 0, 1, NULL, 0);
+    /* Sites at 10, 20, 30, 40 */
+    tsk_site_table_add_row(&tables.sites, 10, "A", 1, NULL, 0);
+    tsk_site_table_add_row(&tables.sites, 20, "A", 1, NULL, 0);
+    tsk_site_table_add_row(&tables.sites, 30, "A", 1, NULL, 0);
+    tsk_site_table_add_row(&tables.sites, 40, "A", 1, NULL, 0);
+    /* Mutations: node 2 at site 0, node 3 at site 1, node 4 at site 2 */
+    tsk_mutation_table_add_row(
+        &tables.mutations, 0, 2, TSK_NULL, TSK_UNKNOWN_TIME, "T", 1, NULL, 0);
+    tsk_mutation_table_add_row(
+        &tables.mutations, 1, 3, TSK_NULL, TSK_UNKNOWN_TIME, "T", 1, NULL, 0);
+    tsk_mutation_table_add_row(
+        &tables.mutations, 2, 4, TSK_NULL, TSK_UNKNOWN_TIME, "T", 1, NULL, 0);
+
+    ret = tsk_table_collection_sort(&tables, NULL, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = tsk_treeseq_init(ts, &tables, TSK_TS_INIT_BUILD_INDEXES);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    tsk_table_collection_free(&tables);
+}
+
+/* ===================================================================
+ * tsinfer-topology matching tests
+ * =================================================================== */
+
+static void
+test_matching_star_ts(void)
+{
+    tsk_treeseq_t ts;
+    allele_t match[3];
+    tsk_id_t left[3], right[3], parent[3];
+    tsk_size_t path_length;
+
+    build_star_ts(&ts);
+    /* Just check that matcher_indexes_alloc and find_path don't crash */
+    allele_t h1[] = { 0, 1, 0 };
+    run_match(&ts, 1e-9, 0, h1, match, &path_length, left, right, parent);
+
+    allele_t h2[] = { 1, 0, 0 };
+    run_match(&ts, 1e-9, 0, h2, match, &path_length, left, right, parent);
+
+    tsk_treeseq_free(&ts);
+}
+
+static void
+test_matching_binary_ts(void)
+{
+    tsk_treeseq_t ts;
+    allele_t match[4];
+    tsk_id_t left[4], right[4], parent[4];
+    tsk_size_t path_length;
+
+    build_binary_ts(&ts);
+    allele_t h1[] = { 1, 0, 1, 0 };
+    run_match(&ts, 1e-9, 0, h1, match, &path_length, left, right, parent);
+
+    allele_t h2[] = { 1, 0, 0, 0 };
+    run_match(&ts, 1e-9, 0, h2, match, &path_length, left, right, parent);
+
+    tsk_treeseq_free(&ts);
+}
+
+static void
+test_matching_two_tree_ts(void)
+{
+    tsk_treeseq_t ts;
+    allele_t match[4];
+    tsk_id_t left[4], right[4], parent[4];
+    tsk_size_t path_length;
+
+    build_two_tree_ts(&ts);
+    allele_t h1[] = { 1, 0, 0, 0 };
+    run_match(&ts, 1e-9, 0, h1, match, &path_length, left, right, parent);
+
+    tsk_treeseq_free(&ts);
+}
+
+static void
+test_matching_deep_chain_ts(void)
+{
+    tsk_treeseq_t ts;
+    allele_t match[4];
+    tsk_id_t left[4], right[4], parent[4];
+    tsk_size_t path_length;
+
+    build_deep_chain_ts(&ts);
+    allele_t h1[] = { 1, 1, 1, 0 };
+    run_match(&ts, 1e-9, 0, h1, match, &path_length, left, right, parent);
+
+    allele_t h2[] = { 1, 0, 0, 0 };
+    run_match(&ts, 1e-9, 0, h2, match, &path_length, left, right, parent);
+
+    tsk_treeseq_free(&ts);
+}
+
 static void
 test_strerror(void)
 {
@@ -1290,6 +1524,11 @@ main(int argc, char **argv)
             test_matching_single_tree_multi_switch },
         { "test_matching_multi_tree_multi_switch",
             test_matching_multi_tree_multi_switch },
+
+        { "test_matching_star_ts", test_matching_star_ts },
+        { "test_matching_binary_ts", test_matching_binary_ts },
+        { "test_matching_two_tree_ts", test_matching_two_tree_ts },
+        { "test_matching_deep_chain_ts", test_matching_deep_chain_ts },
 
         { "test_strerror", test_strerror },
 
