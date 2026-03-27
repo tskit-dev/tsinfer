@@ -594,29 +594,12 @@ class AncestorMatcher:
         return Match(path, query_haplotype, match)
 
 
-def run_match_python(ts, h, *, vestigial_root=True):
-    """Run only the Python reference matcher (no C comparison)."""
-    h = np.array(h).astype(np.int8)
-    assert len(h) == ts.num_sites
-    recombination = np.zeros(ts.num_sites) + 1e-9
-    mismatch = np.zeros(ts.num_sites)
-    precision = 22
-    matcher_indexes = MatcherIndexes(ts.tables, vestigial_root=vestigial_root)
-    matcher = AncestorMatcher(
-        matcher_indexes,
-        recombination=recombination,
-        mismatch=mismatch,
-        precision=precision,
-    )
-    return matcher.find_path(h)
-
-
-def run_match_tsinfer(ts, h, *, c_too=False):
+def run_match_tsinfer(ts, h):
     """Run Python reference matcher on a tsinfer-produced topology.
 
     Skips add_vestigial_root since tsinfer topologies already have
-    the required root structure.  When *c_too* is True, also runs
-    the C AncestorMatcher2 and compares.
+    the required root structure.  Also runs the C AncestorMatcher2
+    and compares.
     """
     h = np.array(h).astype(np.int8)
     assert len(h) == ts.num_sites
@@ -634,8 +617,7 @@ def run_match_tsinfer(ts, h, *, c_too=False):
     )
     match_py = matcher.find_path(h)
 
-    # C implementation (segfaults on tsinfer topologies — opt-in only)
-    if c_too and ts.num_sites > 0:
+    if ts.num_sites > 0:
         mi = matching.MatcherIndexes(ts, vestigial_root=False)
         am = matching.AncestorMatcher2(mi, recombination, mismatch)
         match_out = np.zeros(ts.num_sites, dtype=np.int8)
