@@ -28,6 +28,7 @@
 #define TSI_ERR_ONE_BIT_NON_BINARY                                  -24
 #define TSI_ERR_IO                                                  -25
 #define TSI_ERR_BAD_ANCESTRAL_STATE                                 -26
+#define TSI_ERR_MULTIPLE_MUTATIONS_AT_SITE                          -27
 // clang-format on
 
 #ifdef __GNUC__

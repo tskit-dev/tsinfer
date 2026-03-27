@@ -782,6 +782,45 @@ test_matching_errors(void)
 }
 
 static void
+test_matcher_indexes_errors(void)
+{
+    int ret;
+    matcher_indexes_t mi;
+    tsk_table_collection_t tables;
+
+    memset(&mi, 0, sizeof(mi));
+    ret = tsk_table_collection_init(&tables, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    tables.sequence_length = 100;
+
+    tsk_node_table_add_row(&tables.nodes, 0, 2.0, TSK_NULL, TSK_NULL, NULL, 0);
+    tsk_node_table_add_row(&tables.nodes, 0, 1.0, TSK_NULL, TSK_NULL, NULL, 0);
+    tsk_node_table_add_row(&tables.nodes, 0, 0.5, TSK_NULL, TSK_NULL, NULL, 0);
+
+    tsk_edge_table_add_row(&tables.edges, 0, 100, 0, 1, NULL, 0);
+    tsk_edge_table_add_row(&tables.edges, 0, 100, 1, 2, NULL, 0);
+
+    tsk_site_table_add_row(&tables.sites, 10, "A", 1, NULL, 0);
+
+    /* Two mutations at the same site */
+    tsk_mutation_table_add_row(
+        &tables.mutations, 0, 1, TSK_NULL, TSK_UNKNOWN_TIME, "T", 1, NULL, 0);
+    tsk_mutation_table_add_row(
+        &tables.mutations, 0, 2, 0, TSK_UNKNOWN_TIME, "C", 1, NULL, 0);
+
+    ret = tsk_table_collection_sort(&tables, NULL, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = tsk_table_collection_build_index(&tables, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    ret = matcher_indexes_alloc(&mi, &tables, NULL, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_MULTIPLE_MUTATIONS_AT_SITE);
+    matcher_indexes_free(&mi);
+
+    tsk_table_collection_free(&tables);
+}
+
+static void
 test_tsb_errors(void)
 {
     int ret;
@@ -1571,6 +1610,7 @@ main(int argc, char **argv)
         { "test_matching_one_site", test_matching_one_site },
         { "test_matching_one_site_many_alleles", test_matching_one_site_many_alleles },
         { "test_matching_errors", test_matching_errors },
+        { "test_matcher_indexes_errors", test_matcher_indexes_errors },
 
         { "test_tsb_errors", test_tsb_errors },
 
