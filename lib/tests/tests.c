@@ -944,6 +944,239 @@ test_matching_triallelic_ts(void)
 }
 
 static void
+test_matching_print_state(void)
+{
+    /*
+     * Exercise matcher_indexes_print_state and ancestor_matcher_print_state
+     * by running a match and printing state to /dev/null.
+     */
+    tsk_treeseq_t ts;
+    ancestor_matcher_t am;
+    matcher_indexes_t mi;
+    allele_t match[3];
+    tsk_id_t left[3], right[3], parent[3];
+    tsk_size_t path_length;
+    double rho[] = { 1e-9, 1e-9, 1e-9 };
+    double mu[] = { 1e-20, 1e-20, 1e-20 };
+    int ret;
+
+    build_star_ts(&ts);
+
+    ret = matcher_indexes_alloc(&mi, ts.tables, NULL, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    matcher_indexes_print_state(&mi, _devnull);
+
+    ret = ancestor_matcher_alloc(&am, &mi, rho, mu, DBL_MIN, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    allele_t h[] = { 0, 1, 0 };
+    ret = ancestor_matcher_find_path(
+        &am, 0, 3, h, match, &path_length, left, right, parent);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    ancestor_matcher_print_state(&am, _devnull);
+
+    ancestor_matcher_free(&am);
+    matcher_indexes_free(&mi);
+    tsk_treeseq_free(&ts);
+}
+
+static void
+test_matching_extended_checks(void)
+{
+    /*
+     * Run a match with TSI_EXTENDED_CHECKS flag to exercise
+     * ancestor_matcher_check_state at each site.
+     */
+    tsk_treeseq_t ts;
+    ancestor_matcher_t am;
+    matcher_indexes_t mi;
+    allele_t match[3];
+    tsk_id_t left[3], right[3], parent[3];
+    tsk_size_t path_length;
+    double rho[] = { 1e-9, 1e-9, 1e-9 };
+    double mu[] = { 1e-20, 1e-20, 1e-20 };
+    int ret;
+
+    build_star_ts(&ts);
+
+    ret = matcher_indexes_alloc(&mi, ts.tables, NULL, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = ancestor_matcher_alloc(&am, &mi, rho, mu, DBL_MIN, TSI_EXTENDED_CHECKS);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    allele_t h[] = { 1, 0, 0 };
+    ret = ancestor_matcher_find_path(
+        &am, 0, 3, h, match, &path_length, left, right, parent);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    CU_ASSERT_EQUAL(path_length, 1);
+    CU_ASSERT_EQUAL(parent[0], 3);
+
+    ancestor_matcher_free(&am);
+    matcher_indexes_free(&mi);
+    tsk_treeseq_free(&ts);
+}
+
+static void
+test_matching_getters(void)
+{
+    /*
+     * Exercise ancestor_matcher_get_mean_traceback_size and
+     * ancestor_matcher_get_total_memory after a match.
+     */
+    tsk_treeseq_t ts;
+    ancestor_matcher_t am;
+    matcher_indexes_t mi;
+    allele_t match[3];
+    tsk_id_t left[3], right[3], parent[3];
+    tsk_size_t path_length;
+    double rho[] = { 1e-9, 1e-9, 1e-9 };
+    double mu[] = { 1e-20, 1e-20, 1e-20 };
+    double mean_tb;
+    size_t total_mem;
+    int ret;
+
+    build_star_ts(&ts);
+
+    ret = matcher_indexes_alloc(&mi, ts.tables, NULL, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = ancestor_matcher_alloc(&am, &mi, rho, mu, DBL_MIN, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    allele_t h[] = { 0, 1, 0 };
+    ret = ancestor_matcher_find_path(
+        &am, 0, 3, h, match, &path_length, left, right, parent);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    mean_tb = ancestor_matcher_get_mean_traceback_size(&am);
+    CU_ASSERT_TRUE(mean_tb >= 0);
+    total_mem = ancestor_matcher_get_total_memory(&am);
+    CU_ASSERT_TRUE(total_mem > 0);
+
+    ancestor_matcher_free(&am);
+    matcher_indexes_free(&mi);
+    tsk_treeseq_free(&ts);
+}
+
+static void
+test_matching_bad_haplotype_allele(void)
+{
+    /*
+     * Pass a haplotype allele >= num_alleles to trigger
+     * TSI_ERR_BAD_HAPLOTYPE_ALLELE.
+     */
+    tsk_treeseq_t ts;
+    ancestor_matcher_t am;
+    matcher_indexes_t mi;
+    allele_t match[3];
+    tsk_id_t left[3], right[3], parent[3];
+    tsk_size_t path_length;
+    double rho[] = { 1e-9, 1e-9, 1e-9 };
+    double mu[] = { 1e-20, 1e-20, 1e-20 };
+    int ret;
+
+    build_star_ts(&ts);
+
+    ret = matcher_indexes_alloc(&mi, ts.tables, NULL, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = ancestor_matcher_alloc(&am, &mi, rho, mu, DBL_MIN, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    /* allele 2 at site 0 with default num_alleles=2 is out of range */
+    allele_t h[] = { 2, 0, 0 };
+    ret = ancestor_matcher_find_path(
+        &am, 0, 3, h, match, &path_length, left, right, parent);
+    CU_ASSERT_EQUAL(ret, TSI_ERR_BAD_HAPLOTYPE_ALLELE);
+
+    ancestor_matcher_free(&am);
+    matcher_indexes_free(&mi);
+    tsk_treeseq_free(&ts);
+}
+
+static void
+test_matching_impossible_extreme_mu(void)
+{
+    /*
+     * Trigger MATCH_IMPOSSIBLE_EXTREME_MUTATION_PROBA by using mu=0 with
+     * a haplotype that mismatches all nodes at a site with no mutation.
+     *
+     * star_ts site 2 has no mutation — all nodes carry the ancestral allele 0.
+     * Querying h=[0,0,1] forces a universal mismatch at site 2 with mu=0,
+     * so p_e=0 for every node, making max_L=0.
+     */
+    tsk_treeseq_t ts;
+    ancestor_matcher_t am;
+    matcher_indexes_t mi;
+    allele_t match[3];
+    tsk_id_t left[3], right[3], parent[3];
+    tsk_size_t path_length;
+    int ret;
+
+    build_star_ts(&ts);
+
+    double rho[] = { 1e-9, 1e-9, 1e-9 };
+    double mu[] = { 0, 0, 0 };
+    ret = matcher_indexes_alloc(&mi, ts.tables, NULL, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = ancestor_matcher_alloc(&am, &mi, rho, mu, DBL_MIN, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    allele_t h[] = { 0, 0, 1 };
+    ret = ancestor_matcher_find_path(
+        &am, 0, 3, h, match, &path_length, left, right, parent);
+    CU_ASSERT_EQUAL(ret, TSI_ERR_MATCH_IMPOSSIBLE_EXTREME_MUTATION_PROBA);
+
+    ancestor_matcher_free(&am);
+    matcher_indexes_free(&mi);
+    tsk_treeseq_free(&ts);
+}
+
+static void
+test_matching_impossible_zero_recomb(void)
+{
+    /*
+     * Trigger MATCH_IMPOSSIBLE_ZERO_RECOMB_PRECISION with rho=0,
+     * mu in (0,1), and a site where all nodes get p_e=0.
+     *
+     * With num_alleles=3 and mu=0.5, a matching emission probability is
+     * p_e = 1 - (3-1)*0.5 = 0. At star_ts site 2 (no mutation), all
+     * nodes carry allele 0. Querying h[2]=0 means all nodes "match",
+     * giving p_e=0 for every node, so max_L=0.
+     *
+     * Since mu=0.5 is in (0,1), the extreme-mu check is skipped,
+     * and the rho=0 check fires.
+     */
+    tsk_treeseq_t ts;
+    ancestor_matcher_t am;
+    matcher_indexes_t mi;
+    allele_t match[3];
+    tsk_id_t left[3], right[3], parent[3];
+    tsk_size_t path_length;
+    tsk_size_t num_alleles[] = { 3, 3, 3 };
+    double rho[] = { 0, 0, 0 };
+    double mu[] = { 0.5, 0.5, 0.5 };
+    int ret;
+
+    build_star_ts(&ts);
+
+    ret = matcher_indexes_alloc(&mi, ts.tables, num_alleles, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = ancestor_matcher_alloc(&am, &mi, rho, mu, DBL_MIN, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    /* h=[0,0,0]: at every site, all nodes carry allele 0.
+     * With num_alleles=3, mu=0.5: p_e_match = 1-2*0.5 = 0 */
+    allele_t h[] = { 0, 0, 0 };
+    ret = ancestor_matcher_find_path(
+        &am, 0, 3, h, match, &path_length, left, right, parent);
+    CU_ASSERT_EQUAL(ret, TSI_ERR_MATCH_IMPOSSIBLE_ZERO_RECOMB_PRECISION);
+
+    ancestor_matcher_free(&am);
+    matcher_indexes_free(&mi);
+    tsk_treeseq_free(&ts);
+}
+
+static void
 test_strerror(void)
 {
     int j;
@@ -1057,6 +1290,13 @@ main(int argc, char **argv)
         { "test_matching_two_tree_ts", test_matching_two_tree_ts },
         { "test_matching_deep_chain_ts", test_matching_deep_chain_ts },
         { "test_matching_triallelic_ts", test_matching_triallelic_ts },
+
+        { "test_matching_print_state", test_matching_print_state },
+        { "test_matching_extended_checks", test_matching_extended_checks },
+        { "test_matching_getters", test_matching_getters },
+        { "test_matching_bad_haplotype_allele", test_matching_bad_haplotype_allele },
+        { "test_matching_impossible_extreme_mu", test_matching_impossible_extreme_mu },
+        { "test_matching_impossible_zero_recomb", test_matching_impossible_zero_recomb },
 
         { "test_strerror", test_strerror },
 
