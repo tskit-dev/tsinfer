@@ -38,7 +38,7 @@ import zarr
 from tsinfer import ancestors, config, utils, vcz
 
 # ---------------------------------------------------------------------------
-# Python reference implementation of AncestorBuilder (moved from algorithm.py)
+# Python reference implementation of AncestorBuilder
 # ---------------------------------------------------------------------------
 
 
