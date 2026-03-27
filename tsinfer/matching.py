@@ -264,7 +264,9 @@ class Matcher:
         )
         t0 = time_.monotonic()
         if self._use_matcher2:
-            self._matcher_indexes = MatcherIndexes(ts, vestigial_root=False)
+            self._matcher_indexes = MatcherIndexes(
+                ts, vestigial_root=False, num_alleles=num_alleles
+            )
         else:
             self._tsb = _tsb_from_ts(
                 ts,
@@ -551,7 +553,7 @@ class _LegacyMatcherWrapper:
 class MatcherIndexes(_tsinfer.MatcherIndexes):
     """Wrapper around the C MatcherIndexes, built from a tree sequence."""
 
-    def __init__(self, ts, *, vestigial_root=True):
+    def __init__(self, ts, *, vestigial_root=True, num_alleles=None):
         if vestigial_root:
             ts = add_vestigial_root(ts)
         tables = ts.dump_tables()
@@ -559,7 +561,7 @@ class MatcherIndexes(_tsinfer.MatcherIndexes):
         ll_tables.fromdict(tables.asdict())
         self.sequence_length = ts.sequence_length
         self.num_sites = ts.num_sites
-        super().__init__(ll_tables)
+        super().__init__(ll_tables, num_alleles=num_alleles)
 
 
 class AncestorMatcher2(_tsinfer.AncestorMatcher2):

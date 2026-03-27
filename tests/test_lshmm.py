@@ -75,7 +75,7 @@ class MatcherIndexes:
     The memory that can be shared between AncestorMatcher instances.
     """
 
-    def __init__(self, in_tables, *, vestigial_root=True):
+    def __init__(self, in_tables, *, vestigial_root=True, num_alleles=None):
         ts = in_tables.tree_sequence()
         if vestigial_root:
             ts = matching.add_vestigial_root(ts)
@@ -93,8 +93,10 @@ class MatcherIndexes:
             tables.edges, tables.indexes.edge_removal_order
         )
 
-        # TODO fixme
-        self.num_alleles = np.zeros(self.num_sites, dtype=int) + 2
+        if num_alleles is not None:
+            self.num_alleles = np.asarray(num_alleles, dtype=int)
+        else:
+            self.num_alleles = np.zeros(self.num_sites, dtype=int) + 2
         self.sites_position = np.zeros(ts.num_sites + 1, dtype=np.uint32)
         self.sites_position[:-1] = tables.sites.position
         self.sites_position[-1] = tables.sequence_length

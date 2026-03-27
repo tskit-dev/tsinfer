@@ -1082,7 +1082,7 @@ run_match(const tsk_treeseq_t *ts, double rho, double mu, const allele_t *h,
         recombination_rate[j] = rho;
     }
 
-    ret = matcher_indexes_alloc(&mi, ts->tables, 0);
+    ret = matcher_indexes_alloc(&mi, ts->tables, NULL, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
     /* matcher_indexes_print_state(&mi, stdout); */
     ret = ancestor_matcher2_alloc(&am, &mi, recombination_rate, mutation_rate, 14, 0);
@@ -1442,6 +1442,44 @@ test_matching_deep_chain_ts(void)
 }
 
 static void
+test_matching_triallelic_ts(void)
+{
+    /*
+     * Test that num_alleles > 2 is accepted.
+     * Use the star topology but tell the matcher that site 0 has 3 alleles.
+     * Query with allele 2 at site 0 should not trigger BAD_HAPLOTYPE_ALLELE.
+     */
+    tsk_treeseq_t ts;
+    ancestor_matcher2_t am;
+    matcher_indexes_t mi;
+    allele_t match[3];
+    tsk_id_t left[3], right[3], parent[3];
+    tsk_size_t path_length;
+    tsk_size_t num_alleles[] = { 3, 2, 2 };
+    double rho[] = { 1e-9, 1e-9, 1e-9 };
+    double mu[] = { 1e-20, 1e-20, 1e-20 };
+    int ret;
+
+    build_star_ts(&ts);
+
+    ret = matcher_indexes_alloc(&mi, ts.tables, num_alleles, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = ancestor_matcher2_alloc(&am, &mi, rho, mu, 14, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    /* Query [2,0,0]: allele 2 at site 0 needs num_alleles >= 3 */
+    allele_t h[] = { 2, 0, 0 };
+    ret = ancestor_matcher2_find_path(
+        &am, 0, 3, h, match, &path_length, left, right, parent);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    CU_ASSERT_EQUAL(path_length, 1);
+
+    ancestor_matcher2_free(&am);
+    matcher_indexes_free(&mi);
+    tsk_treeseq_free(&ts);
+}
+
+static void
 test_strerror(void)
 {
     int j;
@@ -1563,6 +1601,7 @@ main(int argc, char **argv)
         { "test_matching_binary_ts", test_matching_binary_ts },
         { "test_matching_two_tree_ts", test_matching_two_tree_ts },
         { "test_matching_deep_chain_ts", test_matching_deep_chain_ts },
+        { "test_matching_triallelic_ts", test_matching_triallelic_ts },
 
         { "test_strerror", test_strerror },
 
