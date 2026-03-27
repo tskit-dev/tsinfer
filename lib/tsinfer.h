@@ -262,7 +262,7 @@ typedef struct {
     } sites;
     edge_t *left_index_edges;
     edge_t *right_index_edges;
-    tsk_blkalloc_t allocator;
+    tsi_blkalloc_t allocator;
 } matcher_indexes_t;
 
 typedef struct {

@@ -1085,7 +1085,7 @@ matcher_indexes_add_mutation(
     int ret = 0;
     mutation_list_node_t *list_node, *tail;
 
-    list_node = tsk_blkalloc_get(&self->allocator, sizeof(mutation_list_node_t));
+    list_node = tsi_blkalloc_get(&self->allocator, sizeof(mutation_list_node_t));
     if (list_node == NULL) {
         ret = TSI_ERR_NO_MEMORY;
         goto out;
@@ -1174,7 +1174,7 @@ matcher_indexes_alloc(matcher_indexes_t *self, const tsk_table_collection_t *tab
         ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
-    ret = tsk_blkalloc_init(&self->allocator, 65536);
+    ret = tsi_blkalloc_init(&self->allocator, 65536);
     if (ret != 0) {
         goto out;
     }
@@ -1199,7 +1199,7 @@ matcher_indexes_free(matcher_indexes_t *self)
     tsk_safe_free(self->sites.mutations);
     tsk_safe_free(self->sites.position);
     tsk_safe_free(self->sites.num_alleles);
-    tsk_blkalloc_free(&self->allocator);
+    tsi_blkalloc_free(&self->allocator);
     return 0;
 }
 
