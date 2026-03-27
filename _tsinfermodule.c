@@ -1683,15 +1683,26 @@ MatcherIndexes_init(MatcherIndexes *self, PyObject *args, PyObject *kwds)
     int ret = -1;
     int err;
     LightweightTableCollection *tables;
-    static char *kwlist[] = { "tables", NULL };
+    PyObject *num_alleles_obj = NULL;
+    PyArrayObject *num_alleles_array = NULL;
+    tsk_size_t *num_alleles_data = NULL;
+    static char *kwlist[] = { "tables", "num_alleles", NULL };
 
     self->matcher_indexes = NULL;
-    if (!PyArg_ParseTupleAndKeywords(
-            args, kwds, "O!", kwlist, &LightweightTableCollectionType, &tables)) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!|O", kwlist,
+            &LightweightTableCollectionType, &tables, &num_alleles_obj)) {
         goto out;
     }
     if (LightweightTableCollection_check_state(tables) != 0) {
         goto out;
+    }
+    if (num_alleles_obj != NULL && num_alleles_obj != Py_None) {
+        num_alleles_array = (PyArrayObject *) PyArray_FROMANY(
+            num_alleles_obj, NPY_UINT64, 1, 1, NPY_ARRAY_IN_ARRAY);
+        if (num_alleles_array == NULL) {
+            goto out;
+        }
+        num_alleles_data = PyArray_DATA(num_alleles_array);
     }
 
     self->matcher_indexes = PyMem_Calloc(1, sizeof(*self->matcher_indexes));
@@ -1699,13 +1710,15 @@ MatcherIndexes_init(MatcherIndexes *self, PyObject *args, PyObject *kwds)
         PyErr_NoMemory();
         goto out;
     }
-    err = matcher_indexes_alloc(self->matcher_indexes, tables->tables, 0);
+    err = matcher_indexes_alloc(
+        self->matcher_indexes, tables->tables, num_alleles_data, 0);
     if (err != 0) {
         handle_library_error(err);
         goto out;
     }
     ret = 0;
 out:
+    Py_XDECREF(num_alleles_array);
     return ret;
 }
 

@@ -1108,8 +1108,8 @@ out:
 }
 
 static int
-matcher_indexes_copy_mutation_data(
-    matcher_indexes_t *self, const tsk_table_collection_t *tables)
+matcher_indexes_copy_mutation_data(matcher_indexes_t *self,
+    const tsk_table_collection_t *tables, const tsk_size_t *num_alleles)
 {
     int ret = 0;
     tsk_size_t j;
@@ -1124,7 +1124,7 @@ matcher_indexes_copy_mutation_data(
         /* TODO check for under/overflow */
         converted_position[j] = (coordinate_t) sites_position[j];
         self->sites.mutations[j] = NULL;
-        self->sites.num_alleles[j] = 2;
+        self->sites.num_alleles[j] = num_alleles != NULL ? num_alleles[j] : 2;
     }
     converted_position[j] = (coordinate_t) tables->sequence_length;
 
@@ -1137,8 +1137,6 @@ matcher_indexes_copy_mutation_data(
         }
 
         self->sites.mutations[site] = NULL;
-        /* FIXME */
-        self->sites.num_alleles[site] = 2;
         ret = matcher_indexes_add_mutation(self, site, mutations_node[j], 1);
         if (ret != 0) {
             goto out;
@@ -1151,8 +1149,8 @@ out:
 }
 
 int
-matcher_indexes_alloc(
-    matcher_indexes_t *self, const tsk_table_collection_t *tables, tsk_flags_t flags)
+matcher_indexes_alloc(matcher_indexes_t *self, const tsk_table_collection_t *tables,
+    const tsk_size_t *num_alleles, tsk_flags_t flags)
 {
     int ret = 0;
 
@@ -1185,7 +1183,7 @@ matcher_indexes_alloc(
     if (ret != 0) {
         goto out;
     }
-    ret = matcher_indexes_copy_mutation_data(self, tables);
+    ret = matcher_indexes_copy_mutation_data(self, tables, num_alleles);
     if (ret != 0) {
         goto out;
     }
