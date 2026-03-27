@@ -31,6 +31,7 @@ import sys
 import time as time_
 
 import numpy as np
+import psutil
 import tqdm
 import tskit
 
@@ -578,13 +579,16 @@ def match(
             progress=progress,
         )
         completed_haps += num_in_group
+        rss = psutil.Process().memory_info().rss / (1024 * 1024)
         logger.info(
-            "Group %d done (total=%d): %d/%d haplotypes completed (%.1f%%)",
+            "Group %d done (total=%d): %d/%d haplotypes completed (%.1f%%),"
+            " RSS=%.1f MiB",
             group_idx,
             num_groups,
             completed_haps,
             total_haps,
             100.0 * completed_haps / total_haps if total_haps > 0 else 0,
+            rss,
         )
 
         # Write checkpoint to workdir if configured
