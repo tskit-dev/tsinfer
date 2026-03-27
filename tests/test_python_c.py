@@ -28,6 +28,7 @@ import pytest
 import tskit
 
 import _tsinfer
+from tsinfer import matching
 
 IS_WINDOWS = sys.platform == "win32"
 
@@ -351,6 +352,55 @@ class TestUninitialised:
                     method = getattr(uninitialised, method_name)
                     with pytest.raises((SystemError, ValueError)):
                         method()
+
+
+def make_matcher_indexes_and_matcher(num_samples=4):
+    """Build a MatcherIndexes and AncestorMatcher2 from a small tree sequence."""
+    tables = tskit.Tree.generate_balanced(num_samples).tree_sequence.dump_tables()
+    tables.sequence_length = 2
+    tables.edges.right = np.full(len(tables.edges), 2, dtype=np.float64)
+    tables.sites.add_row(position=1, ancestral_state="A")
+    tables.mutations.add_row(site=0, node=1, derived_state="T")
+    ts = tables.tree_sequence()
+    ts = matching.add_vestigial_root(ts)
+    ll_tables = _tsinfer.LightweightTableCollection(ts.sequence_length)
+    ll_tables.fromdict(ts.dump_tables().asdict())
+    mi = _tsinfer.MatcherIndexes(ll_tables)
+    recombination = np.array([1e-9])
+    mismatch = np.array([0.0])
+    am = _tsinfer.AncestorMatcher2(mi, recombination=recombination, mismatch=mismatch)
+    return ts, mi, am
+
+
+class TestAncestorMatcher2:
+    def test_total_memory_before_find_path(self):
+        _, _, am = make_matcher_indexes_and_matcher()
+        mem = am.total_memory
+        if IS_WINDOWS:
+            assert mem == sys.maxsize
+        else:
+            assert isinstance(mem, int)
+            # Before find_path, only the initial block is allocated
+            assert mem > 0
+
+    def test_total_memory_after_find_path(self):
+        ts, _, am = make_matcher_indexes_and_matcher()
+        h = np.zeros(ts.num_sites, dtype=np.int8)
+        am.find_path(h, 0, ts.num_sites)
+        mem = am.total_memory
+        if IS_WINDOWS:
+            assert mem == sys.maxsize
+        else:
+            assert isinstance(mem, int)
+            assert mem > 0
+
+    def test_mean_traceback_size(self):
+        ts, _, am = make_matcher_indexes_and_matcher()
+        h = np.zeros(ts.num_sites, dtype=np.int8)
+        am.find_path(h, 0, ts.num_sites)
+        tb = am.mean_traceback_size
+        assert isinstance(tb, float)
+        assert tb >= 0
 
 
 class TestMatcherIndexes:
