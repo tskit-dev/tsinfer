@@ -10,6 +10,7 @@ import pickle
 import msprime
 import numpy as np
 import pytest
+import test_matcher_fixtures
 import tskit
 
 import _tsinfer
@@ -74,8 +75,10 @@ class MatcherIndexes:
     The memory that can be shared between AncestorMatcher instances.
     """
 
-    def __init__(self, in_tables):
-        ts = matching.add_vestigial_root(in_tables.tree_sequence())
+    def __init__(self, in_tables, *, vestigial_root=True):
+        ts = in_tables.tree_sequence()
+        if vestigial_root:
+            ts = matching.add_vestigial_root(ts)
         tables = ts.dump_tables()
 
         self.sequence_length = tables.sequence_length
@@ -589,6 +592,23 @@ class AncestorMatcher:
         return Match(path, query_haplotype, match)
 
 
+def run_match_python(ts, h, *, vestigial_root=True):
+    """Run only the Python reference matcher (no C comparison)."""
+    h = np.array(h).astype(np.int8)
+    assert len(h) == ts.num_sites
+    recombination = np.zeros(ts.num_sites) + 1e-9
+    mismatch = np.zeros(ts.num_sites)
+    precision = 22
+    matcher_indexes = MatcherIndexes(ts.tables, vestigial_root=vestigial_root)
+    matcher = AncestorMatcher(
+        matcher_indexes,
+        recombination=recombination,
+        mismatch=mismatch,
+        precision=precision,
+    )
+    return matcher.find_path(h)
+
+
 def run_match(ts, h):
     h = np.array(h).astype(np.int8)
     assert len(h) == ts.num_sites
@@ -886,3 +906,100 @@ class TestSimulationExamples:
         assert ts.num_trees > 1
         ts = add_unique_sample_mutations(ts)
         self.check_switch_all_samples(ts)
+
+
+# ---------------------------------------------------------------------------
+# tsinfer-topology fixtures (from test_matcher_fixtures)
+# ---------------------------------------------------------------------------
+
+
+class TsinferFixtureMixin:
+    """Mixin for tsinfer-topology tests.  These already have the
+    tsinfer root structure, so skip add_vestigial_root."""
+
+    VR = False  # vestigial_root flag for run_match_python
+
+
+class TestStarTreeFixture(TsinferFixtureMixin):
+    """Run Python reference matcher on star topology."""
+
+    @staticmethod
+    def ts():
+        ts, _, _ = test_matcher_fixtures._star_ts()
+        return ts
+
+    def test_copy_node2(self):
+        run_match_python(self.ts(), np.array([0, 1, 0]), vestigial_root=self.VR)
+
+    def test_copy_node3(self):
+        run_match_python(self.ts(), np.array([1, 0, 0]), vestigial_root=self.VR)
+
+    def test_mixed(self):
+        run_match_python(self.ts(), np.array([1, 1, 0]), vestigial_root=self.VR)
+
+    def test_ancestral(self):
+        run_match_python(self.ts(), np.array([0, 0, 0]), vestigial_root=self.VR)
+
+
+class TestBinaryTreeFixture(TsinferFixtureMixin):
+    """Run Python reference matcher on binary topology."""
+
+    @staticmethod
+    def ts():
+        ts, _, _ = test_matcher_fixtures._binary_ts()
+        return ts
+
+    def test_copy_leaf_node3(self):
+        run_match_python(self.ts(), np.array([1, 0, 1, 0]), vestigial_root=self.VR)
+
+    def test_copy_leaf_node4(self):
+        run_match_python(self.ts(), np.array([1, 0, 0, 1]), vestigial_root=self.VR)
+
+    def test_copy_internal(self):
+        run_match_python(self.ts(), np.array([1, 0, 0, 0]), vestigial_root=self.VR)
+
+    def test_mixed_leaves(self):
+        run_match_python(self.ts(), np.array([0, 0, 1, 1]), vestigial_root=self.VR)
+
+
+class TestTwoTreeFixture(TsinferFixtureMixin):
+    """Run Python reference matcher on two-tree topology."""
+
+    @staticmethod
+    def ts():
+        ts, _, _ = test_matcher_fixtures._two_tree_ts()
+        return ts
+
+    def test_copy_A(self):
+        run_match_python(self.ts(), np.array([1, 0, 0, 0]), vestigial_root=self.VR)
+
+    def test_copy_B(self):
+        run_match_python(self.ts(), np.array([0, 0, 1, 0]), vestigial_root=self.VR)
+
+    def test_recombination(self):
+        run_match_python(self.ts(), np.array([1, 0, 1, 0]), vestigial_root=self.VR)
+
+    def test_partial_missing(self):
+        run_match_python(self.ts(), np.array([-1, -1, 1, 0]), vestigial_root=self.VR)
+
+
+class TestDeepChainFixture(TsinferFixtureMixin):
+    """Run Python reference matcher on chain topology."""
+
+    @staticmethod
+    def ts():
+        ts, _, _ = test_matcher_fixtures._deep_chain_ts()
+        return ts
+
+    def test_copy_C(self):
+        run_match_python(self.ts(), np.array([1, 1, 1, 0]), vestigial_root=self.VR)
+
+    def test_copy_B(self):
+        run_match_python(self.ts(), np.array([1, 1, 0, 0]), vestigial_root=self.VR)
+
+    def test_copy_A(self):
+        run_match_python(self.ts(), np.array([1, 0, 0, 0]), vestigial_root=self.VR)
+
+    @pytest.mark.xfail(reason="Novel allele with mismatch=0 raises MatchImpossible")
+    def test_novel_haplotype(self):
+        run_match_python(self.ts(), np.array([0, 0, 0, 1]), vestigial_root=self.VR)
