@@ -147,7 +147,7 @@ class Matcher:
     """
     Matches haplotypes against a fixed reference tree sequence using the C engine.
 
-    Uses AncestorMatcher2/MatcherIndexes. A fresh Matcher is instantiated for
+    Uses AncestorMatcher/MatcherIndexes. A fresh Matcher is instantiated for
     each group's tree sequence; no state is maintained between groups.
     """
 
@@ -189,7 +189,7 @@ class Matcher:
 
         # Each call gets its own matcher so threads don't share state
         t0 = time_.monotonic()
-        matcher = AncestorMatcher2(self._matcher_indexes, self._rho, self._mu)
+        matcher = AncestorMatcher(self._matcher_indexes, self._rho, self._mu)
         t_init = time_.monotonic() - t0
 
         t0 = time_.monotonic()
@@ -430,7 +430,7 @@ class MatcherIndexes(_tsinfer.MatcherIndexes):
         super().__init__(ll_tables, num_alleles=num_alleles)
 
 
-class AncestorMatcher2(_tsinfer.AncestorMatcher2):
+class AncestorMatcher(_tsinfer.AncestorMatcher):
     """Wrapper with the same ``find_path`` API as ``AncestorMatcher``."""
 
     def __init__(

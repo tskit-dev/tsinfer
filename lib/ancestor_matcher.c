@@ -267,7 +267,7 @@ matcher_indexes_free(matcher_indexes_t *self)
 }
 
 static void
-ancestor_matcher2_check_state(ancestor_matcher2_t *self)
+ancestor_matcher_check_state(ancestor_matcher_t *self)
 {
     int num_likelihoods;
     int j;
@@ -293,7 +293,7 @@ ancestor_matcher2_check_state(ancestor_matcher2_t *self)
 }
 
 int
-ancestor_matcher2_print_state(ancestor_matcher2_t *self, FILE *out)
+ancestor_matcher_print_state(ancestor_matcher_t *self, FILE *out)
 {
     int j, k;
     tsk_id_t u;
@@ -329,18 +329,18 @@ ancestor_matcher2_print_state(ancestor_matcher2_t *self, FILE *out)
     }
     tsi_blkalloc_print_state(&self->traceback_allocator, out);
 
-    /* ancestor_matcher2_check_state(self); */
+    /* ancestor_matcher_check_state(self); */
     return 0;
 }
 
 int
-ancestor_matcher2_alloc(ancestor_matcher2_t *self,
+ancestor_matcher_alloc(ancestor_matcher_t *self,
     const matcher_indexes_t *matcher_indexes, double *recombination_rate,
     double *mismatch_rate, double likelihood_threshold, int flags)
 {
     int ret = 0;
 
-    memset(self, 0, sizeof(ancestor_matcher2_t));
+    memset(self, 0, sizeof(ancestor_matcher_t));
     /* All allocs for arrays related to nodes are done in expand_nodes */
     self->flags = flags;
     self->likelihood_threshold = likelihood_threshold;
@@ -395,7 +395,7 @@ out:
 }
 
 int
-ancestor_matcher2_free(ancestor_matcher2_t *self)
+ancestor_matcher_free(ancestor_matcher_t *self)
 {
     tsi_safe_free(self->recombination_rate);
     tsi_safe_free(self->mismatch_rate);
@@ -417,8 +417,8 @@ ancestor_matcher2_free(ancestor_matcher2_t *self)
 }
 
 static int
-ancestor_matcher2_delete_likelihood(
-    ancestor_matcher2_t *self, const tsk_id_t node, double *restrict L)
+ancestor_matcher_delete_likelihood(
+    ancestor_matcher_t *self, const tsk_id_t node, double *restrict L)
 {
     /* Remove the specified node from the list of nodes */
     int j, k;
@@ -439,7 +439,7 @@ ancestor_matcher2_delete_likelihood(
 
 /* Store the recombination_required state in the traceback */
 static int WARN_UNUSED
-ancestor_matcher2_store_traceback(ancestor_matcher2_t *self, const tsk_id_t site_id)
+ancestor_matcher_store_traceback(ancestor_matcher_t *self, const tsk_id_t site_id)
 {
     int ret = 0;
     tsk_id_t u;
@@ -501,8 +501,8 @@ out:
 /* Sets the specified allelic state array to reflect the mutations at the
  * specified site. */
 static inline void
-ancestor_matcher2_set_allelic_state(
-    ancestor_matcher2_t *self, const tsk_id_t site, allele_t *restrict allelic_state)
+ancestor_matcher_set_allelic_state(
+    ancestor_matcher_t *self, const tsk_id_t site, allele_t *restrict allelic_state)
 {
     mutation_list_node_t *mutation;
 
@@ -517,8 +517,8 @@ ancestor_matcher2_set_allelic_state(
 
 /* Resets the allelic state at this site to NULL. */
 static inline void
-ancestor_matcher2_unset_allelic_state(
-    ancestor_matcher2_t *self, const tsk_id_t site, allele_t *restrict allelic_state)
+ancestor_matcher_unset_allelic_state(
+    ancestor_matcher_t *self, const tsk_id_t site, allele_t *restrict allelic_state)
 {
     mutation_list_node_t *mutation;
 
@@ -530,7 +530,7 @@ ancestor_matcher2_unset_allelic_state(
 }
 
 static int WARN_UNUSED
-ancestor_matcher2_update_site_likelihood_values(ancestor_matcher2_t *self,
+ancestor_matcher_update_site_likelihood_values(ancestor_matcher_t *self,
     const tsk_id_t site, const allele_t state, const tsk_id_t *restrict parent,
     double *restrict L)
 {
@@ -556,7 +556,7 @@ ancestor_matcher2_update_site_likelihood_values(ancestor_matcher2_t *self,
         goto out;
     }
 
-    ancestor_matcher2_set_allelic_state(self, site, allelic_state);
+    ancestor_matcher_set_allelic_state(self, site, allelic_state);
 
     max_L = -1;
     max_L_node = NULL_NODE;
@@ -596,7 +596,7 @@ ancestor_matcher2_update_site_likelihood_values(ancestor_matcher2_t *self,
             max_L_node = u;
         }
     }
-    /* ancestor_matcher2_print_state(self, stdout); */
+    /* ancestor_matcher_print_state(self, stdout); */
     if (max_L <= 0) {
         if (mu <= 0 || mu >= 1) {
             ret = TSI_ERR_MATCH_IMPOSSIBLE_EXTREME_MUTATION_PROBA;
@@ -617,13 +617,13 @@ ancestor_matcher2_update_site_likelihood_values(ancestor_matcher2_t *self,
         u = L_nodes[j];
         L[u] = TSK_MAX(L[u] / max_L, self->likelihood_threshold);
     }
-    ancestor_matcher2_unset_allelic_state(self, site, allelic_state);
+    ancestor_matcher_unset_allelic_state(self, site, allelic_state);
 out:
     return ret;
 }
 
 static int WARN_UNUSED
-ancestor_matcher2_coalesce_likelihoods(ancestor_matcher2_t *self,
+ancestor_matcher_coalesce_likelihoods(ancestor_matcher_t *self,
     const tsk_id_t *restrict parent, double *restrict L, double *restrict L_cache)
 {
     int ret = 0;
@@ -670,7 +670,7 @@ ancestor_matcher2_coalesce_likelihoods(ancestor_matcher2_t *self,
             num_likelihood_nodes++;
         }
     }
-    /* ancestor_matcher2_print_state(self, stdout); */
+    /* ancestor_matcher_print_state(self, stdout); */
     assert(num_likelihood_nodes > 0);
 
     self->num_likelihood_nodes = num_likelihood_nodes;
@@ -687,7 +687,7 @@ ancestor_matcher2_coalesce_likelihoods(ancestor_matcher2_t *self,
 }
 
 static int
-ancestor_matcher2_update_site_state(ancestor_matcher2_t *self, const tsk_id_t site,
+ancestor_matcher_update_site_state(ancestor_matcher_t *self, const tsk_id_t site,
     const allele_t state, tsk_id_t *restrict parent, double *restrict L,
     double *restrict L_cache)
 {
@@ -698,7 +698,7 @@ ancestor_matcher2_update_site_state(ancestor_matcher2_t *self, const tsk_id_t si
     assert(self->num_likelihood_nodes > 0);
 
     if (self->flags & TSI_EXTENDED_CHECKS) {
-        ancestor_matcher2_check_state(self);
+        ancestor_matcher_check_state(self);
     }
     for (mutation = self->matcher_indexes->sites.mutations[site]; mutation != NULL;
         mutation = mutation->next) {
@@ -714,15 +714,15 @@ ancestor_matcher2_update_site_state(ancestor_matcher2_t *self, const tsk_id_t si
             self->num_likelihood_nodes++;
         }
     }
-    ret = ancestor_matcher2_update_site_likelihood_values(self, site, state, parent, L);
+    ret = ancestor_matcher_update_site_likelihood_values(self, site, state, parent, L);
     if (ret != 0) {
         goto out;
     }
-    ret = ancestor_matcher2_store_traceback(self, site);
+    ret = ancestor_matcher_store_traceback(self, site);
     if (ret != 0) {
         goto out;
     }
-    ret = ancestor_matcher2_coalesce_likelihoods(self, parent, L, L_cache);
+    ret = ancestor_matcher_coalesce_likelihoods(self, parent, L, L_cache);
     if (ret != 0) {
         goto out;
     }
@@ -731,7 +731,7 @@ out:
 }
 
 static void
-ancestor_matcher2_reset_tree(ancestor_matcher2_t *self)
+ancestor_matcher_reset_tree(ancestor_matcher_t *self)
 {
     memset(self->parent, 0xff, self->num_nodes * sizeof(*self->parent));
     memset(self->left_child, 0xff, self->num_nodes * sizeof(*self->left_child));
@@ -743,7 +743,7 @@ ancestor_matcher2_reset_tree(ancestor_matcher2_t *self)
 }
 
 static int
-ancestor_matcher2_reset(ancestor_matcher2_t *self)
+ancestor_matcher_reset(ancestor_matcher_t *self)
 {
     int ret = 0;
 
@@ -763,7 +763,7 @@ ancestor_matcher2_reset(ancestor_matcher2_t *self)
     }
     self->total_traceback_size = 0;
     self->num_likelihood_nodes = 0;
-    ancestor_matcher2_reset_tree(self);
+    ancestor_matcher_reset_tree(self);
 out:
     return ret;
 }
@@ -771,8 +771,8 @@ out:
 /* Resets the recombination_required array from the traceback at the specified site.
  */
 static inline void
-ancestor_matcher2_set_recombination_required(
-    ancestor_matcher2_t *self, tsk_id_t site, int8_t *restrict recombination_required)
+ancestor_matcher_set_recombination_required(
+    ancestor_matcher_t *self, tsk_id_t site, int8_t *restrict recombination_required)
 {
     int j;
     const int8_t *restrict R = self->traceback[site].recombination_required;
@@ -791,8 +791,8 @@ ancestor_matcher2_set_recombination_required(
 /* Unsets the likelihood array from the traceback at the specified site.
  */
 static inline void
-ancestor_matcher2_unset_recombination_required(
-    ancestor_matcher2_t *self, tsk_id_t site, int8_t *restrict recombination_required)
+ancestor_matcher_unset_recombination_required(
+    ancestor_matcher_t *self, tsk_id_t site, int8_t *restrict recombination_required)
 {
     int j;
     const tsk_id_t *restrict node = self->traceback[site].node;
@@ -805,7 +805,7 @@ ancestor_matcher2_unset_recombination_required(
 }
 
 static int WARN_UNUSED
-ancestor_matcher2_run_traceback(ancestor_matcher2_t *self, tsk_id_t start, tsk_id_t end,
+ancestor_matcher_run_traceback(ancestor_matcher_t *self, tsk_id_t start, tsk_id_t end,
     const allele_t *TSK_UNUSED(haplotype), allele_t *restrict match,
     size_t *path_length_out, tsk_id_t *restrict path_left, tsk_id_t *restrict path_right,
     tsk_id_t *restrict path_parent)
@@ -873,17 +873,17 @@ ancestor_matcher2_run_traceback(ancestor_matcher2_t *self, tsk_id_t start, tsk_i
             site--) {
             if (start_pos <= sites_position[site] && sites_position[site] < end_pos) {
 
-                ancestor_matcher2_set_allelic_state(self, site, allelic_state);
+                ancestor_matcher_set_allelic_state(self, site, allelic_state);
                 u = path_parent[path_length];
                 v = u;
                 while (allelic_state[v] == TSK_NULL) {
                     v = parent[v];
                 }
                 match[site] = allelic_state[v];
-                ancestor_matcher2_unset_allelic_state(self, site, allelic_state);
+                ancestor_matcher_unset_allelic_state(self, site, allelic_state);
 
                 /* Mark the traceback nodes on the tree */
-                ancestor_matcher2_set_recombination_required(
+                ancestor_matcher_set_recombination_required(
                     self, site, recombination_required);
 
                 /* Traverse up the tree from the current node. The first marked node that
@@ -902,7 +902,7 @@ ancestor_matcher2_run_traceback(ancestor_matcher2_t *self, tsk_id_t start, tsk_i
                     path_parent[path_length] = max_likelihood_node;
                 }
                 /* Unset the values in the tree for the next site. */
-                ancestor_matcher2_unset_recombination_required(
+                ancestor_matcher_unset_recombination_required(
                     self, site, recombination_required);
             }
         }
@@ -916,8 +916,8 @@ ancestor_matcher2_run_traceback(ancestor_matcher2_t *self, tsk_id_t start, tsk_i
 }
 
 static int
-ancestor_matcher2_run_forwards_match(
-    ancestor_matcher2_t *self, tsk_id_t start, tsk_id_t end, const allele_t *haplotype)
+ancestor_matcher_run_forwards_match(
+    ancestor_matcher_t *self, tsk_id_t start, tsk_id_t end, const allele_t *haplotype)
 {
     int ret = 0;
     tsk_id_t site;
@@ -991,7 +991,7 @@ ancestor_matcher2_run_forwards_match(
         }
     }
     if (self->flags & TSI_EXTENDED_CHECKS) {
-        ancestor_matcher2_check_state(self);
+        ancestor_matcher_check_state(self);
     }
     last_root = 0;
     if (left_child[0] != NULL_NODE) {
@@ -1015,13 +1015,13 @@ ancestor_matcher2_run_forwards_match(
             edge = out[l];
             if (unlikely(is_nonzero_root(edge.child, parent, left_child))) {
                 if (L[edge.child] >= 0) {
-                    ancestor_matcher2_delete_likelihood(self, edge.child, L);
+                    ancestor_matcher_delete_likelihood(self, edge.child, L);
                 }
                 L[edge.child] = NONZERO_ROOT_LIKELIHOOD;
             }
             if (unlikely(is_nonzero_root(edge.parent, parent, left_child))) {
                 if (L[edge.parent] >= 0) {
-                    ancestor_matcher2_delete_likelihood(self, edge.parent, L);
+                    ancestor_matcher_delete_likelihood(self, edge.parent, L);
                 }
                 L[edge.parent] = NONZERO_ROOT_LIKELIHOOD;
             }
@@ -1034,7 +1034,7 @@ ancestor_matcher2_run_forwards_match(
         }
         if (root != last_root) {
             if (last_root == 0) {
-                ancestor_matcher2_delete_likelihood(self, last_root, L);
+                ancestor_matcher_delete_likelihood(self, last_root, L);
                 L[last_root] = NONZERO_ROOT_LIKELIHOOD;
             }
             if (L[root] == NONZERO_ROOT_LIKELIHOOD) {
@@ -1046,12 +1046,12 @@ ancestor_matcher2_run_forwards_match(
         }
 
         if (self->flags & TSI_EXTENDED_CHECKS) {
-            ancestor_matcher2_check_state(self);
+            ancestor_matcher_check_state(self);
         }
 
         while (left <= sites_position[site]
                && sites_position[site] < TSK_MIN(right, end_pos)) {
-            ret = ancestor_matcher2_update_site_state(
+            ret = ancestor_matcher_update_site_state(
                 self, site, haplotype[site], parent, L, L_cache);
             if (ret != 0) {
                 goto out;
@@ -1132,21 +1132,21 @@ out:
 }
 
 int
-ancestor_matcher2_find_path(ancestor_matcher2_t *self, tsk_id_t start, tsk_id_t end,
+ancestor_matcher_find_path(ancestor_matcher_t *self, tsk_id_t start, tsk_id_t end,
     const allele_t *haplotype, allele_t *matched_haplotype, size_t *path_length,
     tsk_id_t *path_left, tsk_id_t *path_right, tsk_id_t *path_parent)
 {
     int ret = 0;
 
-    ret = ancestor_matcher2_reset(self);
+    ret = ancestor_matcher_reset(self);
     if (ret != 0) {
         goto out;
     }
-    ret = ancestor_matcher2_run_forwards_match(self, start, end, haplotype);
+    ret = ancestor_matcher_run_forwards_match(self, start, end, haplotype);
     if (ret != 0) {
         goto out;
     }
-    ret = ancestor_matcher2_run_traceback(self, start, end, haplotype, matched_haplotype,
+    ret = ancestor_matcher_run_traceback(self, start, end, haplotype, matched_haplotype,
         path_length, path_left, path_right, path_parent);
     if (ret != 0) {
         goto out;
@@ -1162,13 +1162,13 @@ out:
 }
 
 double
-ancestor_matcher2_get_mean_traceback_size(ancestor_matcher2_t *self)
+ancestor_matcher_get_mean_traceback_size(ancestor_matcher_t *self)
 {
     return (double) self->total_traceback_size / ((double) self->num_sites);
 }
 
 size_t
-ancestor_matcher2_get_total_memory(ancestor_matcher2_t *self)
+ancestor_matcher_get_total_memory(ancestor_matcher_t *self)
 {
     size_t total = self->traceback_allocator.total_size;
     /* TODO add contributions from other objects */

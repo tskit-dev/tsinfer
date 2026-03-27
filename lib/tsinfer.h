@@ -54,7 +54,6 @@
 
 #define TSI_GENOTYPE_ENCODING_ONE_BIT 1
 
-
 typedef int8_t allele_t;
 /* TODO should probably change to uint32 when we have removed the old code.*/
 typedef tsk_id_t coordinate_t;
@@ -212,7 +211,7 @@ typedef struct {
     size_t total_traceback_size;
     size_t traceback_block_size;
     size_t traceback_realloc_size;
-} ancestor_matcher2_t;
+} ancestor_matcher_t;
 
 int ancestor_builder_alloc(ancestor_builder_t *self, size_t num_samples,
     size_t num_sites, int mmap_fd, int flags);
@@ -232,16 +231,16 @@ int matcher_indexes_alloc(matcher_indexes_t *self, const tsk_table_collection_t 
 int matcher_indexes_print_state(const matcher_indexes_t *self, FILE *out);
 int matcher_indexes_free(matcher_indexes_t *self);
 
-int ancestor_matcher2_alloc(ancestor_matcher2_t *self,
+int ancestor_matcher_alloc(ancestor_matcher_t *self,
     const matcher_indexes_t *matcher_indexes, double *recombination_rate,
     double *mismatch_rate, double likelihood_threshold, int flags);
-int ancestor_matcher2_free(ancestor_matcher2_t *self);
-int ancestor_matcher2_find_path(ancestor_matcher2_t *self, tsk_id_t start, tsk_id_t end,
+int ancestor_matcher_free(ancestor_matcher_t *self);
+int ancestor_matcher_find_path(ancestor_matcher_t *self, tsk_id_t start, tsk_id_t end,
     const allele_t *haplotype, allele_t *matched_haplotype, size_t *path_length,
     tsk_id_t *path_left, tsk_id_t *path_right, tsk_id_t *path_parent);
-int ancestor_matcher2_print_state(ancestor_matcher2_t *self, FILE *out);
-double ancestor_matcher2_get_mean_traceback_size(ancestor_matcher2_t *self);
-size_t ancestor_matcher2_get_total_memory(ancestor_matcher2_t *self);
+int ancestor_matcher_print_state(ancestor_matcher_t *self, FILE *out);
+double ancestor_matcher_get_mean_traceback_size(ancestor_matcher_t *self);
+size_t ancestor_matcher_get_total_memory(ancestor_matcher_t *self);
 
 int packbits(const allele_t *restrict source, size_t len, uint8_t *restrict dest);
 void unpackbits(const uint8_t *restrict source, size_t len, allele_t *restrict dest);
