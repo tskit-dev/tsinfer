@@ -246,33 +246,6 @@ def compute_sequence_intervals(
     return np.array(intervals, dtype=np.int32)
 
 
-@dataclasses.dataclass
-class Ancestor:
-    """
-    A single ancestor haplotype, storing only the active fragment.
-
-    The haplotype covers only the site index range
-    ``[start_site_idx, end_site_idx)``; all other sites are implicitly
-    missing (-1).  Call :meth:`expand_haplotype` to materialise the
-    full-length array (done at flush time in :class:`AncestorWriter`).
-    """
-
-    index: int
-    time: float
-    haplotype: np.ndarray  # fragment: sites[start_site_idx:end_site_idx]
-    focal_positions: np.ndarray
-    start_site_idx: int  # global site index, inclusive
-    end_site_idx: int  # global site index, exclusive
-    start_position: int  # genomic position
-    end_position: int  # genomic position
-
-    def expand_haplotype(self, num_sites):
-        """Return a full-length haplotype array with missing = -1."""
-        full = np.full(num_sites, np.int8(-1), dtype=np.int8)
-        full[self.start_site_idx : self.end_site_idx] = self.haplotype
-        return full
-
-
 def _apply_site_stats(genotype_iter, inf_sites, num_haplotypes, progress):
     """
     Run Pass 1: compute site stats and filter sites.
