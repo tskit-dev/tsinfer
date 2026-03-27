@@ -271,7 +271,7 @@ typedef struct {
     size_t num_nodes;
     size_t num_sites;
     /* Input LS model rates */
-    unsigned int precision;
+    double likelihood_threshold;
     double *recombination_rate;
     double *mismatch_rate;
     /* The quintuply linked tree */
@@ -365,7 +365,7 @@ int matcher_indexes_free(matcher_indexes_t *self);
 
 int ancestor_matcher2_alloc(ancestor_matcher2_t *self,
     const matcher_indexes_t *matcher_indexes, double *recombination_rate,
-    double *mismatch_rate, unsigned int precision, int flags);
+    double *mismatch_rate, double likelihood_threshold, int flags);
 int ancestor_matcher2_free(ancestor_matcher2_t *self);
 int ancestor_matcher2_find_path(ancestor_matcher2_t *self, tsk_id_t start, tsk_id_t end,
     const allele_t *haplotype, allele_t *matched_haplotype, size_t *path_length,

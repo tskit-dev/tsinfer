@@ -1273,14 +1273,14 @@ ancestor_matcher2_print_state(ancestor_matcher2_t *self, FILE *out)
 int
 ancestor_matcher2_alloc(ancestor_matcher2_t *self,
     const matcher_indexes_t *matcher_indexes, double *recombination_rate,
-    double *mismatch_rate, unsigned int precision, int flags)
+    double *mismatch_rate, double likelihood_threshold, int flags)
 {
     int ret = 0;
 
     memset(self, 0, sizeof(ancestor_matcher2_t));
     /* All allocs for arrays related to nodes are done in expand_nodes */
     self->flags = flags;
-    self->precision = precision;
+    self->likelihood_threshold = likelihood_threshold;
     self->matcher_indexes = matcher_indexes;
     self->num_sites = matcher_indexes->num_sites;
     self->num_nodes = matcher_indexes->num_nodes;
@@ -1481,8 +1481,12 @@ ancestor_matcher2_update_site_likelihood_values(ancestor_matcher2_t *self,
     double max_L, p_last, p_no_recomb, p_recomb, p_t, p_e;
     const double rho = self->recombination_rate[site];
     const double mu = self->mismatch_rate[site];
-    const double n = (double) self->matcher_indexes->num_nodes;
+    double n = 1.0;
     const double num_alleles = (double) self->matcher_indexes->sites.num_alleles[site];
+
+    if (!(self->flags & TSI_DISABLE_WEIGHT_BY_N)) {
+        n = (double) self->matcher_indexes->num_nodes;
+    }
 
     if (state >= num_alleles) {
         ret = TSI_ERR_BAD_HAPLOTYPE_ALLELE;
@@ -1548,7 +1552,7 @@ ancestor_matcher2_update_site_likelihood_values(ancestor_matcher2_t *self,
     /* Renormalise the likelihoods. */
     for (j = 0; j < num_likelihood_nodes; j++) {
         u = L_nodes[j];
-        L[u] = tsk_round(L[u] / max_L, self->precision);
+        L[u] = TSK_MAX(L[u] / max_L, self->likelihood_threshold);
     }
     ancestor_matcher2_unset_allelic_state(self, site, allelic_state);
 out:

@@ -568,11 +568,24 @@ class MatcherIndexes(_tsinfer.MatcherIndexes):
 class AncestorMatcher2(_tsinfer.AncestorMatcher2):
     """Wrapper with the same ``find_path`` API as ``AncestorMatcher``."""
 
-    def __init__(self, matcher_indexes, recombination, mismatch):
+    def __init__(
+        self,
+        matcher_indexes,
+        recombination,
+        mismatch,
+        likelihood_threshold=None,
+        weight_by_n=None,
+    ):
+        kwargs = {}
+        if likelihood_threshold is not None:
+            kwargs["likelihood_threshold"] = likelihood_threshold
+        if weight_by_n is not None:
+            kwargs["weight_by_n"] = weight_by_n
         super().__init__(
             matcher_indexes,
             recombination=recombination,
             mismatch=mismatch,
+            **kwargs,
         )
 
     def find_path(self, h, start, end, match_out):
