@@ -25,6 +25,28 @@ uv run ruff format                   # Format Python code
 
 Line length is 89 characters (configured in pyproject.toml for both ruff and clang-format).
 
+## C Development
+
+The C library source lives in `lib/`. It uses meson + ninja for building and testing
+independently of the Python extension.
+
+```bash
+cd lib
+meson setup build                           # One-time setup
+ninja -C build test                         # Build and run C unit tests
+
+# Coverage (requires meson setup build -Db_coverage=true)
+meson setup build -Db_coverage=true --wipe  # Reconfigure with coverage
+ninja -C build test                         # Run tests to generate coverage data
+gcovr build -r . --exclude 'subprojects/*' --exclude 'tests/*'  # Print report
+
+# Memory checking
+valgrind --leak-check=full --error-exitcode=1 ./build/tests
+```
+
+Tests are in `lib/tests/tests.c` using the CUnit framework. The build uses
+`-Wall -Wextra -Werror -Wpedantic` and other strict warnings.
+
 ## Architecture
 
 **tsinfer** infers tree sequences from genetic variation data stored in VCZ (Variant Call Zarr) format.
