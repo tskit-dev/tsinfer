@@ -609,6 +609,52 @@ def run_match_python(ts, h, *, vestigial_root=True):
     return matcher.find_path(h)
 
 
+def run_match_tsinfer(ts, h, *, c_too=False):
+    """Run Python reference matcher on a tsinfer-produced topology.
+
+    Skips add_vestigial_root since tsinfer topologies already have
+    the required root structure.  When *c_too* is True, also runs
+    the C AncestorMatcher2 and compares.
+    """
+    h = np.array(h).astype(np.int8)
+    assert len(h) == ts.num_sites
+    recombination = np.zeros(ts.num_sites) + 1e-9
+    mismatch = np.zeros(ts.num_sites)
+    precision = 22
+
+    # Python reference
+    matcher_indexes = MatcherIndexes(ts.tables, vestigial_root=False)
+    matcher = AncestorMatcher(
+        matcher_indexes,
+        recombination=recombination,
+        mismatch=mismatch,
+        precision=precision,
+    )
+    match_py = matcher.find_path(h)
+
+    # C implementation (segfaults on tsinfer topologies — opt-in only)
+    if c_too and ts.num_sites > 0:
+        mi = matching.MatcherIndexes(ts, vestigial_root=False)
+        am = matching.AncestorMatcher2(mi, recombination, mismatch)
+        match_out = np.zeros(ts.num_sites, dtype=np.int8)
+        non_missing = np.where(h >= 0)[0]
+        if len(non_missing) == 0:
+            start, end = 0, ts.num_sites
+        else:
+            start = int(non_missing[0])
+            end = int(non_missing[-1]) + 1
+        left, right, parent = am.find_path(h, start, end, match_out)
+        match_out[:start] = tskit.MISSING_DATA
+        match_out[end:] = tskit.MISSING_DATA
+        match_c = Match(
+            Path(left[::-1], right[::-1], (parent - 1)[::-1]),
+            h,
+            match_out,
+        )
+        match_py.assert_equals(match_c)
+    return match_py
+
+
 def run_match(ts, h):
     h = np.array(h).astype(np.int8)
     assert len(h) == ts.num_sites
@@ -913,15 +959,8 @@ class TestSimulationExamples:
 # ---------------------------------------------------------------------------
 
 
-class TsinferFixtureMixin:
-    """Mixin for tsinfer-topology tests.  These already have the
-    tsinfer root structure, so skip add_vestigial_root."""
-
-    VR = False  # vestigial_root flag for run_match_python
-
-
-class TestStarTreeFixture(TsinferFixtureMixin):
-    """Run Python reference matcher on star topology."""
+class TestStarTreeFixture:
+    """Run Python and C matchers on star topology."""
 
     @staticmethod
     def ts():
@@ -929,20 +968,20 @@ class TestStarTreeFixture(TsinferFixtureMixin):
         return ts
 
     def test_copy_node2(self):
-        run_match_python(self.ts(), np.array([0, 1, 0]), vestigial_root=self.VR)
+        run_match_tsinfer(self.ts(), np.array([0, 1, 0]))
 
     def test_copy_node3(self):
-        run_match_python(self.ts(), np.array([1, 0, 0]), vestigial_root=self.VR)
+        run_match_tsinfer(self.ts(), np.array([1, 0, 0]))
 
     def test_mixed(self):
-        run_match_python(self.ts(), np.array([1, 1, 0]), vestigial_root=self.VR)
+        run_match_tsinfer(self.ts(), np.array([1, 1, 0]))
 
     def test_ancestral(self):
-        run_match_python(self.ts(), np.array([0, 0, 0]), vestigial_root=self.VR)
+        run_match_tsinfer(self.ts(), np.array([0, 0, 0]))
 
 
-class TestBinaryTreeFixture(TsinferFixtureMixin):
-    """Run Python reference matcher on binary topology."""
+class TestBinaryTreeFixture:
+    """Run Python and C matchers on binary topology."""
 
     @staticmethod
     def ts():
@@ -950,20 +989,20 @@ class TestBinaryTreeFixture(TsinferFixtureMixin):
         return ts
 
     def test_copy_leaf_node3(self):
-        run_match_python(self.ts(), np.array([1, 0, 1, 0]), vestigial_root=self.VR)
+        run_match_tsinfer(self.ts(), np.array([1, 0, 1, 0]))
 
     def test_copy_leaf_node4(self):
-        run_match_python(self.ts(), np.array([1, 0, 0, 1]), vestigial_root=self.VR)
+        run_match_tsinfer(self.ts(), np.array([1, 0, 0, 1]))
 
     def test_copy_internal(self):
-        run_match_python(self.ts(), np.array([1, 0, 0, 0]), vestigial_root=self.VR)
+        run_match_tsinfer(self.ts(), np.array([1, 0, 0, 0]))
 
     def test_mixed_leaves(self):
-        run_match_python(self.ts(), np.array([0, 0, 1, 1]), vestigial_root=self.VR)
+        run_match_tsinfer(self.ts(), np.array([0, 0, 1, 1]))
 
 
-class TestTwoTreeFixture(TsinferFixtureMixin):
-    """Run Python reference matcher on two-tree topology."""
+class TestTwoTreeFixture:
+    """Run Python and C matchers on two-tree topology."""
 
     @staticmethod
     def ts():
@@ -971,20 +1010,20 @@ class TestTwoTreeFixture(TsinferFixtureMixin):
         return ts
 
     def test_copy_A(self):
-        run_match_python(self.ts(), np.array([1, 0, 0, 0]), vestigial_root=self.VR)
+        run_match_tsinfer(self.ts(), np.array([1, 0, 0, 0]))
 
     def test_copy_B(self):
-        run_match_python(self.ts(), np.array([0, 0, 1, 0]), vestigial_root=self.VR)
+        run_match_tsinfer(self.ts(), np.array([0, 0, 1, 0]))
 
     def test_recombination(self):
-        run_match_python(self.ts(), np.array([1, 0, 1, 0]), vestigial_root=self.VR)
+        run_match_tsinfer(self.ts(), np.array([1, 0, 1, 0]))
 
     def test_partial_missing(self):
-        run_match_python(self.ts(), np.array([-1, -1, 1, 0]), vestigial_root=self.VR)
+        run_match_tsinfer(self.ts(), np.array([-1, -1, 1, 0]))
 
 
-class TestDeepChainFixture(TsinferFixtureMixin):
-    """Run Python reference matcher on chain topology."""
+class TestDeepChainFixture:
+    """Run Python and C matchers on chain topology."""
 
     @staticmethod
     def ts():
@@ -992,14 +1031,14 @@ class TestDeepChainFixture(TsinferFixtureMixin):
         return ts
 
     def test_copy_C(self):
-        run_match_python(self.ts(), np.array([1, 1, 1, 0]), vestigial_root=self.VR)
+        run_match_tsinfer(self.ts(), np.array([1, 1, 1, 0]))
 
     def test_copy_B(self):
-        run_match_python(self.ts(), np.array([1, 1, 0, 0]), vestigial_root=self.VR)
+        run_match_tsinfer(self.ts(), np.array([1, 1, 0, 0]))
 
     def test_copy_A(self):
-        run_match_python(self.ts(), np.array([1, 0, 0, 0]), vestigial_root=self.VR)
+        run_match_tsinfer(self.ts(), np.array([1, 0, 0, 0]))
 
     @pytest.mark.xfail(reason="Novel allele with mismatch=0 raises MatchImpossible")
     def test_novel_haplotype(self):
-        run_match_python(self.ts(), np.array([0, 0, 0, 1]), vestigial_root=self.VR)
+        run_match_tsinfer(self.ts(), np.array([0, 0, 0, 1]))
