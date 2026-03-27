@@ -156,6 +156,257 @@ test_ancestor_builder_one_site(void)
 }
 
 static void
+test_ancestor_builder_multi_site(void)
+{
+    /*
+     * 8 samples, 6 sites at two time epochs.
+     * Sites 0,2,4 at time 2.0 (younger focal sites)
+     * Sites 1,3,5 at time 3.0 (older sites that appear "between" in time)
+     *
+     * This exercises compute_between_focal_sites, compute_ancestral_states,
+     * get_site_genotypes_subset, get_consistent_samples, and the consensus/
+     * disagree logic.
+     */
+    int ret = 0;
+    ancestor_builder_t ab;
+    size_t num_samples = 8;
+    size_t max_sites = 6;
+    size_t j;
+
+    /* Sites at time 2.0: three different genotype patterns */
+    allele_t g0[8] = { 1, 1, 0, 0, 0, 0, 0, 0 }; /* site 0, time 2 */
+    allele_t g1[8] = { 1, 1, 1, 1, 0, 0, 0, 0 }; /* site 1, time 3 (older) */
+    allele_t g2[8]
+        = { 1, 1, 0, 0, 0, 0, 0, 0 }; /* site 2, time 2 (same pattern as g0) */
+    allele_t g3[8] = { 1, 1, 1, 1, 0, 0, 0, 0 }; /* site 3, time 3 (older) */
+    allele_t g4[8] = { 0, 0, 1, 1, 0, 0, 0, 0 }; /* site 4, time 2 (different pattern) */
+    allele_t g5[8] = { 1, 1, 1, 1, 1, 1, 0, 0 }; /* site 5, time 3 (older) */
+
+    allele_t ancestor[6];
+    tsk_id_t start, end;
+
+    ret = ancestor_builder_alloc(&ab, num_samples, max_sites, -1, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    ret = ancestor_builder_add_site(&ab, 2.0, g0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = ancestor_builder_add_site(&ab, 3.0, g1);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = ancestor_builder_add_site(&ab, 2.0, g2);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = ancestor_builder_add_site(&ab, 3.0, g3);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = ancestor_builder_add_site(&ab, 2.0, g4);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = ancestor_builder_add_site(&ab, 3.0, g5);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    CU_ASSERT_EQUAL(ab.num_sites, 6);
+
+    /* Call print_state before finalise to cover check_state and inner loops */
+    ancestor_builder_print_state(&ab, _devnull);
+
+    ret = ancestor_builder_finalise(&ab);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    CU_ASSERT_TRUE(ab.num_ancestors > 0);
+
+    /* Build each ancestor and verify start <= end */
+    for (j = 0; j < ab.num_ancestors; j++) {
+        ret = ancestor_builder_make_ancestor(&ab, ab.descriptors[j].num_focal_sites,
+            ab.descriptors[j].focal_sites, &start, &end, ancestor);
+        CU_ASSERT_EQUAL_FATAL(ret, 0);
+        CU_ASSERT_TRUE(start >= 0);
+        CU_ASSERT_TRUE(end > start);
+        CU_ASSERT_TRUE(end <= (tsk_id_t) max_sites);
+    }
+
+    ancestor_builder_free(&ab);
+}
+
+static void
+test_ancestor_builder_break_ancestor(void)
+{
+    /*
+     * Construct a scenario where two focal sites share the same genotype
+     * pattern but an intervening older site causes the ancestor to be split.
+     *
+     * Layout (8 samples, 5 sites):
+     *   site 0: time 3.0  genotypes {1,1,1,1,0,0,0,0}  (older)
+     *   site 1: time 2.0  genotypes {1,1,0,0,0,0,0,0}  (focal, pattern A)
+     *   site 2: time 3.0  genotypes {1,0,1,0,0,0,0,0}  (older, disagreeing)
+     *   site 3: time 2.0  genotypes {1,1,0,0,0,0,0,0}  (focal, pattern A)
+     *   site 4: time 3.0  genotypes {1,1,1,1,0,0,0,0}  (older)
+     *
+     * Sites 1 and 3 have the same genotype pattern at the same time,
+     * so they group into one pattern_map entry with 2 focal sites.
+     * Site 2 is older (time 3.0 > 2.0) and sits between them.
+     * The consistent samples for pattern A are {0, 1}.
+     * At site 2 these samples have genotypes {1, 0} — not unanimous —
+     * so break_ancestor should return true and split the ancestor.
+     */
+    int ret = 0;
+    ancestor_builder_t ab;
+    size_t num_samples = 8;
+    size_t max_sites = 5;
+    size_t j;
+
+    allele_t g0[8] = { 1, 1, 1, 1, 0, 0, 0, 0 }; /* site 0, time 3 */
+    allele_t g1[8] = { 1, 1, 0, 0, 0, 0, 0, 0 }; /* site 1, time 2 */
+    allele_t g2[8] = { 1, 0, 1, 0, 0, 0, 0, 0 }; /* site 2, time 3 */
+    allele_t g3[8] = { 1, 1, 0, 0, 0, 0, 0, 0 }; /* site 3, time 2 */
+    allele_t g4[8] = { 1, 1, 1, 1, 0, 0, 0, 0 }; /* site 4, time 3 */
+
+    allele_t ancestor[5];
+    tsk_id_t start, end;
+    size_t num_single_focal = 0;
+
+    ret = ancestor_builder_alloc(&ab, num_samples, max_sites, -1, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    ret = ancestor_builder_add_site(&ab, 3.0, g0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = ancestor_builder_add_site(&ab, 2.0, g1);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = ancestor_builder_add_site(&ab, 3.0, g2);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = ancestor_builder_add_site(&ab, 2.0, g3);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = ancestor_builder_add_site(&ab, 3.0, g4);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    ret = ancestor_builder_finalise(&ab);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    /* If break_ancestor split the time-2 pattern (sites 1,3), we should
+     * see individual descriptors with 1 focal site each instead of a
+     * single descriptor with 2 focal sites. Count how many descriptors
+     * at time 2 have exactly 1 focal site. */
+    for (j = 0; j < ab.num_ancestors; j++) {
+        if (ab.descriptors[j].time == 2.0 && ab.descriptors[j].num_focal_sites == 1) {
+            num_single_focal++;
+        }
+    }
+    /* The two focal sites (1, 3) should be split into separate ancestors */
+    CU_ASSERT_EQUAL(num_single_focal, 2);
+
+    for (j = 0; j < ab.num_ancestors; j++) {
+        ret = ancestor_builder_make_ancestor(&ab, ab.descriptors[j].num_focal_sites,
+            ab.descriptors[j].focal_sites, &start, &end, ancestor);
+        CU_ASSERT_EQUAL_FATAL(ret, 0);
+        CU_ASSERT_TRUE(start >= 0);
+        CU_ASSERT_TRUE(end > start);
+    }
+
+    ancestor_builder_free(&ab);
+}
+
+static void
+test_ancestor_builder_one_bit_encoding(void)
+{
+    /*
+     * Exercise the TSI_GENOTYPE_ENCODING_ONE_BIT code paths:
+     *   - alloc sets encoded_genotypes_size = ceil(num_samples/8)
+     *   - add_site calls packbits
+     *   - make_ancestor calls unpackbits / one-bit subset extraction
+     */
+    int ret = 0;
+    ancestor_builder_t ab;
+    size_t num_samples = 10; /* not a multiple of 8 */
+    size_t max_sites = 4;
+    size_t j;
+
+    allele_t g0[10] = { 1, 1, 1, 1, 0, 0, 0, 0, 0, 0 }; /* time 3 (older) */
+    allele_t g1[10] = { 1, 1, 0, 0, 0, 0, 0, 0, 0, 0 }; /* time 2 (focal) */
+    allele_t g2[10] = { 1, 1, 1, 0, 0, 0, 0, 0, 0, 0 }; /* time 3 (older) */
+    allele_t g3[10] = { 0, 0, 0, 0, 1, 1, 0, 0, 0, 0 }; /* time 2 (focal) */
+
+    allele_t ancestor[4];
+    tsk_id_t start, end;
+
+    ret = ancestor_builder_alloc(
+        &ab, num_samples, max_sites, -1, TSI_GENOTYPE_ENCODING_ONE_BIT);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    /* ceil(10/8) = 2 */
+    CU_ASSERT_EQUAL(ab.encoded_genotypes_size, 2);
+
+    ret = ancestor_builder_add_site(&ab, 3.0, g0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = ancestor_builder_add_site(&ab, 2.0, g1);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = ancestor_builder_add_site(&ab, 3.0, g2);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = ancestor_builder_add_site(&ab, 2.0, g3);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    ancestor_builder_print_state(&ab, _devnull);
+
+    ret = ancestor_builder_finalise(&ab);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    CU_ASSERT_TRUE(ab.num_ancestors > 0);
+
+    for (j = 0; j < ab.num_ancestors; j++) {
+        ret = ancestor_builder_make_ancestor(&ab, ab.descriptors[j].num_focal_sites,
+            ab.descriptors[j].focal_sites, &start, &end, ancestor);
+        CU_ASSERT_EQUAL_FATAL(ret, 0);
+        CU_ASSERT_TRUE(start >= 0);
+        CU_ASSERT_TRUE(end > start);
+    }
+
+    ancestor_builder_free(&ab);
+}
+
+static void
+test_ancestor_builder_mmap(void)
+{
+    /*
+     * Exercise the mmap genotype storage path by providing a valid
+     * read-write file descriptor.
+     */
+    int ret = 0;
+    ancestor_builder_t ab;
+    size_t num_samples = 4;
+    size_t max_sites = 3;
+    FILE *f;
+    int fd;
+    size_t j;
+
+    allele_t g0[4] = { 1, 1, 0, 0 };
+    allele_t g1[4] = { 1, 1, 1, 0 };
+    allele_t g2[4] = { 1, 0, 1, 0 };
+
+    allele_t ancestor[3];
+    tsk_id_t start, end;
+
+    f = fopen(_tmp_file_name, "w+");
+    CU_ASSERT_FATAL(f != NULL);
+    fd = fileno(f);
+
+    ret = ancestor_builder_alloc(&ab, num_samples, max_sites, fd, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    CU_ASSERT_TRUE(ab.mmap_buffer != NULL);
+
+    ret = ancestor_builder_add_site(&ab, 3.0, g0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = ancestor_builder_add_site(&ab, 2.0, g1);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = ancestor_builder_add_site(&ab, 3.0, g2);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    ret = ancestor_builder_finalise(&ab);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    CU_ASSERT_TRUE(ab.num_ancestors > 0);
+
+    for (j = 0; j < ab.num_ancestors; j++) {
+        ret = ancestor_builder_make_ancestor(&ab, ab.descriptors[j].num_focal_sites,
+            ab.descriptors[j].focal_sites, &start, &end, ancestor);
+        CU_ASSERT_EQUAL_FATAL(ret, 0);
+        CU_ASSERT_TRUE(end > start);
+    }
+
+    ancestor_builder_free(&ab);
+    fclose(f);
+}
+
+static void
 test_matcher_indexes_errors(void)
 {
     int ret;
@@ -779,6 +1030,11 @@ main(int argc, char **argv)
     CU_TestInfo tests[] = {
         { "test_ancestor_builder_errors", test_ancestor_builder_errors },
         { "test_ancestor_builder_one_site", test_ancestor_builder_one_site },
+        { "test_ancestor_builder_multi_site", test_ancestor_builder_multi_site },
+        { "test_ancestor_builder_break_ancestor", test_ancestor_builder_break_ancestor },
+        { "test_ancestor_builder_one_bit_encoding",
+            test_ancestor_builder_one_bit_encoding },
+        { "test_ancestor_builder_mmap", test_ancestor_builder_mmap },
         { "test_matcher_indexes_errors", test_matcher_indexes_errors },
 
         { "test_packbits_1", test_packbits_1 },
