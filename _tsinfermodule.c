@@ -1501,7 +1501,7 @@ AncestorMatcher_find_path(AncestorMatcher *self, PyObject *args, PyObject *kwds)
     memcpy(PyArray_DATA(left), ret_left, num_edges * sizeof(*ret_left));
     memcpy(PyArray_DATA(right), ret_right, num_edges * sizeof(*ret_right));
     memcpy(PyArray_DATA(parent), ret_parent, num_edges * sizeof(*ret_parent));
-    ret = Py_BuildValue("(OOO)", left, right, parent);
+    ret = Py_BuildValue("(NNN)", left, right, parent);
     if (ret == NULL) {
         goto out;
     }
@@ -1939,7 +1939,7 @@ AncestorMatcher2_find_path(AncestorMatcher2 *self, PyObject *args, PyObject *kwd
         goto out;
     }
     ret = Py_BuildValue(
-        "(kOOOO)", (unsigned long) num_edges, left, right, parent, match);
+        "(kNNNN)", (unsigned long) num_edges, left, right, parent, match);
     if (ret == NULL) {
         goto out;
     }
@@ -1948,6 +1948,7 @@ AncestorMatcher2_find_path(AncestorMatcher2 *self, PyObject *args, PyObject *kwd
     parent = NULL;
     match = NULL;
 out:
+    Py_XDECREF(haplotype_array);
     Py_XDECREF(match);
     Py_XDECREF(left);
     Py_XDECREF(right);
