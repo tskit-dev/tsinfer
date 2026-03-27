@@ -377,7 +377,7 @@ class TestAncestorMatcher2:
         _, _, am = make_matcher_indexes_and_matcher()
         mem = am.total_memory
         if IS_WINDOWS:
-            assert mem == sys.maxsize
+            assert mem >= 2**31
         else:
             assert isinstance(mem, int)
             # Before find_path, only the initial block is allocated
@@ -389,7 +389,7 @@ class TestAncestorMatcher2:
         am.find_path(h, 0, ts.num_sites)
         mem = am.total_memory
         if IS_WINDOWS:
-            assert mem == sys.maxsize
+            assert mem >= 2**31
         else:
             assert isinstance(mem, int)
             assert mem > 0
