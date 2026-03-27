@@ -42,6 +42,7 @@ Low-level utilities for reading and writing VCZ (VCF Zarr) stores.
 from __future__ import annotations
 
 import dataclasses
+import functools
 import logging
 import math
 import pathlib
@@ -2325,8 +2326,6 @@ class MultiSourceView:
         sources,
         ancestral_state,
     ):
-        from functools import reduce
-
         if isinstance(sources, config.Source):
             sources = [sources]
 
@@ -2384,7 +2383,7 @@ class MultiSourceView:
         if len(valid_per_source) == 1:
             all_positions = valid_per_source[0]
         else:
-            all_positions = reduce(np.union1d, valid_per_source)
+            all_positions = functools.reduce(np.union1d, valid_per_source)
         self._positions = all_positions.astype(np.int32)
 
         # Build source_has_site mask via searchsorted
