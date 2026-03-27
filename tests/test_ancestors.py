@@ -35,7 +35,7 @@ import pytest
 import tskit
 import zarr
 
-from tsinfer import ancestors, config, utils, vcz
+from tsinfer import ancestors, config, vcz
 
 # ---------------------------------------------------------------------------
 # Python reference implementation of AncestorBuilder
@@ -1958,28 +1958,6 @@ class TestProgress:
 # ---------------------------------------------------------------------------
 # Threading
 # ---------------------------------------------------------------------------
-
-
-class TestSynchronousExecutor:
-    def test_submit_returns_completed_future(self):
-        executor = utils.SynchronousExecutor()
-        future = executor.submit(lambda x, y: x + y, 3, 4)
-        assert future.result() == 7
-
-    def test_context_manager(self):
-        with utils.SynchronousExecutor() as executor:
-            future = executor.submit(sorted, [3, 1, 2])
-            assert future.result() == [1, 2, 3]
-
-    def test_exception_propagation(self):
-        def fail():
-            raise ValueError("boom")
-
-        executor = utils.SynchronousExecutor()
-        # SynchronousExecutor executes immediately, so the exception
-        # is raised during submit.
-        with pytest.raises(ValueError, match="boom"):
-            executor.submit(fail)
 
 
 class TestThreadedAncestorGeneration:
