@@ -24,11 +24,11 @@ and infer_ancestors.
 from __future__ import annotations
 
 import collections
+import dataclasses
 import enum
 import logging
 import pathlib
 
-import attr
 import helpers
 import numpy as np
 import pytest
@@ -54,16 +54,16 @@ class _Constants:
 constants = _Constants()
 
 
-@attr.s
+@dataclasses.dataclass
 class Site:
     """
     A single site for the ancestor builder.
     """
 
-    id = attr.ib()
-    time = attr.ib()
-    derived_count = attr.ib()
-    terminal = attr.ib()
+    id: int
+    time: float
+    derived_count: int
+    terminal: bool
 
 
 class AncestorBuilder:
