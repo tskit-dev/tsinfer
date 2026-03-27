@@ -15,8 +15,6 @@ includes = ["lwt_interface", libdir, tskroot, tskdir, kasdir]
 tsi_source_files = [
     "ancestor_matcher.c",
     "ancestor_builder.c",
-    "object_heap.c",
-    "tree_sequence_builder.c",
     "err.c",
     "avl.c",
     "tsi_blkalloc.c",

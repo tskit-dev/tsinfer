@@ -25,7 +25,6 @@ from __future__ import annotations
 import concurrent.futures as cf
 import dataclasses
 import logging
-import os
 import time as time_
 
 import numpy as np
@@ -37,8 +36,6 @@ import _tsinfer
 from . import grouping, vcz
 
 logger = logging.getLogger(__name__)
-
-_USE_MATCHER2 = os.environ.get("TSINFER_MATCHER") == "matcher2"
 
 
 @dataclasses.dataclass
@@ -70,91 +67,6 @@ class MatchResult:
 def _rss_mib():
     """Return current process RSS in MiB."""
     return psutil.Process().memory_info().rss / (1024 * 1024)
-
-
-def _tsb_from_ts(
-    ts: tskit.TreeSequence,
-    num_sites: int,
-    positions: np.ndarray,
-    allele_mapper: vcz.AlleleMapper,
-    num_alleles: np.ndarray | None = None,
-):
-    """Restore a _tsinfer.TreeSequenceBuilder from a tskit.TreeSequence.
-
-    Mutation derived_state values are real allele strings and are
-    reverse-mapped to integer codes via ``allele_mapper.encode_mutations``.
-    """
-    rss_before = _rss_mib()
-    ts_mib = ts.nbytes / (1024 * 1024)
-
-    if num_alleles is None:
-        num_alleles = np.full(num_sites, 2, dtype=np.uint64)
-    tsb = _tsinfer.TreeSequenceBuilder(num_alleles)
-
-    t0 = time_.monotonic()
-    if ts.num_nodes > 0:
-        tsb.restore_nodes(ts.nodes_time, ts.nodes_flags)
-    t_nodes = time_.monotonic() - t0
-
-    t_build_edges = 0
-    t_restore_edges = 0
-    if ts.num_edges > 0:
-        t0 = time_.monotonic()
-        pos_arr = positions.astype(np.float64)
-        seq_len = ts.sequence_length
-        edges = ts.tables.edges
-        el = np.searchsorted(pos_arr, edges.left).astype(np.int32)
-        er = np.where(
-            edges.right < seq_len,
-            np.searchsorted(pos_arr, edges.right),
-            num_sites,
-        ).astype(np.int32)
-        ep = edges.parent.astype(np.int32)
-        ec = edges.child.astype(np.int32)
-        order = np.lexsort([el, ec])
-        t_build_edges = time_.monotonic() - t0
-        t0 = time_.monotonic()
-        tsb.restore_edges(el[order], er[order], ep[order], ec[order])
-        t_restore_edges = time_.monotonic() - t0
-
-    t_build_mutations = 0
-    t_restore_mutations = 0
-    if ts.num_mutations > 0:
-        t0 = time_.monotonic()
-        mutations_state = allele_mapper.encode_mutations(
-            ts.mutations_site, ts.mutations_derived_state
-        )
-        t_build_mutations = time_.monotonic() - t0
-        t0 = time_.monotonic()
-        tsb.restore_mutations(
-            ts.mutations_site,
-            ts.mutations_node,
-            mutations_state,
-            ts.mutations_parent,
-        )
-        t_restore_mutations = time_.monotonic() - t0
-
-    rss_after = _rss_mib()
-    logger.info(
-        "TSB build: nodes %.3fs; build_edges: %.3fs; restore_edges: %.3fs "
-        "build_mutations: %.3fs; restore_mutations %.3fs | "
-        "ts=%.1f MiB (%d nodes, %d edges) "
-        "RSS: %.1f -> %.1f MiB (delta=%.1f MiB)",
-        t_nodes,
-        t_build_edges,
-        t_restore_edges,
-        t_build_mutations,
-        t_restore_mutations,
-        ts_mib,
-        ts.num_nodes,
-        ts.num_edges,
-        rss_before,
-        rss_after,
-        rss_after - rss_before,
-    )
-
-    tsb.freeze_indexes()
-    return tsb
 
 
 def make_root_ts(
@@ -235,16 +147,14 @@ class Matcher:
     """
     Matches haplotypes against a fixed reference tree sequence using the C engine.
 
-    Wraps _tsinfer.AncestorMatcher via restore_tree_sequence_builder. A fresh
-    Matcher is instantiated for each group's tree sequence; no state is maintained
-    between groups.
+    Uses AncestorMatcher2/MatcherIndexes. A fresh Matcher is instantiated for
+    each group's tree sequence; no state is maintained between groups.
     """
 
     def __init__(
         self,
         ts: tskit.TreeSequence,
         positions: np.ndarray,  # (num_sites,) int32 — inference site positions
-        allele_mapper: vcz.AlleleMapper,
         path_compression: bool = True,
         num_alleles: np.ndarray | None = None,
     ):
@@ -253,28 +163,17 @@ class Matcher:
         self._sequence_length = ts.sequence_length
         self._path_compression = path_compression
 
-        self._use_matcher2 = _USE_MATCHER2
         logger.info(
-            "Creating Matcher (%s): ts=%d nodes, %d edges, %.1f MiB, RSS=%.1f MiB",
-            "AncestorMatcher2" if self._use_matcher2 else "AncestorMatcher",
+            "Creating Matcher: ts=%d nodes, %d edges, %.1f MiB, RSS=%.1f MiB",
             ts.num_nodes,
             ts.num_edges,
             ts.nbytes / (1024 * 1024),
             _rss_mib(),
         )
         t0 = time_.monotonic()
-        if self._use_matcher2:
-            self._matcher_indexes = MatcherIndexes(
-                ts, vestigial_root=False, num_alleles=num_alleles
-            )
-        else:
-            self._tsb = _tsb_from_ts(
-                ts,
-                self._num_sites,
-                self._positions,
-                num_alleles=num_alleles,
-                allele_mapper=allele_mapper,
-            )
+        self._matcher_indexes = MatcherIndexes(
+            ts, vestigial_root=False, num_alleles=num_alleles
+        )
         logger.info(
             "Matcher ready in %.3fs, RSS=%.1f MiB",
             time_.monotonic() - t0,
@@ -287,18 +186,10 @@ class Matcher:
         """Match a single haplotype: read, run HMM, convert to result."""
         num_sites = self._num_sites
         pos = self._positions.astype(np.float64)
-        seq_len = self._sequence_length
 
         # Each call gets its own matcher so threads don't share state
         t0 = time_.monotonic()
-        if self._use_matcher2:
-            matcher = AncestorMatcher2(self._matcher_indexes, self._rho, self._mu)
-        else:
-            matcher = _LegacyMatcherWrapper(
-                _tsinfer.AncestorMatcher(self._tsb, self._rho, self._mu),
-                pos,
-                seq_len,
-            )
+        matcher = AncestorMatcher2(self._matcher_indexes, self._rho, self._mu)
         t_init = time_.monotonic() - t0
 
         t0 = time_.monotonic()
@@ -523,32 +414,6 @@ def add_vestigial_root(ts):
         # can just sort almost the end of the table.
         tables.sort()
     return tables.tree_sequence()
-
-
-class _LegacyMatcherWrapper:
-    """Wraps _tsinfer.AncestorMatcher to return genomic positions."""
-
-    def __init__(self, matcher, positions, seq_len):
-        self._matcher = matcher
-        self._positions = positions
-        self._seq_len = seq_len
-
-    def find_path(self, h, start, end, match_out):
-        left, right, parent = self._matcher.find_path(h, start, end, match_out)
-        num_sites = len(self._positions)
-        left_pos = self._positions[left]
-        left_pos = np.where(left_pos == self._positions[0], 0, left_pos)
-        clipped = np.minimum(right, num_sites - 1)
-        right_pos = np.where(right < num_sites, self._positions[clipped], self._seq_len)
-        return left_pos, right_pos, parent
-
-    @property
-    def total_memory(self):
-        return self._matcher.total_memory
-
-    @property
-    def mean_traceback_size(self):
-        return self._matcher.mean_traceback_size
 
 
 class MatcherIndexes(_tsinfer.MatcherIndexes):
