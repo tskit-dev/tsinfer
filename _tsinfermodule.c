@@ -2028,12 +2028,20 @@ static PyObject *
 AncestorMatcher2_get_total_memory(AncestorMatcher2 *self, void *closure)
 {
     PyObject *ret = NULL;
+    unsigned long val;
 
     if (AncestorMatcher2_check_state(self) != 0) {
         goto out;
     }
-    ret = Py_BuildValue(
-        "k", (unsigned long) ancestor_matcher2_get_total_memory(self->ancestor_matcher));
+
+#if defined(TSI_NO_ATOMICS)
+    /* Without atomics, return an obviously wrong value */
+    val = (unsigned long) PY_SSIZE_T_MAX;
+#else
+    val = ancestor_matcher2_get_total_memory(self->ancestor_matcher);
+#endif
+    ret = Py_BuildValue("k", val);
+
 out:
     return ret;
 }

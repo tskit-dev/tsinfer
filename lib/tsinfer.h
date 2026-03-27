@@ -291,7 +291,7 @@ typedef struct {
     tsk_id_t *likelihood_nodes_tmp;
     tsk_id_t *likelihood_nodes;
     node_state_list_t *traceback;
-    tsk_blkalloc_t traceback_allocator;
+    tsi_blkalloc_t traceback_allocator;
     size_t total_traceback_size;
     size_t traceback_block_size;
     size_t traceback_realloc_size;

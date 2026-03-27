@@ -1264,7 +1264,7 @@ ancestor_matcher2_print_state(ancestor_matcher2_t *self, FILE *out)
         }
         fprintf(out, "\n");
     }
-    tsk_blkalloc_print_state(&self->traceback_allocator, out);
+    tsi_blkalloc_print_state(&self->traceback_allocator, out);
 
     /* ancestor_matcher2_check_state(self); */
     return 0;
@@ -1319,7 +1319,7 @@ ancestor_matcher2_alloc(ancestor_matcher2_t *self,
     /* If the traceback allocator is using more than 2GiB of RAM free it, so
      * that other threads can use the memory */
     self->traceback_realloc_size = 2L * 1024L * 1024L * 1024L;
-    ret = tsk_blkalloc_init(&self->traceback_allocator, self->traceback_block_size);
+    ret = tsi_blkalloc_init(&self->traceback_allocator, self->traceback_block_size);
     if (ret != 0) {
         goto out;
     }
@@ -1349,7 +1349,7 @@ ancestor_matcher2_free(ancestor_matcher2_t *self)
     tsi_safe_free(self->allelic_state);
     tsi_safe_free(self->max_likelihood_node);
     tsi_safe_free(self->traceback);
-    tsk_blkalloc_free(&self->traceback_allocator);
+    tsi_blkalloc_free(&self->traceback_allocator);
     return 0;
 }
 
@@ -1413,9 +1413,9 @@ ancestor_matcher2_store_traceback(ancestor_matcher2_t *self, const tsk_id_t site
         T[site_id].node = T[site_id - 1].node;
         T[site_id].recombination_required = T[site_id - 1].recombination_required;
     } else {
-        list_node = tsk_blkalloc_get(&self->traceback_allocator,
+        list_node = tsi_blkalloc_get(&self->traceback_allocator,
             (size_t) num_likelihood_nodes * sizeof(tsk_id_t));
-        list_R = tsk_blkalloc_get(
+        list_R = tsi_blkalloc_get(
             &self->traceback_allocator, (size_t) num_likelihood_nodes * sizeof(int8_t));
         if (list_node == NULL || list_R == NULL) {
             ret = TSI_ERR_NO_MEMORY;
@@ -1687,13 +1687,13 @@ ancestor_matcher2_reset(ancestor_matcher2_t *self)
     memset(self->allelic_state, 0xff, self->num_nodes * sizeof(*self->allelic_state));
 
     if (self->traceback_allocator.total_size > self->traceback_realloc_size) {
-        tsk_blkalloc_free(&self->traceback_allocator);
-        ret = tsk_blkalloc_init(&self->traceback_allocator, self->traceback_block_size);
+        tsi_blkalloc_free(&self->traceback_allocator);
+        ret = tsi_blkalloc_init(&self->traceback_allocator, self->traceback_block_size);
         if (ret != 0) {
             goto out;
         }
     } else {
-        ret = tsk_blkalloc_reset(&self->traceback_allocator);
+        ret = tsi_blkalloc_reset(&self->traceback_allocator);
         if (ret != 0) {
             goto out;
         }
