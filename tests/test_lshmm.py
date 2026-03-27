@@ -598,7 +598,7 @@ def run_match_tsinfer(ts, h):
     """Run Python reference matcher on a tsinfer-produced topology.
 
     Skips add_vestigial_root since tsinfer topologies already have
-    the required root structure.  Also runs the C AncestorMatcher2
+    the required root structure.  Also runs the C AncestorMatcher
     and compares.
     """
     h = np.array(h).astype(np.int8)
@@ -619,7 +619,7 @@ def run_match_tsinfer(ts, h):
 
     if ts.num_sites > 0:
         mi = matching.MatcherIndexes(ts, vestigial_root=False)
-        am = matching.AncestorMatcher2(mi, recombination, mismatch)
+        am = matching.AncestorMatcher(mi, recombination, mismatch)
         match_out = np.zeros(ts.num_sites, dtype=np.int8)
         non_missing = np.where(h >= 0)[0]
         if len(non_missing) == 0:
@@ -656,7 +656,7 @@ def run_match(ts, h):
 
     if ts.num_sites > 0:
         mi = matching.MatcherIndexes(ts)
-        am = matching.AncestorMatcher2(mi, recombination, mismatch)
+        am = matching.AncestorMatcher(mi, recombination, mismatch)
         match_out = np.zeros(ts.num_sites, dtype=np.int8)
         non_missing = np.where(h >= 0)[0]
         if len(non_missing) == 0:

@@ -19,7 +19,7 @@
 """
 Matching fixtures: small tree sequences with known match results from the
 current AncestorMatcher.  These serve as regression tests when swapping
-to AncestorMatcher2 / MatcherIndexes.
+to AncestorMatcher / MatcherIndexes.
 
 Each fixture builds a tree sequence using make_root_ts + extend_ts (the
 same path the real pipeline uses), then matches query haplotypes and

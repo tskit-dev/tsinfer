@@ -33,9 +33,9 @@ typedef struct {
 
 typedef struct {
     PyObject_HEAD
-    ancestor_matcher2_t *ancestor_matcher;
+    ancestor_matcher_t *ancestor_matcher;
     MatcherIndexes *matcher_indexes;
-} AncestorMatcher2;
+} AncestorMatcher;
 
 static void
 handle_library_error(int err)
@@ -565,26 +565,26 @@ static PyTypeObject MatcherIndexesType = {
 };
 
 /*===================================================================
- * AncestorMatcher2
+ * AncestorMatcher
  *===================================================================
  */
 
 static int
-AncestorMatcher2_check_state(AncestorMatcher2 *self)
+AncestorMatcher_check_state(AncestorMatcher *self)
 {
     int ret = 0;
     if (self->ancestor_matcher == NULL) {
-        PyErr_SetString(PyExc_SystemError, "AncestorMatcher2 not initialised");
+        PyErr_SetString(PyExc_SystemError, "AncestorMatcher not initialised");
         ret = -1;
     }
     return ret;
 }
 
 static void
-AncestorMatcher2_dealloc(AncestorMatcher2 *self)
+AncestorMatcher_dealloc(AncestorMatcher *self)
 {
     if (self->ancestor_matcher != NULL) {
-        ancestor_matcher2_free(self->ancestor_matcher);
+        ancestor_matcher_free(self->ancestor_matcher);
         PyMem_Free(self->ancestor_matcher);
         self->ancestor_matcher = NULL;
     }
@@ -593,7 +593,7 @@ AncestorMatcher2_dealloc(AncestorMatcher2 *self)
 }
 
 static int
-AncestorMatcher2_init(AncestorMatcher2 *self, PyObject *args, PyObject *kwds)
+AncestorMatcher_init(AncestorMatcher *self, PyObject *args, PyObject *kwds)
 {
     int ret = -1;
     int err;
@@ -645,7 +645,7 @@ AncestorMatcher2_init(AncestorMatcher2 *self, PyObject *args, PyObject *kwds)
         goto out;
     }
 
-    self->ancestor_matcher = PyMem_Malloc(sizeof(ancestor_matcher2_t));
+    self->ancestor_matcher = PyMem_Malloc(sizeof(ancestor_matcher_t));
     if (self->ancestor_matcher == NULL) {
         PyErr_NoMemory();
         goto out;
@@ -656,7 +656,7 @@ AncestorMatcher2_init(AncestorMatcher2 *self, PyObject *args, PyObject *kwds)
     if (!weight_by_n) {
         flags |= TSI_DISABLE_WEIGHT_BY_N;
     }
-    err = ancestor_matcher2_alloc(self->ancestor_matcher,
+    err = ancestor_matcher_alloc(self->ancestor_matcher,
         self->matcher_indexes->matcher_indexes, PyArray_DATA(recombination_array),
         PyArray_DATA(mismatch_array), likelihood_threshold, flags);
     if (err != 0) {
@@ -671,7 +671,7 @@ out:
 }
 
 static PyObject *
-AncestorMatcher2_find_path(AncestorMatcher2 *self, PyObject *args, PyObject *kwds)
+AncestorMatcher_find_path(AncestorMatcher *self, PyObject *args, PyObject *kwds)
 {
     int err;
     PyObject *ret = NULL;
@@ -687,7 +687,7 @@ AncestorMatcher2_find_path(AncestorMatcher2 *self, PyObject *args, PyObject *kwd
     PyArrayObject *match = NULL;
     npy_intp dims[1];
 
-    if (AncestorMatcher2_check_state(self) != 0) {
+    if (AncestorMatcher_check_state(self) != 0) {
         goto out;
     }
     if (!PyArg_ParseTupleAndKeywords(
@@ -719,7 +719,7 @@ AncestorMatcher2_find_path(AncestorMatcher2 *self, PyObject *args, PyObject *kwd
     }
 
     Py_BEGIN_ALLOW_THREADS
-    err = ancestor_matcher2_find_path(self->ancestor_matcher, (tsk_id_t) start,
+    err = ancestor_matcher_find_path(self->ancestor_matcher, (tsk_id_t) start,
         (tsk_id_t) end, (allele_t *) PyArray_DATA(haplotype_array),
         (allele_t *) PyArray_DATA(match), &num_edges, PyArray_DATA(left),
         PyArray_DATA(right), PyArray_DATA(parent));
@@ -747,7 +747,7 @@ out:
 }
 
 static PyObject *
-AncestorMatcher2_get_traceback(AncestorMatcher2 *self, PyObject *args)
+AncestorMatcher_get_traceback(AncestorMatcher *self, PyObject *args)
 {
     PyObject *ret = NULL;
     unsigned long site;
@@ -757,7 +757,7 @@ AncestorMatcher2_get_traceback(AncestorMatcher2 *self, PyObject *args)
     PyObject *value = NULL;
     int j;
 
-    if (AncestorMatcher2_check_state(self) != 0) {
+    if (AncestorMatcher_check_state(self) != 0) {
         goto out;
     }
     if (!PyArg_ParseTuple(args, "k", &site)) {
@@ -796,26 +796,26 @@ out:
 }
 
 static PyObject *
-AncestorMatcher2_get_mean_traceback_size(AncestorMatcher2 *self, void *closure)
+AncestorMatcher_get_mean_traceback_size(AncestorMatcher *self, void *closure)
 {
     PyObject *ret = NULL;
 
-    if (AncestorMatcher2_check_state(self) != 0) {
+    if (AncestorMatcher_check_state(self) != 0) {
         goto out;
     }
     ret = Py_BuildValue(
-        "d", ancestor_matcher2_get_mean_traceback_size(self->ancestor_matcher));
+        "d", ancestor_matcher_get_mean_traceback_size(self->ancestor_matcher));
 out:
     return ret;
 }
 
 static PyObject *
-AncestorMatcher2_get_total_memory(AncestorMatcher2 *self, void *closure)
+AncestorMatcher_get_total_memory(AncestorMatcher *self, void *closure)
 {
     PyObject *ret = NULL;
     unsigned long val;
 
-    if (AncestorMatcher2_check_state(self) != 0) {
+    if (AncestorMatcher_check_state(self) != 0) {
         goto out;
     }
 
@@ -823,7 +823,7 @@ AncestorMatcher2_get_total_memory(AncestorMatcher2 *self, void *closure)
     /* Without atomics, return an obviously wrong value */
     val = (unsigned long) PY_SSIZE_T_MAX;
 #else
-    val = ancestor_matcher2_get_total_memory(self->ancestor_matcher);
+    val = ancestor_matcher_get_total_memory(self->ancestor_matcher);
 #endif
     ret = Py_BuildValue("k", val);
 
@@ -831,34 +831,33 @@ out:
     return ret;
 }
 
-static PyGetSetDef AncestorMatcher2_getsetters[] = {
-    { "mean_traceback_size", (getter) AncestorMatcher2_get_mean_traceback_size, NULL,
+static PyGetSetDef AncestorMatcher_getsetters[] = {
+    { "mean_traceback_size", (getter) AncestorMatcher_get_mean_traceback_size, NULL,
         "The mean size of the traceback per site." },
-    { "total_memory", (getter) AncestorMatcher2_get_total_memory, NULL,
+    { "total_memory", (getter) AncestorMatcher_get_total_memory, NULL,
         "The total amount of memory used by this matcher." },
     { NULL } /* Sentinel */
 };
 
-static PyMethodDef AncestorMatcher2_methods[] = {
-    { "find_path", (PyCFunction) AncestorMatcher2_find_path,
-        METH_VARARGS | METH_KEYWORDS,
+static PyMethodDef AncestorMatcher_methods[] = {
+    { "find_path", (PyCFunction) AncestorMatcher_find_path, METH_VARARGS | METH_KEYWORDS,
         "Returns a best match path for the specified haplotype through the ancestors." },
-    { "get_traceback", (PyCFunction) AncestorMatcher2_get_traceback, METH_VARARGS,
+    { "get_traceback", (PyCFunction) AncestorMatcher_get_traceback, METH_VARARGS,
         "Returns the traceback likelihood dictionary at the specified site." },
     { NULL } /* Sentinel */
 };
 
-static PyTypeObject AncestorMatcher2Type = {
+static PyTypeObject AncestorMatcherType = {
     // clang-format off
     PyVarObject_HEAD_INIT(NULL, 0)
-    .tp_name = "_tsinfer.AncestorMatcher2",
-    .tp_basicsize = sizeof(AncestorMatcher2),
-    .tp_dealloc = (destructor) AncestorMatcher2_dealloc,
+    .tp_name = "_tsinfer.AncestorMatcher",
+    .tp_basicsize = sizeof(AncestorMatcher),
+    .tp_dealloc = (destructor) AncestorMatcher_dealloc,
     .tp_flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
-    .tp_doc = "AncestorMatcher2 objects",
-    .tp_methods = AncestorMatcher2_methods,
-    .tp_getset = AncestorMatcher2_getsetters,
-    .tp_init = (initproc) AncestorMatcher2_init,
+    .tp_doc = "AncestorMatcher objects",
+    .tp_methods = AncestorMatcher_methods,
+    .tp_getset = AncestorMatcher_getsetters,
+    .tp_init = (initproc) AncestorMatcher_init,
     .tp_new = PyType_GenericNew,
     // clang-format on
 };
@@ -926,13 +925,13 @@ init_tsinfer(void)
     Py_INCREF(&MatcherIndexesType);
     PyModule_AddObject(module, "MatcherIndexes", (PyObject *) &MatcherIndexesType);
 
-    /* AncestorMatcher2 type */
-    AncestorMatcher2Type.tp_new = PyType_GenericNew;
-    if (PyType_Ready(&AncestorMatcher2Type) < 0) {
+    /* AncestorMatcher type */
+    AncestorMatcherType.tp_new = PyType_GenericNew;
+    if (PyType_Ready(&AncestorMatcherType) < 0) {
         INITERROR;
     }
-    Py_INCREF(&AncestorMatcher2Type);
-    PyModule_AddObject(module, "AncestorMatcher2", (PyObject *) &AncestorMatcher2Type);
+    Py_INCREF(&AncestorMatcherType);
+    PyModule_AddObject(module, "AncestorMatcher", (PyObject *) &AncestorMatcherType);
 
     TsinfLibraryError = PyErr_NewException("_tsinfer.LibraryError", NULL, NULL);
     Py_INCREF(TsinfLibraryError);

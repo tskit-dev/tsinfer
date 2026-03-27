@@ -308,7 +308,7 @@ run_match(const tsk_treeseq_t *ts, double rho, double mu, const allele_t *h,
     tsk_id_t *parent)
 {
     int ret;
-    ancestor_matcher2_t am;
+    ancestor_matcher_t am;
     matcher_indexes_t mi;
     const size_t m = tsk_treeseq_get_num_sites(ts);
     double *recombination_rate = calloc(m, sizeof(*recombination_rate));
@@ -325,16 +325,16 @@ run_match(const tsk_treeseq_t *ts, double rho, double mu, const allele_t *h,
     ret = matcher_indexes_alloc(&mi, ts->tables, NULL, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
     /* matcher_indexes_print_state(&mi, stdout); */
-    ret = ancestor_matcher2_alloc(
+    ret = ancestor_matcher_alloc(
         &am, &mi, recombination_rate, mutation_rate, DBL_MIN, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
 
-    ret = ancestor_matcher2_find_path(
+    ret = ancestor_matcher_find_path(
         &am, 0, (tsk_id_t) m, h, match, path_length, left, right, parent);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
-    /* ancestor_matcher2_print_state(&am, stdout); */
+    /* ancestor_matcher_print_state(&am, stdout); */
 
-    ancestor_matcher2_free(&am);
+    ancestor_matcher_free(&am);
     matcher_indexes_free(&mi);
     free(recombination_rate);
     free(mutation_rate);
@@ -691,7 +691,7 @@ test_matching_triallelic_ts(void)
      * Query with allele 2 at site 0 should not trigger BAD_HAPLOTYPE_ALLELE.
      */
     tsk_treeseq_t ts;
-    ancestor_matcher2_t am;
+    ancestor_matcher_t am;
     matcher_indexes_t mi;
     allele_t match[3];
     tsk_id_t left[3], right[3], parent[3];
@@ -705,17 +705,17 @@ test_matching_triallelic_ts(void)
 
     ret = matcher_indexes_alloc(&mi, ts.tables, num_alleles, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
-    ret = ancestor_matcher2_alloc(&am, &mi, rho, mu, 14, 0);
+    ret = ancestor_matcher_alloc(&am, &mi, rho, mu, 14, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
 
     /* Query [2,0,0]: allele 2 at site 0 needs num_alleles >= 3 */
     allele_t h[] = { 2, 0, 0 };
-    ret = ancestor_matcher2_find_path(
+    ret = ancestor_matcher_find_path(
         &am, 0, 3, h, match, &path_length, left, right, parent);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
     CU_ASSERT_EQUAL(path_length, 1);
 
-    ancestor_matcher2_free(&am);
+    ancestor_matcher_free(&am);
     matcher_indexes_free(&mi);
     tsk_treeseq_free(&ts);
 }

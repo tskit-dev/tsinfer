@@ -148,7 +148,7 @@ class TestUninitialised:
 
 
 def make_matcher_indexes_and_matcher(num_samples=4):
-    """Build a MatcherIndexes and AncestorMatcher2 from a small tree sequence."""
+    """Build a MatcherIndexes and AncestorMatcher from a small tree sequence."""
     tables = tskit.Tree.generate_balanced(num_samples).tree_sequence.dump_tables()
     tables.sequence_length = 2
     tables.edges.right = np.full(len(tables.edges), 2, dtype=np.float64)
@@ -161,11 +161,11 @@ def make_matcher_indexes_and_matcher(num_samples=4):
     mi = _tsinfer.MatcherIndexes(ll_tables)
     recombination = np.array([1e-9])
     mismatch = np.array([0.0])
-    am = _tsinfer.AncestorMatcher2(mi, recombination=recombination, mismatch=mismatch)
+    am = _tsinfer.AncestorMatcher(mi, recombination=recombination, mismatch=mismatch)
     return ts, mi, am
 
 
-class TestAncestorMatcher2:
+class TestAncestorMatcher:
     def test_total_memory_before_find_path(self):
         _, _, am = make_matcher_indexes_and_matcher()
         mem = am.total_memory
