@@ -1346,12 +1346,21 @@ test_matching_star_ts(void)
     tsk_size_t path_length;
 
     build_star_ts(&ts);
-    /* Just check that matcher_indexes_alloc and find_path don't crash */
+    /* [0,1,0] copies node 2 */
     allele_t h1[] = { 0, 1, 0 };
     run_match(&ts, 1e-9, 0, h1, match, &path_length, left, right, parent);
+    CU_ASSERT_EQUAL(path_length, 1);
+    CU_ASSERT_EQUAL(left[0], 0);
+    CU_ASSERT_EQUAL(right[0], 100);
+    CU_ASSERT_EQUAL(parent[0], 2);
 
+    /* [1,0,0] copies node 3 */
     allele_t h2[] = { 1, 0, 0 };
     run_match(&ts, 1e-9, 0, h2, match, &path_length, left, right, parent);
+    CU_ASSERT_EQUAL(path_length, 1);
+    CU_ASSERT_EQUAL(left[0], 0);
+    CU_ASSERT_EQUAL(right[0], 100);
+    CU_ASSERT_EQUAL(parent[0], 3);
 
     tsk_treeseq_free(&ts);
 }
@@ -1365,11 +1374,21 @@ test_matching_binary_ts(void)
     tsk_size_t path_length;
 
     build_binary_ts(&ts);
+    /* [1,0,1,0] copies node 3 */
     allele_t h1[] = { 1, 0, 1, 0 };
     run_match(&ts, 1e-9, 0, h1, match, &path_length, left, right, parent);
+    CU_ASSERT_EQUAL(path_length, 1);
+    CU_ASSERT_EQUAL(left[0], 0);
+    CU_ASSERT_EQUAL(right[0], 100);
+    CU_ASSERT_EQUAL(parent[0], 3);
 
+    /* [1,0,0,0] copies internal node 2 */
     allele_t h2[] = { 1, 0, 0, 0 };
     run_match(&ts, 1e-9, 0, h2, match, &path_length, left, right, parent);
+    CU_ASSERT_EQUAL(path_length, 1);
+    CU_ASSERT_EQUAL(left[0], 0);
+    CU_ASSERT_EQUAL(right[0], 100);
+    CU_ASSERT_EQUAL(parent[0], 2);
 
     tsk_treeseq_free(&ts);
 }
@@ -1383,8 +1402,13 @@ test_matching_two_tree_ts(void)
     tsk_size_t path_length;
 
     build_two_tree_ts(&ts);
+    /* [1,0,0,0] copies node 2 */
     allele_t h1[] = { 1, 0, 0, 0 };
     run_match(&ts, 1e-9, 0, h1, match, &path_length, left, right, parent);
+    CU_ASSERT_EQUAL(path_length, 1);
+    CU_ASSERT_EQUAL(left[0], 0);
+    CU_ASSERT_EQUAL(right[0], 100);
+    CU_ASSERT_EQUAL(parent[0], 2);
 
     tsk_treeseq_free(&ts);
 }
@@ -1398,11 +1422,21 @@ test_matching_deep_chain_ts(void)
     tsk_size_t path_length;
 
     build_deep_chain_ts(&ts);
+    /* [1,1,1,0] copies node 4 (C) */
     allele_t h1[] = { 1, 1, 1, 0 };
     run_match(&ts, 1e-9, 0, h1, match, &path_length, left, right, parent);
+    CU_ASSERT_EQUAL(path_length, 1);
+    CU_ASSERT_EQUAL(left[0], 0);
+    CU_ASSERT_EQUAL(right[0], 100);
+    CU_ASSERT_EQUAL(parent[0], 4);
 
+    /* [1,0,0,0] copies node 2 (A) */
     allele_t h2[] = { 1, 0, 0, 0 };
     run_match(&ts, 1e-9, 0, h2, match, &path_length, left, right, parent);
+    CU_ASSERT_EQUAL(path_length, 1);
+    CU_ASSERT_EQUAL(left[0], 0);
+    CU_ASSERT_EQUAL(right[0], 100);
+    CU_ASSERT_EQUAL(parent[0], 2);
 
     tsk_treeseq_free(&ts);
 }
