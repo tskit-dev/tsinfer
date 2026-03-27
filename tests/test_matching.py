@@ -125,11 +125,6 @@ def _make_job(
     )
 
 
-def _dummy_result():
-    """A MatchResult with no edges or mutations."""
-    return matching.MatchResult(path=[], mutations=[])
-
-
 # ---------------------------------------------------------------------------
 # TestMakeRootTs
 # ---------------------------------------------------------------------------

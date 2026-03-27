@@ -160,13 +160,6 @@ class AncestorBuilder:
         # Add each site to the list for this ancestor_uid at this timepoint
         sites_at_fixed_timepoint[ancestor_uid].append(site_id)
 
-    def add_terminal_site(self):
-        """
-        Adds a new terminal site at the specified ID to the builder.
-        """
-        site_id = len(self.sites)
-        self.sites.append(Site(site_id, time=1, derived_count=0, terminal=True))
-
     def print_state(self):
         print("Ancestor builder")
         print("Sites = ")
