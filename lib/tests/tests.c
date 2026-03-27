@@ -1177,6 +1177,106 @@ test_matching_impossible_zero_recomb(void)
 }
 
 static void
+build_root_switch_ts(tsk_treeseq_t *ts)
+{
+    /*
+     * Two trees where the real root (child of virtual root 0) switches.
+     *
+     * Tree 1 [0, 50):          Tree 2 [50, 100):
+     *
+     *   0 (t=3)                  0 (t=3)
+     *   |                        |
+     *   1 (t=2)                  2 (t=2)
+     *  / \                      / | \
+     * 3   4                    3  4  5
+     *
+     * Nodes: 0(t=3), 1(t=2), 2(t=2), 3(t=0.5), 4(t=0.3), 5(t=0.1)
+     *
+     * In tree 1, root = left_child[0] = 1
+     * In tree 2, root = left_child[0] = 2  -> root switch!
+     *
+     * Node 2 is a nonzero root in tree 1 (exercises parent-side insertion).
+     * Node 5 is a nonzero root in tree 1 and enters tree 2 only as a child
+     * (exercises child-side NONZERO_ROOT insertion at line 1116-1119).
+     */
+    int ret;
+    tsk_table_collection_t tables;
+
+    ret = tsk_table_collection_init(&tables, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    tables.sequence_length = 100;
+
+    /* Nodes */
+    tsk_node_table_add_row(&tables.nodes, 0, 3.0, TSK_NULL, TSK_NULL, NULL, 0);
+    tsk_node_table_add_row(&tables.nodes, 0, 2.0, TSK_NULL, TSK_NULL, NULL, 0);
+    tsk_node_table_add_row(&tables.nodes, 0, 2.0, TSK_NULL, TSK_NULL, NULL, 0);
+    tsk_node_table_add_row(&tables.nodes, 0, 0.5, TSK_NULL, TSK_NULL, NULL, 0);
+    tsk_node_table_add_row(&tables.nodes, 0, 0.3, TSK_NULL, TSK_NULL, NULL, 0);
+    tsk_node_table_add_row(&tables.nodes, 0, 0.1, TSK_NULL, TSK_NULL, NULL, 0);
+
+    /* Tree 1 edges [0, 50) */
+    tsk_edge_table_add_row(&tables.edges, 0, 50, 0, 1, NULL, 0);
+    tsk_edge_table_add_row(&tables.edges, 0, 50, 1, 3, NULL, 0);
+    tsk_edge_table_add_row(&tables.edges, 0, 50, 1, 4, NULL, 0);
+    /* Tree 2 edges [50, 100) */
+    tsk_edge_table_add_row(&tables.edges, 50, 100, 0, 2, NULL, 0);
+    tsk_edge_table_add_row(&tables.edges, 50, 100, 2, 3, NULL, 0);
+    tsk_edge_table_add_row(&tables.edges, 50, 100, 2, 4, NULL, 0);
+    tsk_edge_table_add_row(&tables.edges, 50, 100, 2, 5, NULL, 0);
+
+    /* Sites: one per tree */
+    tsk_site_table_add_row(&tables.sites, 10, "A", 1, NULL, 0);
+    tsk_site_table_add_row(&tables.sites, 60, "A", 1, NULL, 0);
+
+    /* Mutations: node 3 at site 0, node 4 at site 1 */
+    tsk_mutation_table_add_row(
+        &tables.mutations, 0, 3, TSK_NULL, TSK_UNKNOWN_TIME, "T", 1, NULL, 0);
+    tsk_mutation_table_add_row(
+        &tables.mutations, 1, 4, TSK_NULL, TSK_UNKNOWN_TIME, "T", 1, NULL, 0);
+
+    ret = tsk_table_collection_sort(&tables, NULL, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = tsk_treeseq_init(ts, &tables, TSK_TS_INIT_BUILD_INDEXES);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    tsk_table_collection_free(&tables);
+}
+
+static void
+test_matching_root_switch(void)
+{
+    /*
+     * Match against a tree sequence where the real root changes between
+     * trees, exercising the root != last_root code path and nonzero root
+     * insertion/removal during tree transitions.
+     */
+    tsk_treeseq_t ts;
+    allele_t match[2];
+    tsk_id_t left[4], right[4], parent[4];
+    tsk_size_t path_length;
+
+    build_root_switch_ts(&ts);
+
+    /* [1,0] copies node 3 (has mutation at site 0) */
+    allele_t h1[] = { 1, 0 };
+    run_match(&ts, 1e-9, 1e-20, h1, match, &path_length, left, right, parent);
+    CU_ASSERT_EQUAL(path_length, 1);
+    CU_ASSERT_EQUAL(parent[0], 3);
+
+    /* [0,1] copies node 4 (has mutation at site 1) */
+    allele_t h2[] = { 0, 1 };
+    run_match(&ts, 1e-9, 1e-20, h2, match, &path_length, left, right, parent);
+    CU_ASSERT_EQUAL(path_length, 1);
+    CU_ASSERT_EQUAL(parent[0], 4);
+
+    /* [1,1] should match both mutations across the root switch */
+    allele_t h3[] = { 1, 1 };
+    run_match(&ts, 1e-9, 1e-20, h3, match, &path_length, left, right, parent);
+    CU_ASSERT_TRUE(path_length >= 1);
+
+    tsk_treeseq_free(&ts);
+}
+
+static void
 test_strerror(void)
 {
     int j;
@@ -1297,6 +1397,7 @@ main(int argc, char **argv)
         { "test_matching_bad_haplotype_allele", test_matching_bad_haplotype_allele },
         { "test_matching_impossible_extreme_mu", test_matching_impossible_extreme_mu },
         { "test_matching_impossible_zero_recomb", test_matching_impossible_zero_recomb },
+        { "test_matching_root_switch", test_matching_root_switch },
 
         { "test_strerror", test_strerror },
 
