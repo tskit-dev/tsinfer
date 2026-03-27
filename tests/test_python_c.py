@@ -359,8 +359,7 @@ class TestMatcherIndexes:
         tables = ts.dump_tables()
         ll_tables = _tsinfer.LightweightTableCollection(tables.sequence_length)
         ll_tables.fromdict(tables.asdict())
-        mi = _tsinfer.MatcherIndexes(ll_tables)
-        mi.print_state(sys.stdout)
+        _ = _tsinfer.MatcherIndexes(ll_tables)
 
     def test_print_state(self, tmpdir):
         ts = tskit.Tree.generate_balanced(4).tree_sequence
@@ -378,4 +377,3 @@ class TestMatcherIndexes:
             output = f.read()
         assert len(output) > 0
         assert "indexes" in output
-        print(output)
