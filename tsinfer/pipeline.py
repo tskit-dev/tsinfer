@@ -375,6 +375,8 @@ def _process_group(
             disable=not progress,
         )
         results = []
+        last_mem_log = time_.monotonic()
+        mem_log_interval = 30  # seconds
         for job, result in match_iter:
             if match_fh is not None:
                 doc = {
@@ -396,6 +398,18 @@ def _process_group(
                 match_fh.write(json.dumps(doc) + "\n")
             results.append((job, result))
             pbar.update(1)
+            now = time_.monotonic()
+            if now - last_mem_log >= mem_log_interval:
+                rss_mib = psutil.Process().memory_info().rss / (1024 * 1024)
+                reader.log_cache_state()
+                logger.info(
+                    "Group %d progress: %d/%d haplotypes, RSS=%.1f MiB",
+                    group_idx,
+                    len(results),
+                    len(job_list),
+                    rss_mib,
+                )
+                last_mem_log = now
         pbar.close()
         paired_results = sorted(results, key=lambda pair: pair[0].haplotype_index)
 
