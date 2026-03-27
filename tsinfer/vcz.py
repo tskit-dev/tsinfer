@@ -1273,7 +1273,7 @@ class ScheduledCache:
         self,
         source_name: str,
         load_fn,
-        chunk_bytes: int = 0,
+        chunk_bytes: int,
     ) -> None:
         """Register a loader ``load_fn(chunk_idx) -> ndarray`` for a source."""
         self._loaders[source_name] = load_fn
@@ -2153,7 +2153,9 @@ class HaplotypeReader:
                 _allele_mapper=self._allele_mapper,
             )
             self._readers[source_name] = reader
-            self._cache.register_loader(source_name, reader._do_load_chunk)
+            self._cache.register_loader(
+                source_name, reader._do_load_chunk, reader.chunk_bytes
+            )
             return reader
 
     def log_cache_state(self) -> None:
