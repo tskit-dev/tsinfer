@@ -1132,7 +1132,7 @@ matcher_indexes_copy_mutation_data(matcher_indexes_t *self,
     for (j = 0; j < total_mutations; j++) {
         site = mutations_site[j];
         if (site == last_site) {
-            ret = TSI_ERR_GENERIC;
+            ret = TSI_ERR_MULTIPLE_MUTATIONS_AT_SITE;
             goto out;
         }
 

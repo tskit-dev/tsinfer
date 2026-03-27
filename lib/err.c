@@ -112,6 +112,10 @@ tsi_strerror(int err)
         case TSI_ERR_BAD_ANCESTRAL_STATE:
             ret = "Ancestral state must be >= 0 and < num_alleles";
             break;
+        case TSI_ERR_MULTIPLE_MUTATIONS_AT_SITE:
+            ret = "Sites with multiple mutations are not supported "
+                  "in matcher_indexes";
+            break;
     }
     return ret;
 }
