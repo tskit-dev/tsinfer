@@ -1281,6 +1281,7 @@ class ScheduledCache:
 
     def start(self) -> None:
         """Start the read worker pool."""
+        logger.info("Cache budget: %.1f MiB", self._max_bytes / (1024 * 1024))
         for i in range(self._num_workers):
             t = threading.Thread(
                 target=self._worker_loop,

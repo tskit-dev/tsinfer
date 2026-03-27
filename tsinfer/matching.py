@@ -273,7 +273,11 @@ class Matcher:
                 num_alleles=num_alleles,
                 allele_mapper=allele_mapper,
             )
-        logger.info("Create matcher indexes in %.3fs", time_.monotonic() - t0)
+        logger.info(
+            "Matcher ready in %.3fs, RSS=%.1f MiB",
+            time_.monotonic() - t0,
+            _rss_mib(),
+        )
         self._rho = np.full(self._num_sites, 1e-2)
         self._mu = np.full(self._num_sites, 1e-20)
 
