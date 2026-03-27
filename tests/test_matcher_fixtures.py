@@ -52,7 +52,7 @@ class _ArrayReader:
 
 def _match(ts, positions, query, allele_mapper):
     """Run the current Matcher and return (path, mutations) as tuples."""
-    matcher = matching.Matcher(ts, positions, allele_mapper=allele_mapper)
+    matcher = matching.Matcher(ts, positions)
     results = list(matcher.match([None], _ArrayReader([query])))
     _, r = results[0]
     path = [(s.left, s.right, s.parent) for s in r.path]

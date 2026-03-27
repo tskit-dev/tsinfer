@@ -15,8 +15,8 @@ extra_c_args = [
     '-fshort-enums', '-fno-common']
 
 tsinfer_sources =[
-    'ancestor_matcher.c', 'ancestor_builder.c', 'tree_sequence_builder.c',
-    'object_heap.c', 'err.c', 'tsi_blkalloc.c']
+    'ancestor_matcher.c', 'ancestor_builder.c',
+    'err.c', 'tsi_blkalloc.c']
 
 avl_lib = static_library('avl', sources: ['avl.c'])
 tsinfer_lib = static_library('tsinfer', 
