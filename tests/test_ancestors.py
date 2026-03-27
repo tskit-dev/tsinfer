@@ -63,7 +63,6 @@ class Site:
     id: int
     time: float
     derived_count: int
-    terminal: bool
 
 
 class AncestorBuilder:
@@ -149,7 +148,7 @@ class AncestorBuilder:
         """
         site_id = len(self.sites)
         derived_count = np.sum(genotypes == 1)
-        self.sites.append(Site(site_id, time, derived_count, terminal=False))
+        self.sites.append(Site(site_id, time, derived_count))
         self.store_site_genotypes(site_id, genotypes)
         sites_at_fixed_timepoint = self.time_map[time]
         # Sites with an identical variant distribution (i.e. with the same
