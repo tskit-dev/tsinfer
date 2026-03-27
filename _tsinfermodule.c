@@ -1813,21 +1813,23 @@ AncestorMatcher2_init(AncestorMatcher2 *self, PyObject *args, PyObject *kwds)
     int ret = -1;
     int err;
     int extended_checks = 0;
+    int weight_by_n = 1;
     static char *kwlist[] = { "matcher_indexes", "recombination", "mismatch",
-        "precision", "extended_checks", NULL };
+        "extended_checks", "likelihood_threshold", "weight_by_n", NULL };
     MatcherIndexes *matcher_indexes = NULL;
     PyObject *recombination = NULL;
     PyObject *mismatch = NULL;
     PyArrayObject *recombination_array = NULL;
     PyArrayObject *mismatch_array = NULL;
     npy_intp *shape;
-    unsigned int precision = 22;
+    double likelihood_threshold = DBL_MIN;
     int flags = 0;
 
     self->ancestor_matcher = NULL;
     self->matcher_indexes = NULL;
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!OO|Ii", kwlist, &MatcherIndexesType,
-            &matcher_indexes, &recombination, &mismatch, &precision, &extended_checks)) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!OO|idi", kwlist, &MatcherIndexesType,
+            &matcher_indexes, &recombination, &mismatch, &extended_checks,
+            &likelihood_threshold, &weight_by_n)) {
         goto out;
     }
     self->matcher_indexes = matcher_indexes;
@@ -1864,11 +1866,14 @@ AncestorMatcher2_init(AncestorMatcher2 *self, PyObject *args, PyObject *kwds)
         goto out;
     }
     if (extended_checks) {
-        flags = TSI_EXTENDED_CHECKS;
+        flags |= TSI_EXTENDED_CHECKS;
+    }
+    if (!weight_by_n) {
+        flags |= TSI_DISABLE_WEIGHT_BY_N;
     }
     err = ancestor_matcher2_alloc(self->ancestor_matcher,
         self->matcher_indexes->matcher_indexes, PyArray_DATA(recombination_array),
-        PyArray_DATA(mismatch_array), precision, flags);
+        PyArray_DATA(mismatch_array), likelihood_threshold, flags);
     if (err != 0) {
         handle_library_error(err);
         goto out;
