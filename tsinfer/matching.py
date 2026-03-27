@@ -288,7 +288,11 @@ class Matcher:
         if self._use_matcher2:
             matcher = AncestorMatcher2(self._matcher_indexes, self._rho, self._mu)
         else:
-            matcher = _tsinfer.AncestorMatcher(self._tsb, self._rho, self._mu)
+            matcher = _LegacyMatcherWrapper(
+                _tsinfer.AncestorMatcher(self._tsb, self._rho, self._mu),
+                pos,
+                seq_len,
+            )
         t_init = time_.monotonic() - t0
 
         t0 = time_.monotonic()
@@ -307,12 +311,10 @@ class Matcher:
         left, right, parent = matcher.find_path(h, start, end, match_out)
         t_match = time_.monotonic() - t1
 
-        # Convert site-index edges to absolute-position PathSegments
+        # Build PathSegments from genomic-position edges
         path = []
         for li, ri, pi in zip(left, right, parent):
-            l_pos = float(pos[li])
-            r_pos = float(pos[ri]) if ri < num_sites else float(seq_len)
-            path.append(PathSegment(left=l_pos, right=r_pos, parent=int(pi)))
+            path.append(PathSegment(left=float(li), right=float(ri), parent=int(pi)))
 
         # Detect mutations and convert to absolute positions
         in_range = np.zeros(num_sites, dtype=bool)
@@ -514,6 +516,32 @@ def add_vestigial_root(ts):
         # can just sort almost the end of the table.
         tables.sort()
     return tables.tree_sequence()
+
+
+class _LegacyMatcherWrapper:
+    """Wraps _tsinfer.AncestorMatcher to return genomic positions."""
+
+    def __init__(self, matcher, positions, seq_len):
+        self._matcher = matcher
+        self._positions = positions
+        self._seq_len = seq_len
+
+    def find_path(self, h, start, end, match_out):
+        left, right, parent = self._matcher.find_path(h, start, end, match_out)
+        num_sites = len(self._positions)
+        left_pos = self._positions[left]
+        left_pos = np.where(left_pos == self._positions[0], 0, left_pos)
+        clipped = np.minimum(right, num_sites - 1)
+        right_pos = np.where(right < num_sites, self._positions[clipped], self._seq_len)
+        return left_pos, right_pos, parent
+
+    @property
+    def total_memory(self):
+        return self._matcher.total_memory
+
+    @property
+    def mean_traceback_size(self):
+        return self._matcher.mean_traceback_size
 
 
 class MatcherIndexes(_tsinfer.MatcherIndexes):

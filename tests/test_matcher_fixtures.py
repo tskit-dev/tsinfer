@@ -216,25 +216,25 @@ class TestStarTree:
     def test_copy_node2(self):
         """Query [0,1,0] exactly matches node 2."""
         path, mutations = _match(self.ts, self.positions, [0, 1, 0], self.am)
-        assert path == [(10.0, 100.0, 2)]
+        assert path == [(0.0, 100.0, 2)]
         assert mutations == []
 
     def test_copy_node3(self):
         """Query [1,0,0] exactly matches node 3."""
         path, mutations = _match(self.ts, self.positions, [1, 0, 0], self.am)
-        assert path == [(10.0, 100.0, 3)]
+        assert path == [(0.0, 100.0, 3)]
         assert mutations == []
 
     def test_mixed(self):
         """Query [1,1,0] recombines between nodes 2 and 3."""
         path, mutations = _match(self.ts, self.positions, [1, 1, 0], self.am)
-        assert path == [(20.0, 100.0, 2), (10.0, 20.0, 3)]
+        assert path == [(20.0, 100.0, 2), (0.0, 20.0, 3)]
         assert mutations == []
 
     def test_ancestral(self):
         """Query [0,0,0] (all ancestral) copies from virtual root."""
         path, mutations = _match(self.ts, self.positions, [0, 0, 0], self.am)
-        assert path == [(10.0, 100.0, 1)]
+        assert path == [(0.0, 100.0, 1)]
         assert mutations == []
 
 
@@ -248,19 +248,19 @@ class TestBinaryTree:
     def test_copy_leaf_node3(self):
         """Query [1,0,1,0] exactly matches node 3."""
         path, mutations = _match(self.ts, self.positions, [1, 0, 1, 0], self.am)
-        assert path == [(10.0, 100.0, 3)]
+        assert path == [(0.0, 100.0, 3)]
         assert mutations == []
 
     def test_copy_leaf_node4(self):
         """Query [1,0,0,1] exactly matches node 4."""
         path, mutations = _match(self.ts, self.positions, [1, 0, 0, 1], self.am)
-        assert path == [(10.0, 100.0, 4)]
+        assert path == [(0.0, 100.0, 4)]
         assert mutations == []
 
     def test_copy_internal(self):
         """Query [1,0,0,0] matches internal node 2."""
         path, mutations = _match(self.ts, self.positions, [1, 0, 0, 0], self.am)
-        assert path == [(10.0, 100.0, 2)]
+        assert path == [(0.0, 100.0, 2)]
         assert mutations == []
 
     def test_mixed_leaves(self):
@@ -269,7 +269,7 @@ class TestBinaryTree:
         assert path == [
             (40.0, 100.0, 4),
             (30.0, 40.0, 3),
-            (10.0, 30.0, 1),
+            (0.0, 30.0, 1),
         ]
         assert mutations == []
 
@@ -284,19 +284,19 @@ class TestTwoTrees:
     def test_copy_A(self):
         """Query [1,0,0,0] copies entirely from A (node 2)."""
         path, mutations = _match(self.ts, self.positions, [1, 0, 0, 0], self.am)
-        assert path == [(10.0, 100.0, 2)]
+        assert path == [(0.0, 100.0, 2)]
         assert mutations == []
 
     def test_copy_B_site2(self):
         """Query [0,0,1,0] copies from B (node 3)."""
         path, mutations = _match(self.ts, self.positions, [0, 0, 1, 0], self.am)
-        assert path == [(10.0, 100.0, 3)]
+        assert path == [(0.0, 100.0, 3)]
         assert mutations == []
 
     def test_recombination(self):
         """Query [1,0,1,0] matches B's haplotype, requiring recombination."""
         path, mutations = _match(self.ts, self.positions, [1, 0, 1, 0], self.am)
-        assert path == [(30.0, 100.0, 3), (10.0, 30.0, 2)]
+        assert path == [(30.0, 100.0, 3), (0.0, 30.0, 2)]
         assert mutations == []
 
     def test_partial_missing(self):
@@ -316,24 +316,24 @@ class TestDeepChain:
     def test_copy_C(self):
         """Query [1,1,1,0] exactly matches deepest node C (4)."""
         path, mutations = _match(self.ts, self.positions, [1, 1, 1, 0], self.am)
-        assert path == [(10.0, 100.0, 4)]
+        assert path == [(0.0, 100.0, 4)]
         assert mutations == []
 
     def test_copy_B(self):
         """Query [1,1,0,0] matches node B (3)."""
         path, mutations = _match(self.ts, self.positions, [1, 1, 0, 0], self.am)
-        assert path == [(10.0, 100.0, 3)]
+        assert path == [(0.0, 100.0, 3)]
         assert mutations == []
 
     def test_copy_A(self):
         """Query [1,0,0,0] matches node A (2)."""
         path, mutations = _match(self.ts, self.positions, [1, 0, 0, 0], self.am)
-        assert path == [(10.0, 100.0, 2)]
+        assert path == [(0.0, 100.0, 2)]
         assert mutations == []
 
     def test_novel_haplotype(self):
         """Query [0,0,0,1] doesn't match any node — copies virtual root
         with a mutation."""
         path, mutations = _match(self.ts, self.positions, [0, 0, 0, 1], self.am)
-        assert path == [(10.0, 100.0, 1)]
+        assert path == [(0.0, 100.0, 1)]
         assert mutations == [(40.0, 1)]
