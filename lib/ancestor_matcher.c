@@ -1123,6 +1123,8 @@ matcher_indexes_copy_mutation_data(
     for (j = 0; j < self->num_sites; j++) {
         /* TODO check for under/overflow */
         converted_position[j] = (coordinate_t) sites_position[j];
+        self->sites.mutations[j] = NULL;
+        self->sites.num_alleles[j] = 2;
     }
     converted_position[j] = (coordinate_t) tables->sequence_length;
 
