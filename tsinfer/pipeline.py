@@ -24,13 +24,11 @@ from __future__ import annotations
 
 import collections
 import dataclasses
-import gc
 import json
 import logging
 import pathlib
 import sys
 import time as time_
-import tracemalloc
 
 import numpy as np
 import psutil
@@ -379,11 +377,6 @@ def _process_group(
         results = []
         last_mem_log = time_.monotonic()
         mem_log_interval = 30  # seconds
-
-        # Memory diagnostics: tracemalloc for Python allocations
-        tracemalloc.start()
-        tm_snapshot_prev = tracemalloc.take_snapshot()
-
         for job, result in match_iter:
             if match_fh is not None:
                 doc = {
@@ -416,46 +409,7 @@ def _process_group(
                     len(job_list),
                     rss_mib,
                 )
-
-                # GC diagnostics
-                pre_gc_rss = rss_mib
-                collected = gc.collect()
-                post_gc_rss = psutil.Process().memory_info().rss / (1024 * 1024)
-                logger.info(
-                    "Group %d GC: collected=%d objects,"
-                    " RSS %.1f -> %.1f MiB"
-                    " (freed=%.1f MiB)",
-                    group_idx,
-                    collected,
-                    pre_gc_rss,
-                    post_gc_rss,
-                    pre_gc_rss - post_gc_rss,
-                )
-
-                # tracemalloc top growers
-                tm_snapshot = tracemalloc.take_snapshot()
-                tm_traced_mib = tracemalloc.get_traced_memory()[0] / (1024 * 1024)
-                stats = tm_snapshot.compare_to(tm_snapshot_prev, "lineno")
-                top_lines = []
-                for s in stats[:5]:
-                    top_lines.append(
-                        f"  {s.traceback}: "
-                        f"{s.size_diff / (1024 * 1024):+.1f} MiB"
-                        f" (total={s.size / (1024 * 1024):.1f} MiB)"
-                    )
-                logger.info(
-                    "Group %d tracemalloc: traced=%.1f MiB,"
-                    " untraced=%.1f MiB,"
-                    " top 5 growers since last snapshot:\n%s",
-                    group_idx,
-                    tm_traced_mib,
-                    post_gc_rss - tm_traced_mib,
-                    "\n".join(top_lines),
-                )
-                tm_snapshot_prev = tm_snapshot
                 last_mem_log = now
-
-        tracemalloc.stop()
         pbar.close()
         paired_results = sorted(results, key=lambda pair: pair[0].haplotype_index)
 
