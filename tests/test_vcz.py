@@ -1229,6 +1229,56 @@ class TestScheduledCache:
         cache.shutdown()
 
 
+class TestRegisterLoaderChunkBytes:
+    """chunk_bytes is required — omitting it must be a TypeError."""
+
+    def test_register_loader_requires_chunk_bytes(self):
+        cache = vcz.ScheduledCache(
+            max_bytes=100,
+            refcounts={("s", 0): 1},
+            chunk_order=[("s", 0)],
+        )
+        with pytest.raises(TypeError):
+            cache.register_loader("s", lambda idx: _arr(10))
+
+    def test_chunk_bytes_zero_still_accepted(self):
+        """Explicitly passing 0 is allowed (small chunks)."""
+        cache = vcz.ScheduledCache(
+            max_bytes=100,
+            refcounts={("s", 0): 1},
+            chunk_order=[("s", 0)],
+        )
+        cache.register_loader("s", lambda idx: _arr(10), chunk_bytes=0)
+        cache.start()
+        result = cache.get(("s", 0))
+        assert result is not None
+        cache.shutdown()
+
+    def test_large_chunk_bytes_blocks_worker(self):
+        """A chunk whose estimated size exceeds the budget is not loaded
+        until space is freed."""
+        cache = vcz.ScheduledCache(
+            max_bytes=20,
+            refcounts={("s", 0): 1, ("big", 0): 1},
+            chunk_order=[("s", 0), ("big", 0)],
+        )
+        cache.register_loader("s", lambda idx: _arr(10), chunk_bytes=10)
+        cache.register_loader("big", lambda idx: _arr(10), chunk_bytes=30)
+        cache.start()
+        # Small chunk fits (10 <= 20)
+        cache.get(("s", 0))
+        assert ("s", 0) in cache._chunks
+        # Big chunk can't fit (10 + 30 > 20), so it shouldn't be loaded yet
+        time.sleep(0.1)
+        assert ("big", 0) not in cache._chunks
+        # Free the small chunk
+        cache.record_read(("s", 0))
+        # Now big chunk still can't fit (0 + 30 > 20), stays blocked
+        time.sleep(0.1)
+        assert ("big", 0) not in cache._chunks
+        cache.shutdown()
+
+
 # ---------------------------------------------------------------------------
 # AlleleMapper
 # ---------------------------------------------------------------------------
