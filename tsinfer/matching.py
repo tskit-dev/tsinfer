@@ -379,6 +379,7 @@ class Matcher:
             }
             for future in cf.as_completed(futures):
                 yield future.result()
+                del futures[future]
 
 
 def extend_ts(
