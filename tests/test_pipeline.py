@@ -1358,3 +1358,66 @@ class TestAugmentSites:
         # Should have the augmented site
         positions = set(out_ts.sites_position)
         assert 200.0 in positions
+
+
+class TestEraseFlanks:
+    def _make_ts_with_json_metadata(self, metadata=None):
+        """Build a ts with JSON metadata schema so ts.metadata returns a dict."""
+        tables = tskit.Tree.generate_balanced(4).tree_sequence.dump_tables()
+        tables.metadata_schema = tskit.MetadataSchema.permissive_json()
+        tables.metadata = metadata if metadata is not None else {}
+        return tables.tree_sequence()
+
+    def test_no_intervals_returns_unchanged(self):
+        """_erase_flanks returns ts unchanged when metadata has no sequence_intervals."""
+        ts = self._make_ts_with_json_metadata()
+        result = pipeline._erase_flanks(ts)
+        assert result.num_edges == ts.num_edges
+        assert result.num_nodes == ts.num_nodes
+
+    def test_empty_metadata(self):
+        """_erase_flanks handles ts.metadata being empty dict."""
+        ts = self._make_ts_with_json_metadata({})
+        result = pipeline._erase_flanks(ts)
+        assert result.num_edges == ts.num_edges
+
+
+class TestAugmentSitesEdgeCases:
+    def test_missing_node_metadata(self):
+        """augment_sites raises when sample nodes lack required metadata."""
+        # Build a ts with JSON node metadata schema but nodes missing keys
+        tables = tskit.Tree.generate_balanced(4).tree_sequence.dump_tables()
+        tables.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
+        md = [{}] * len(tables.nodes)
+        tables.nodes.packset_metadata(
+            [tables.nodes.metadata_schema.encode_row(m) for m in md]
+        )
+        tables.metadata_schema = tskit.MetadataSchema.permissive_json()
+        tables.metadata = {}
+        ts = tables.tree_sequence()
+        cfg = config.Config(
+            sources={"s": config.Source(name="s", path="s.vcz")},
+            ancestors=[],
+            match=config.MatchConfig(
+                sources={}, output="out.trees", reference_ts="ref.trees"
+            ),
+            ancestral_state=config.AncestralState(path="ann.vcz", field="x"),
+            augment_sites=config.AugmentSitesConfig(sources=["s"]),
+        )
+        with pytest.raises(ValueError, match="missing required metadata key"):
+            pipeline.augment_sites(ts, cfg)
+
+    def test_no_augment_config(self):
+        """augment_sites returns ts unchanged when no augment config."""
+        ts = tskit.Tree.generate_balanced(4).tree_sequence
+        cfg = config.Config(
+            sources={},
+            ancestors=[],
+            match=config.MatchConfig(
+                sources={}, output="out.trees", reference_ts="ref.trees"
+            ),
+            ancestral_state=config.AncestralState(path="ann.vcz", field="x"),
+            augment_sites=None,
+        )
+        result = pipeline.augment_sites(ts, cfg)
+        assert result.equals(ts)

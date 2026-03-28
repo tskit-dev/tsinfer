@@ -23,6 +23,7 @@ Tests for tsinfer.matching: make_root_ts, Matcher, extend_ts.
 from __future__ import annotations
 
 import numpy as np
+import pytest
 import tskit
 
 from tsinfer import grouping, matching, vcz
@@ -758,3 +759,46 @@ class TestMatcherExtendCycle:
         )
         assert "sequence_intervals" in ts2.metadata
         assert ts2.metadata["sequence_intervals"] == [[10, 51]]
+
+
+# ---------------------------------------------------------------------------
+# TestAddVestigialRoot
+# ---------------------------------------------------------------------------
+
+
+class TestAddVestigialRoot:
+    def test_non_discrete_genome(self):
+        tables = tskit.TableCollection(sequence_length=1.5)
+        tables.nodes.add_row(flags=tskit.NODE_IS_SAMPLE, time=0)
+        ts = tables.tree_sequence()
+        with pytest.raises(ValueError, match="discrete genome"):
+            matching.add_vestigial_root(ts)
+
+    def test_empty_tree_sequence(self):
+        tables = tskit.TableCollection(sequence_length=1)
+        ts = tables.tree_sequence()
+        with pytest.raises(ValueError, match="Emtpy trees"):
+            matching.add_vestigial_root(ts)
+
+
+# ---------------------------------------------------------------------------
+# TestAncestorMatcherWrapper
+# ---------------------------------------------------------------------------
+
+
+class TestAncestorMatcherWrapper:
+    def test_optional_kwargs(self):
+        ts = tskit.Tree.generate_balanced(4).tree_sequence
+        tables = ts.dump_tables()
+        tables.sequence_length = 2
+        tables.edges.right = np.full(len(tables.edges), 2, dtype=np.float64)
+        tables.sites.add_row(position=1, ancestral_state="A")
+        tables.mutations.add_row(site=0, node=1, derived_state="T")
+        ts = tables.tree_sequence()
+        mi = matching.MatcherIndexes(ts)
+        r = np.full(ts.num_sites, 1e-9)
+        m = np.full(ts.num_sites, 0.0)
+        am = matching.AncestorMatcher(
+            mi, r, m, likelihood_threshold=1e-10, weight_by_n=False
+        )
+        assert am is not None

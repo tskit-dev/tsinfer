@@ -1165,3 +1165,129 @@ class TestWorkdirConfig:
         )
         with pytest.raises(ValueError, match="Unrecognised.*match.*groups"):
             config.Config.from_toml(_write_toml(tmp_path, toml))
+
+
+class TestConfigCoverageEdgeCases:
+    def test_resolve_field_spec_dict_with_path(self):
+        spec = {"path": "some/path", "field": "x"}
+        result = config._resolve_field_spec(spec)
+        assert result["path"] == "some/path"
+        assert result["field"] == "x"
+
+    def test_resolve_field_spec_string(self):
+        result = config._resolve_field_spec("simple_field")
+        assert result == "simple_field"
+
+    def test_ancestral_state_missing_path(self, tmp_path):
+        toml = """\
+[ancestral_state]
+field = "variant_ancestral_allele"
+
+[[source]]
+name = "cohort"
+path = "samples.vcz"
+
+[ancestors]
+path    = "ancestors.vcz"
+sources = ["cohort"]
+
+[match]
+output = "out.trees"
+
+[match.sources.ancestors]
+[match.sources.cohort]
+"""
+        with pytest.raises(ValueError, match="missing required key"):
+            config.Config.from_toml(_write_toml(tmp_path, toml))
+
+    def test_ancestors_invalid_format(self):
+        raw = {
+            "ancestral_state": {"path": "x", "field": "y"},
+            "ancestors": "not_a_table",
+            "match": {"sources": {"cohort": {}}, "output": "out.trees"},
+            "source": [{"name": "cohort", "path": "s.vcz"}],
+        }
+        with pytest.raises(ValueError, match="must be a table"):
+            config._parse_ancestors(raw)
+
+    def test_augment_sites_missing_sources(self, tmp_path):
+        raw = {"augment_sites": {}}
+        with pytest.raises(ValueError, match="missing required key.*sources"):
+            config._parse_augment_sites(raw)
+
+    def test_augment_sites_sources_not_list(self, tmp_path):
+        raw = {"augment_sites": {"sources": "not_a_list"}}
+        with pytest.raises(ValueError, match="sources must be a list"):
+            config._parse_augment_sites(raw)
+
+    def test_ancestor_not_in_match_sources(self):
+        with pytest.raises(ValueError, match="must appear in"):
+            config.Config(
+                sources={"cohort": config.Source(name="cohort", path="s.vcz")},
+                ancestors=[
+                    config.AncestorsConfig(
+                        name="ancestors",
+                        path="a.vcz",
+                        sources=["cohort"],
+                    )
+                ],
+                match=config.MatchConfig(
+                    sources={"cohort": config.MatchSourceConfig()},
+                    output="out.trees",
+                ),
+                ancestral_state=config.AncestralState(path="ann.vcz", field="x"),
+            )
+
+    def test_match_source_simple_value(self, tmp_path):
+        """A match source with a bare value (not a table) gets default config."""
+        toml = """\
+[ancestral_state]
+path  = "annotations.vcz"
+field = "variant_ancestral_allele"
+
+[[source]]
+name = "cohort"
+path = "samples.vcz"
+
+[ancestors]
+path    = "ancestors.vcz"
+sources = ["cohort"]
+
+[match]
+output = "out.trees"
+
+[match.sources]
+ancestors = true
+cohort = true
+"""
+        cfg = config.Config.from_toml(_write_toml(tmp_path, toml))
+        assert isinstance(cfg.match.sources["cohort"], config.MatchSourceConfig)
+
+    def test_config_format_optional_fields(self):
+        """Config.format() includes optional source fields when set."""
+        cfg = config.Config(
+            sources={
+                "cohort": config.Source(
+                    name="cohort",
+                    path="s.vcz",
+                    regions="chr1:1-100",
+                    targets="targets.bed",
+                )
+            },
+            ancestors=[
+                config.AncestorsConfig(
+                    name="ancestors", path="a.vcz", sources=["cohort"]
+                )
+            ],
+            match=config.MatchConfig(
+                sources={
+                    "ancestors": config.MatchSourceConfig(),
+                    "cohort": config.MatchSourceConfig(),
+                },
+                output="out.trees",
+            ),
+            ancestral_state=config.AncestralState(path="ann.vcz", field="x"),
+        )
+        text = cfg.format()
+        assert "regions" in text
+        assert "targets" in text
