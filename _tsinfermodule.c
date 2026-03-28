@@ -77,28 +77,6 @@ out:
     return ret;
 }
 
-static int
-uint64_PyArray_converter(PyObject *in, PyObject **out)
-{
-    PyObject *ret = PyArray_FROMANY(in, NPY_UINT64, 1, 1, NPY_ARRAY_IN_ARRAY);
-    if (ret == NULL) {
-        return NPY_FAIL;
-    }
-    *out = ret;
-    return NPY_SUCCEED;
-}
-
-static int
-int8_PyArray_converter(PyObject *in, PyObject **out)
-{
-    PyObject *ret = PyArray_FROMANY(in, NPY_INT8, 1, 1, NPY_ARRAY_IN_ARRAY);
-    if (ret == NULL) {
-        return NPY_FAIL;
-    }
-    *out = ret;
-    return NPY_SUCCEED;
-}
-
 /*===================================================================
  * AncestorBuilder
  *===================================================================
