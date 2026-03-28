@@ -195,6 +195,106 @@ class TestAncestorMatcher:
         assert isinstance(tb, float)
         assert tb >= 0
 
+    def test_init_bad_recombination(self):
+        ts, mi, _ = make_matcher_indexes_and_matcher()
+        mismatch = np.array([0.0])
+        with pytest.raises(ValueError):
+            _tsinfer.AncestorMatcher(mi, recombination="bad", mismatch=mismatch)
+        with pytest.raises(ValueError, match="Size of recombination"):
+            _tsinfer.AncestorMatcher(
+                mi, recombination=np.array([1e-9, 1e-9]), mismatch=mismatch
+            )
+
+    def test_init_bad_mismatch(self):
+        ts, mi, _ = make_matcher_indexes_and_matcher()
+        recombination = np.array([1e-9])
+        with pytest.raises(ValueError):
+            _tsinfer.AncestorMatcher(mi, recombination=recombination, mismatch="bad")
+        with pytest.raises(ValueError, match="Size of mismatch"):
+            _tsinfer.AncestorMatcher(
+                mi, recombination=recombination, mismatch=np.array([0.0, 0.0])
+            )
+
+    def test_init_extended_checks(self):
+        ts, mi, _ = make_matcher_indexes_and_matcher()
+        am = _tsinfer.AncestorMatcher(
+            mi,
+            recombination=np.array([1e-9]),
+            mismatch=np.array([0.0]),
+            extended_checks=True,
+        )
+        assert am is not None
+
+    def test_init_weight_by_n_false(self):
+        ts, mi, _ = make_matcher_indexes_and_matcher()
+        am = _tsinfer.AncestorMatcher(
+            mi,
+            recombination=np.array([1e-9]),
+            mismatch=np.array([0.0]),
+            weight_by_n=False,
+        )
+        assert am is not None
+
+    def test_find_path_bad_haplotype(self):
+        ts, _, am = make_matcher_indexes_and_matcher()
+        with pytest.raises(ValueError):
+            am.find_path("not an array", 0, ts.num_sites)
+        with pytest.raises(ValueError, match="Dim != 1"):
+            am.find_path(np.zeros((1, 1), dtype=np.int8), 0, ts.num_sites)
+        with pytest.raises(ValueError, match="Incorrect size"):
+            am.find_path(np.zeros(100, dtype=np.int8), 0, ts.num_sites)
+
+    def test_find_path_returns_values(self):
+        ts, _, am = make_matcher_indexes_and_matcher()
+        h = np.zeros(ts.num_sites, dtype=np.int8)
+        result = am.find_path(h, 0, ts.num_sites)
+        assert len(result) == 5
+        num_edges, left, right, parent, match = result
+        assert isinstance(num_edges, int)
+        assert left.dtype == np.uint32
+        assert right.dtype == np.uint32
+        assert parent.dtype == np.int32
+        assert match.dtype == np.int8
+
+    def test_find_path_match_impossible(self):
+        # mu=0 with a mismatching haplotype makes p_e=0 for all nodes,
+        # triggering TSI_ERR_MATCH_IMPOSSIBLE_EXTREME_MUTATION_PROBA.
+        # Build a tree sequence where all nodes carry allele 0 at a site
+        # (no mutations), then query h=[1] so nothing matches.
+        tables = tskit.Tree.generate_balanced(4).tree_sequence.dump_tables()
+        tables.sequence_length = 2
+        tables.edges.right = np.full(len(tables.edges), 2, dtype=np.float64)
+        tables.sites.add_row(position=1, ancestral_state="A")
+        # No mutations: all nodes carry allele 0
+        ts = tables.tree_sequence()
+        ts = matching.add_vestigial_root(ts)
+        ll_tables = _tsinfer.LightweightTableCollection(ts.sequence_length)
+        ll_tables.fromdict(ts.dump_tables().asdict())
+        mi = _tsinfer.MatcherIndexes(ll_tables)
+        am = _tsinfer.AncestorMatcher(
+            mi,
+            recombination=np.array([1e-9]),
+            mismatch=np.array([0.0]),
+        )
+        h = np.array([1], dtype=np.int8)
+        with pytest.raises(_tsinfer.MatchImpossible):
+            am.find_path(h, 0, ts.num_sites)
+
+    def test_get_traceback(self):
+        ts, _, am = make_matcher_indexes_and_matcher()
+        h = np.zeros(ts.num_sites, dtype=np.int8)
+        am.find_path(h, 0, ts.num_sites)
+        for site in range(ts.num_sites):
+            tb = am.get_traceback(site)
+            assert isinstance(tb, dict)
+
+    def test_get_traceback_bad_site(self):
+        ts, _, am = make_matcher_indexes_and_matcher()
+        h = np.zeros(ts.num_sites, dtype=np.int8)
+        am.find_path(h, 0, ts.num_sites)
+        with pytest.raises(ValueError, match="site out of range"):
+            am.get_traceback(ts.num_sites)
+
 
 class TestMatcherIndexes:
     def test_single_tree(self):
@@ -203,6 +303,14 @@ class TestMatcherIndexes:
         ll_tables = _tsinfer.LightweightTableCollection(tables.sequence_length)
         ll_tables.fromdict(tables.asdict())
         _ = _tsinfer.MatcherIndexes(ll_tables)
+
+    def test_num_alleles(self):
+        ts, mi, _ = make_matcher_indexes_and_matcher()
+        num_alleles = np.array([2] * ts.num_sites, dtype=np.uint64)
+        ll_tables = _tsinfer.LightweightTableCollection(ts.sequence_length)
+        ll_tables.fromdict(ts.dump_tables().asdict())
+        mi = _tsinfer.MatcherIndexes(ll_tables, num_alleles=num_alleles)
+        assert mi is not None
 
     def test_print_state(self, tmpdir):
         ts = tskit.Tree.generate_balanced(4).tree_sequence
@@ -220,3 +328,12 @@ class TestMatcherIndexes:
             output = f.read()
         assert len(output) > 0
         assert "indexes" in output
+
+    def test_print_state_bad_file(self):
+        ts = tskit.Tree.generate_balanced(4).tree_sequence
+        tables = ts.dump_tables()
+        ll_tables = _tsinfer.LightweightTableCollection(tables.sequence_length)
+        ll_tables.fromdict(tables.asdict())
+        mi = _tsinfer.MatcherIndexes(ll_tables)
+        with pytest.raises(TypeError):
+            mi.print_state("not a file")
