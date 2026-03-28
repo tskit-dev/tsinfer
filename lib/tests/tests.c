@@ -33,15 +33,11 @@
 
 #include <CUnit/Basic.h>
 
-/* FIXME this needs to be updated somehow to allow the tests to be run from
- * different directories, i.e., with ninja -C build test
- */
-#define TEST_DATA_DIR "test_data"
-
 /* Global variables used for test in state in the test suite */
 
 char *_tmp_file_name;
 FILE *_devnull;
+static const char *_test_data_dir;
 
 tsk_treeseq_t _single_tree_ex_ts;
 /* 3.00┊    0    ┊ */
@@ -1317,14 +1313,19 @@ tsinfer_suite_init(void)
     if (_devnull == NULL) {
         return CUE_SINIT_FAILED;
     }
+    _test_data_dir = getenv("TSI_TEST_DATA_DIR");
+    if (_test_data_dir == NULL) {
+        _test_data_dir = "test_data/";
+    }
 
-    ret = tsk_treeseq_load(
-        &_single_tree_ex_ts, TEST_DATA_DIR "/single_tree_example.trees", 0);
+    char path[4096];
+    snprintf(path, sizeof(path), "%s%s", _test_data_dir, "single_tree_example.trees");
+    ret = tsk_treeseq_load(&_single_tree_ex_ts, path, 0);
     if (ret != 0) {
         return CUE_SINIT_FAILED;
     }
-    ret = tsk_treeseq_load(
-        &_multi_tree_ex_ts, TEST_DATA_DIR "/multi_tree_example.trees", 0);
+    snprintf(path, sizeof(path), "%s%s", _test_data_dir, "multi_tree_example.trees");
+    ret = tsk_treeseq_load(&_multi_tree_ex_ts, path, 0);
     if (ret != 0) {
         return CUE_SINIT_FAILED;
     }

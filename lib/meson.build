@@ -23,7 +23,10 @@ tsinfer_lib = static_library('tsinfer',
     sources: tsinfer_sources, dependencies: [m_dep, tskit_dep], 
     c_args: extra_c_args, link_with:[avl_lib])
 
-unit_tests = executable('tests', 
-    sources: ['tests/tests.c'], 
+src_root = meson.project_source_root()
+
+unit_tests = executable('tests',
+    sources: ['tests/tests.c'],
     link_with: [tsinfer_lib], dependencies:[cunit_dep, tskit_dep])
-test('Unit tests', unit_tests)
+test('Unit tests', unit_tests,
+    env: ['TSI_TEST_DATA_DIR=' + src_root + '/test_data/'])
