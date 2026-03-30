@@ -10,7 +10,7 @@ parts:
   - file: installation
 - caption: Usage
   chapters:
-  - file: usage
+  - file: quickstart
 - caption: Inference
   chapters:
   - file: inference

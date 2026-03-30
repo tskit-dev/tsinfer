@@ -1,0 +1,27 @@
+# Example tsinfer config for a small dataset.
+#
+# Run:
+#   vcf2zarr convert example_data.vcf.gz example_data.vcz
+#   tsinfer run example_config.toml -v
+
+[[source]]
+name = "example"
+path = "example_data.vcz"
+
+[ancestral_state]
+path = "example_data.vcz"
+field = "variant_AA"
+
+[[ancestors]]
+name = "ancestors"
+path = "example_ancestors.vcz"
+sources = ["example"]
+
+[match]
+output = "example_output.trees"
+
+[match.sources.ancestors]
+node_flags = 0
+create_individuals = false
+
+[match.sources.example]
