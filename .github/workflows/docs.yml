@@ -9,11 +9,4 @@ on:
 
 jobs:
   Docs:
-    #Disabled until major code changes completed.
-    # uses: tskit-dev/.github/.github/workflows/docs.yml@v15
-
-    # Placeholder
-    runs-on: ubuntu-latest
-    steps:
-      - name: Placeholder
-        run: echo "Docs broken, fix when code is ready!"
+    uses: tskit-dev/.github/.github/workflows/docs.yml@v15
