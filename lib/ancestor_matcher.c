@@ -229,6 +229,9 @@ matcher_indexes_validate_tables(
             || edges_child[j] < 0 || edges_child[j] >= (tsk_id_t) num_nodes) {
             return TSI_ERR_BAD_EDGE_NODE;
         }
+        if (edges_child[j] == 0) {
+            return TSI_ERR_NODE_0_NOT_ROOT;
+        }
         if (edges_parent[j] == 0) {
             node_0_is_parent = true;
         }
