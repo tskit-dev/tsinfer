@@ -11,17 +11,14 @@ parts:
 - caption: Usage
   chapters:
   - file: quickstart
+  - file: config
+  - file: usage
 - caption: Inference
   chapters:
   - file: inference
-  - file: large_scale
 - caption: Interfaces
   chapters:
-  - file: api
   - file: cli
-- caption: File Formats
-  chapters:
-    - file: file_formats
 - caption: Miscellaneous
   chapters:
   - file: development

@@ -32,7 +32,7 @@ sphinx:
     - sphinx.ext.viewcode
     - sphinx.ext.intersphinx
     - sphinx_issues
-    - sphinxarg.ext
+    - sphinx_click
     - IPython.sphinxext.ipython_console_highlighting
 
     config:

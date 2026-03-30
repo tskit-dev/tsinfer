@@ -2449,19 +2449,6 @@ wheels = [
 ]
 
 [[package]]
-name = "sphinx-argparse"
-version = "0.5.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "docutils" },
-    { name = "sphinx" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/3b/21/a8c64e6633652111e6e4f89703182a53cbc3ed67233523e47472101358b6/sphinx_argparse-0.5.2.tar.gz", hash = "sha256:e5352f8fa894b6fb6fda0498ba28a9f8d435971ef4bbc1a6c9c6414e7644f032", size = 27838, upload-time = "2024-07-17T12:08:08.219Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/e5/43/9f0e9bfb3ce02cbf7747aa2185c48a9d6e42ba95736a5e8f511a5054d976/sphinx_argparse-0.5.2-py3-none-any.whl", hash = "sha256:d771b906c36d26dee669dbdbb5605c558d9440247a5608b810f7fa6e26ab1fd3", size = 12547, upload-time = "2024-07-17T12:08:06.307Z" },
-]
-
-[[package]]
 name = "sphinx-book-theme"
 version = "1.1.4"
 source = { registry = "https://pypi.org/simple" }
@@ -2472,6 +2459,20 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/45/19/d002ed96bdc7738c15847c730e1e88282d738263deac705d5713b4d8fa94/sphinx_book_theme-1.1.4.tar.gz", hash = "sha256:73efe28af871d0a89bd05856d300e61edce0d5b2fbb7984e84454be0fedfe9ed", size = 439188, upload-time = "2025-02-20T16:32:32.581Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/51/9e/c41d68be04eef5b6202b468e0f90faf0c469f3a03353f2a218fd78279710/sphinx_book_theme-1.1.4-py3-none-any.whl", hash = "sha256:843b3f5c8684640f4a2d01abd298beb66452d1b2394cd9ef5be5ebd5640ea0e1", size = 433952, upload-time = "2025-02-20T16:32:31.009Z" },
+]
+
+[[package]]
+name = "sphinx-click"
+version = "6.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "click" },
+    { name = "docutils" },
+    { name = "sphinx" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9a/ed/a9767cd1b8b7fbdf260a89d5c8c86e20e3536b9878579e5ab7965a291e55/sphinx_click-6.2.0.tar.gz", hash = "sha256:fc78b4154a4e5159462e36de55b8643747da6cda86b3b52a8bb62289e603776c", size = 27035, upload-time = "2025-12-04T19:33:05.437Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/44/bd/cb244695f67f77b0a36200ce1670fc42a6fe2770847e870daab99cc2b177/sphinx_click-6.2.0-py3-none-any.whl", hash = "sha256:1fb1851cb4f2c286d43cbcd57f55db6ef5a8d208bfc3370f19adde232e5803d7", size = 8939, upload-time = "2025-12-04T19:33:04.037Z" },
 ]
 
 [[package]]
@@ -2866,8 +2867,8 @@ dev = [
     { name = "pytest-xdist" },
     { name = "ruff" },
     { name = "setuptools" },
-    { name = "sphinx-argparse" },
     { name = "sphinx-book-theme" },
+    { name = "sphinx-click" },
     { name = "sphinx-issues" },
     { name = "twine" },
     { name = "validate-pyproject", extra = ["all"] },
@@ -2880,8 +2881,8 @@ docs = [
     { name = "jupyter-book" },
     { name = "msprime" },
     { name = "pyfaidx" },
-    { name = "sphinx-argparse" },
     { name = "sphinx-book-theme" },
+    { name = "sphinx-click" },
     { name = "sphinx-issues" },
 ]
 lint = [
@@ -2939,8 +2940,8 @@ dev = [
     { name = "pytest-xdist" },
     { name = "ruff", specifier = "==0.15.1" },
     { name = "setuptools" },
-    { name = "sphinx-argparse" },
     { name = "sphinx-book-theme" },
+    { name = "sphinx-click" },
     { name = "sphinx-issues" },
     { name = "twine" },
     { name = "validate-pyproject", extras = ["all"] },
@@ -2953,8 +2954,8 @@ docs = [
     { name = "jupyter-book", specifier = "<2" },
     { name = "msprime" },
     { name = "pyfaidx" },
-    { name = "sphinx-argparse" },
     { name = "sphinx-book-theme" },
+    { name = "sphinx-click" },
     { name = "sphinx-issues" },
 ]
 lint = [

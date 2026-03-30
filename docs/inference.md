@@ -129,7 +129,7 @@ as input. This provides very fast access to genotype data, compressed using cutt
 [compression methods](http://numcodecs.readthedocs.io). The input sample haplotypes and related metadata are a fraction of the size of a compressed VCF and can be processed efficiently.
 
 VCF can be converted to VCF Zarr by the (bio2zarr)[https://sgkit-dev.github.io/bio2zarr]
-package. See {ref}`sec_usage` for examples.
+package. See the {ref}`quickstart <sec_quickstart>` for examples.
 
 
 (sec_inference_generate_ancestors)=
@@ -138,7 +138,7 @@ package. See {ref}`sec_usage` for examples.
 
 The first step in a `tsinfer` inference process is to generate a large
 number of potential ancestors and to store these in an
-{ref}`ancestors file <sec_file_formats_ancestors>`. The ancestors
+ancestors file. The ancestors
 file conventionally ends with `.ancestors`.
 
 The ancestor generation algorithm is described in the Methods section of
@@ -153,7 +153,7 @@ Describe the ancestor generation algorithm in more detail here
 ## Matching ancestors & samples
 
 After we have generated a set of potential ancestors and stored them in
-an {ref}`ancestors file <sec_file_formats_ancestors>`, we then
+an ancestors file, we then
 run two matching steps. First we match the ancestors against each
 other to generate an "ancestors tree sequence", then we match the samples
 against this ancestors tree sequence to generate the final result.

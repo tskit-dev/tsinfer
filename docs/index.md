@@ -1,3 +1,8 @@
+```{warning}
+This documentation is under active development and may be incomplete or
+inaccurate. The software API is not yet stable.
+```
+
 # Welcome to tsinfer's documentation!
 
 This is the documentation for {program}`tsinfer`, a method for inferring correlated
