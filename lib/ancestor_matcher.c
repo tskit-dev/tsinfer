@@ -211,6 +211,61 @@ out:
     return ret;
 }
 
+static int
+matcher_indexes_validate_tables(
+    size_t num_nodes, size_t num_sites, const tsk_table_collection_t *tables)
+{
+    tsk_size_t j;
+    const tsk_size_t num_edges = tables->edges.num_rows;
+    const tsk_size_t num_mutations = tables->mutations.num_rows;
+    const tsk_id_t *restrict edges_parent = tables->edges.parent;
+    const tsk_id_t *restrict edges_child = tables->edges.child;
+    const tsk_id_t *restrict mutations_node = tables->mutations.node;
+    const tsk_id_t *restrict mutations_site = tables->mutations.site;
+    const double *restrict edges_left = tables->edges.left;
+    const double *restrict edges_right = tables->edges.right;
+    /* Track whether node 0 already has an edge as parent. We check for
+     * overlapping intervals among edges with parent==0, which would mean
+     * multiple roots in the same tree. We only need to track one interval
+     * at a time because a single overlapping pair is enough to flag. */
+    double root_edge_left = -1;
+    double root_edge_right = -1;
+
+    for (j = 0; j < num_edges; j++) {
+        if (edges_parent[j] < 0 || edges_parent[j] >= (tsk_id_t) num_nodes
+            || edges_child[j] < 0 || edges_child[j] >= (tsk_id_t) num_nodes) {
+            return TSI_ERR_BAD_EDGE_NODE;
+        }
+        if (edges_parent[j] == 0) {
+            if (root_edge_left < 0) {
+                root_edge_left = edges_left[j];
+                root_edge_right = edges_right[j];
+            } else {
+                /* Check if this edge overlaps with a previous root edge */
+                if (edges_left[j] < root_edge_right && edges_right[j] > root_edge_left) {
+                    return TSI_ERR_MULTIPLE_ROOTS;
+                }
+                /* Extend the tracked interval */
+                if (edges_left[j] < root_edge_left) {
+                    root_edge_left = edges_left[j];
+                }
+                if (edges_right[j] > root_edge_right) {
+                    root_edge_right = edges_right[j];
+                }
+            }
+        }
+    }
+    for (j = 0; j < num_mutations; j++) {
+        if (mutations_node[j] < 0 || mutations_node[j] >= (tsk_id_t) num_nodes) {
+            return TSI_ERR_BAD_MUTATION_NODE;
+        }
+        if (mutations_site[j] < 0 || mutations_site[j] >= (tsk_id_t) num_sites) {
+            return TSI_ERR_BAD_MUTATION_SITE;
+        }
+    }
+    return 0;
+}
+
 int
 matcher_indexes_alloc(matcher_indexes_t *self, const tsk_table_collection_t *tables,
     const tsk_size_t *num_alleles, tsk_flags_t flags)
@@ -224,6 +279,11 @@ matcher_indexes_alloc(matcher_indexes_t *self, const tsk_table_collection_t *tab
     /* FIXME this is used below by the code that adds in mutations in the linked
      * list, so *don't* set from the tables */
     self->num_mutations = 0;
+
+    ret = matcher_indexes_validate_tables(self->num_nodes, self->num_sites, tables);
+    if (ret != 0) {
+        goto out;
+    }
 
     self->left_index_edges = malloc(self->num_edges * sizeof(*self->left_index_edges));
     self->right_index_edges = malloc(self->num_edges * sizeof(*self->right_index_edges));

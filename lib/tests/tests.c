@@ -442,6 +442,186 @@ test_matcher_indexes_errors(void)
 }
 
 static void
+test_matcher_indexes_edge_node_out_of_bounds(void)
+{
+    int ret;
+    matcher_indexes_t mi;
+    tsk_table_collection_t tables;
+
+    memset(&mi, 0, sizeof(mi));
+
+    /* Test 1: child out of bounds.
+     * Build valid tables, sort/index, then overwrite child to bypass
+     * tskit's own validation in sort/build_index. */
+    ret = tsk_table_collection_init(&tables, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    tables.sequence_length = 100;
+
+    tsk_node_table_add_row(&tables.nodes, 0, 2.0, TSK_NULL, TSK_NULL, NULL, 0);
+    tsk_node_table_add_row(&tables.nodes, 0, 1.0, TSK_NULL, TSK_NULL, NULL, 0);
+    tsk_node_table_add_row(&tables.nodes, 0, 0.5, TSK_NULL, TSK_NULL, NULL, 0);
+
+    tsk_edge_table_add_row(&tables.edges, 0, 100, 0, 1, NULL, 0);
+    tsk_edge_table_add_row(&tables.edges, 0, 100, 1, 2, NULL, 0);
+
+    tsk_site_table_add_row(&tables.sites, 10, "A", 1, NULL, 0);
+    tsk_mutation_table_add_row(
+        &tables.mutations, 0, 1, TSK_NULL, TSK_UNKNOWN_TIME, "T", 1, NULL, 0);
+
+    ret = tsk_table_collection_sort(&tables, NULL, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = tsk_table_collection_build_index(&tables, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    /* Overwrite child of second edge to out-of-bounds value */
+    tables.edges.child[1] = 5;
+
+    ret = matcher_indexes_alloc(&mi, &tables, NULL, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_BAD_EDGE_NODE);
+    matcher_indexes_free(&mi);
+    tsk_table_collection_free(&tables);
+
+    /* Test 2: parent out of bounds */
+    memset(&mi, 0, sizeof(mi));
+    ret = tsk_table_collection_init(&tables, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    tables.sequence_length = 100;
+
+    tsk_node_table_add_row(&tables.nodes, 0, 2.0, TSK_NULL, TSK_NULL, NULL, 0);
+    tsk_node_table_add_row(&tables.nodes, 0, 1.0, TSK_NULL, TSK_NULL, NULL, 0);
+    tsk_node_table_add_row(&tables.nodes, 0, 0.5, TSK_NULL, TSK_NULL, NULL, 0);
+
+    tsk_edge_table_add_row(&tables.edges, 0, 100, 0, 1, NULL, 0);
+    tsk_edge_table_add_row(&tables.edges, 0, 100, 1, 2, NULL, 0);
+
+    tsk_site_table_add_row(&tables.sites, 10, "A", 1, NULL, 0);
+    tsk_mutation_table_add_row(
+        &tables.mutations, 0, 1, TSK_NULL, TSK_UNKNOWN_TIME, "T", 1, NULL, 0);
+
+    ret = tsk_table_collection_sort(&tables, NULL, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = tsk_table_collection_build_index(&tables, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    /* Overwrite parent of second edge to out-of-bounds value */
+    tables.edges.parent[1] = 10;
+
+    ret = matcher_indexes_alloc(&mi, &tables, NULL, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_BAD_EDGE_NODE);
+    matcher_indexes_free(&mi);
+    tsk_table_collection_free(&tables);
+}
+
+static void
+test_matcher_indexes_mutation_node_out_of_bounds(void)
+{
+    int ret;
+    matcher_indexes_t mi;
+    tsk_table_collection_t tables;
+
+    memset(&mi, 0, sizeof(mi));
+    ret = tsk_table_collection_init(&tables, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    tables.sequence_length = 100;
+
+    tsk_node_table_add_row(&tables.nodes, 0, 2.0, TSK_NULL, TSK_NULL, NULL, 0);
+    tsk_node_table_add_row(&tables.nodes, 0, 1.0, TSK_NULL, TSK_NULL, NULL, 0);
+    tsk_node_table_add_row(&tables.nodes, 0, 0.5, TSK_NULL, TSK_NULL, NULL, 0);
+
+    tsk_edge_table_add_row(&tables.edges, 0, 100, 0, 1, NULL, 0);
+
+    tsk_site_table_add_row(&tables.sites, 10, "A", 1, NULL, 0);
+    /* Add valid mutation, then overwrite node to out-of-bounds value */
+    tsk_mutation_table_add_row(
+        &tables.mutations, 0, 1, TSK_NULL, TSK_UNKNOWN_TIME, "T", 1, NULL, 0);
+
+    ret = tsk_table_collection_sort(&tables, NULL, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = tsk_table_collection_build_index(&tables, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    /* Overwrite mutation node to out-of-bounds value */
+    tables.mutations.node[0] = 99;
+
+    ret = matcher_indexes_alloc(&mi, &tables, NULL, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_BAD_MUTATION_NODE);
+    matcher_indexes_free(&mi);
+    tsk_table_collection_free(&tables);
+}
+
+static void
+test_matcher_indexes_mutation_site_out_of_bounds(void)
+{
+    int ret;
+    matcher_indexes_t mi;
+    tsk_table_collection_t tables;
+
+    memset(&mi, 0, sizeof(mi));
+    ret = tsk_table_collection_init(&tables, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    tables.sequence_length = 100;
+
+    tsk_node_table_add_row(&tables.nodes, 0, 2.0, TSK_NULL, TSK_NULL, NULL, 0);
+    tsk_node_table_add_row(&tables.nodes, 0, 1.0, TSK_NULL, TSK_NULL, NULL, 0);
+    tsk_node_table_add_row(&tables.nodes, 0, 0.5, TSK_NULL, TSK_NULL, NULL, 0);
+
+    tsk_edge_table_add_row(&tables.edges, 0, 100, 0, 1, NULL, 0);
+
+    tsk_site_table_add_row(&tables.sites, 10, "A", 1, NULL, 0);
+    /* Add a valid mutation, then overwrite site to out-of-bounds value */
+    tsk_mutation_table_add_row(
+        &tables.mutations, 0, 1, TSK_NULL, TSK_UNKNOWN_TIME, "T", 1, NULL, 0);
+
+    ret = tsk_table_collection_sort(&tables, NULL, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = tsk_table_collection_build_index(&tables, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    /* Overwrite site ID after sort/index to bypass tskit's checks */
+    tables.mutations.site[0] = 5;
+
+    ret = matcher_indexes_alloc(&mi, &tables, NULL, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_BAD_MUTATION_SITE);
+    matcher_indexes_free(&mi);
+    tsk_table_collection_free(&tables);
+}
+
+static void
+test_matcher_indexes_multiple_roots(void)
+{
+    int ret;
+    matcher_indexes_t mi;
+    tsk_table_collection_t tables;
+
+    memset(&mi, 0, sizeof(mi));
+    ret = tsk_table_collection_init(&tables, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    tables.sequence_length = 100;
+
+    tsk_node_table_add_row(&tables.nodes, 0, 2.0, TSK_NULL, TSK_NULL, NULL, 0);
+    tsk_node_table_add_row(&tables.nodes, 0, 1.0, TSK_NULL, TSK_NULL, NULL, 0);
+    tsk_node_table_add_row(&tables.nodes, 0, 0.5, TSK_NULL, TSK_NULL, NULL, 0);
+
+    /* Two edges with parent=0 overlapping over [0,100): multiple roots */
+    tsk_edge_table_add_row(&tables.edges, 0, 100, 0, 1, NULL, 0);
+    tsk_edge_table_add_row(&tables.edges, 0, 100, 0, 2, NULL, 0);
+
+    tsk_site_table_add_row(&tables.sites, 10, "A", 1, NULL, 0);
+    tsk_mutation_table_add_row(
+        &tables.mutations, 0, 1, TSK_NULL, TSK_UNKNOWN_TIME, "T", 1, NULL, 0);
+
+    ret = tsk_table_collection_sort(&tables, NULL, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = tsk_table_collection_build_index(&tables, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    ret = matcher_indexes_alloc(&mi, &tables, NULL, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_MULTIPLE_ROOTS);
+    matcher_indexes_free(&mi);
+    tsk_table_collection_free(&tables);
+}
+
+static void
 test_packbits_1(void)
 {
     int ret = 0;
@@ -1370,6 +1550,13 @@ main(int argc, char **argv)
             test_ancestor_builder_one_bit_encoding },
         { "test_ancestor_builder_mmap", test_ancestor_builder_mmap },
         { "test_matcher_indexes_errors", test_matcher_indexes_errors },
+        { "test_matcher_indexes_edge_node_out_of_bounds",
+            test_matcher_indexes_edge_node_out_of_bounds },
+        { "test_matcher_indexes_mutation_node_out_of_bounds",
+            test_matcher_indexes_mutation_node_out_of_bounds },
+        { "test_matcher_indexes_mutation_site_out_of_bounds",
+            test_matcher_indexes_mutation_site_out_of_bounds },
+        { "test_matcher_indexes_multiple_roots", test_matcher_indexes_multiple_roots },
 
         { "test_packbits_1", test_packbits_1 },
         { "test_packbits_2", test_packbits_2 },

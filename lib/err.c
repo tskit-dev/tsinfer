@@ -116,6 +116,12 @@ tsi_strerror(int err)
             ret = "Sites with multiple mutations are not supported "
                   "in matcher_indexes";
             break;
+        case TSI_ERR_BAD_EDGE_NODE:
+            ret = "Bad edge: parent or child node out of bounds";
+            break;
+        case TSI_ERR_MULTIPLE_ROOTS:
+            ret = "Node 0 must have at most one child per tree interval";
+            break;
     }
     return ret;
 }
