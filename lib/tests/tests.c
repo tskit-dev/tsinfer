@@ -622,6 +622,47 @@ test_matcher_indexes_node_0_not_root(void)
     tsk_table_collection_free(&tables);
 }
 
+/* Node 0 appears as a child in an edge, even though it is also a parent.
+ * This means node 0 is not always a root, which violates the invariant. */
+static void
+test_matcher_indexes_node_0_is_child(void)
+{
+    int ret;
+    matcher_indexes_t mi;
+    tsk_table_collection_t tables;
+
+    memset(&mi, 0, sizeof(mi));
+    ret = tsk_table_collection_init(&tables, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    tables.sequence_length = 100;
+
+    /* Node 0 has highest time but we'll make it a child via overwrite */
+    tsk_node_table_add_row(&tables.nodes, 0, 3.0, TSK_NULL, TSK_NULL, NULL, 0);
+    tsk_node_table_add_row(&tables.nodes, 0, 2.0, TSK_NULL, TSK_NULL, NULL, 0);
+    tsk_node_table_add_row(&tables.nodes, 0, 1.0, TSK_NULL, TSK_NULL, NULL, 0);
+
+    /* Valid edges: 0->1, 1->2 */
+    tsk_edge_table_add_row(&tables.edges, 0, 100, 0, 1, NULL, 0);
+    tsk_edge_table_add_row(&tables.edges, 0, 100, 1, 2, NULL, 0);
+
+    tsk_site_table_add_row(&tables.sites, 10, "A", 1, NULL, 0);
+    tsk_mutation_table_add_row(
+        &tables.mutations, 0, 2, TSK_NULL, TSK_UNKNOWN_TIME, "T", 1, NULL, 0);
+
+    ret = tsk_table_collection_sort(&tables, NULL, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = tsk_table_collection_build_index(&tables, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    /* Overwrite child of first edge to make node 0 a child */
+    tables.edges.child[0] = 0;
+
+    ret = matcher_indexes_alloc(&mi, &tables, NULL, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_NODE_0_NOT_ROOT);
+    matcher_indexes_free(&mi);
+    tsk_table_collection_free(&tables);
+}
+
 static void
 test_packbits_1(void)
 {
@@ -1611,6 +1652,7 @@ main(int argc, char **argv)
         { "test_matcher_indexes_mutation_site_out_of_bounds",
             test_matcher_indexes_mutation_site_out_of_bounds },
         { "test_matcher_indexes_node_0_not_root", test_matcher_indexes_node_0_not_root },
+        { "test_matcher_indexes_node_0_is_child", test_matcher_indexes_node_0_is_child },
 
         { "test_packbits_1", test_packbits_1 },
         { "test_packbits_2", test_packbits_2 },
