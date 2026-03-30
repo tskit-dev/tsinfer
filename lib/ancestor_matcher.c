@@ -222,12 +222,19 @@ matcher_indexes_validate_tables(
     const tsk_id_t *restrict edges_child = tables->edges.child;
     const tsk_id_t *restrict mutations_node = tables->mutations.node;
     const tsk_id_t *restrict mutations_site = tables->mutations.site;
+    bool node_0_is_parent = false;
 
     for (j = 0; j < num_edges; j++) {
         if (edges_parent[j] < 0 || edges_parent[j] >= (tsk_id_t) num_nodes
             || edges_child[j] < 0 || edges_child[j] >= (tsk_id_t) num_nodes) {
             return TSI_ERR_BAD_EDGE_NODE;
         }
+        if (edges_parent[j] == 0) {
+            node_0_is_parent = true;
+        }
+    }
+    if (num_edges > 0 && !node_0_is_parent) {
+        return TSI_ERR_NODE_0_NOT_ROOT;
     }
     for (j = 0; j < num_mutations; j++) {
         if (mutations_node[j] < 0 || mutations_node[j] >= (tsk_id_t) num_nodes) {

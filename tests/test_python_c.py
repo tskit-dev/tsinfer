@@ -299,10 +299,19 @@ class TestAncestorMatcher:
 class TestMatcherIndexes:
     def test_single_tree(self):
         ts = tskit.Tree.generate_balanced(4).tree_sequence
+        ts = matching.add_vestigial_root(ts)
         tables = ts.dump_tables()
         ll_tables = _tsinfer.LightweightTableCollection(tables.sequence_length)
         ll_tables.fromdict(tables.asdict())
         _ = _tsinfer.MatcherIndexes(ll_tables)
+
+    def test_node_0_not_root(self):
+        ts = tskit.Tree.generate_balanced(4).tree_sequence
+        tables = ts.dump_tables()
+        ll_tables = _tsinfer.LightweightTableCollection(tables.sequence_length)
+        ll_tables.fromdict(tables.asdict())
+        with pytest.raises(_tsinfer.LibraryError, match="Node 0 must be the root"):
+            _tsinfer.MatcherIndexes(ll_tables)
 
     def test_num_alleles(self):
         ts, mi, _ = make_matcher_indexes_and_matcher()
@@ -314,6 +323,7 @@ class TestMatcherIndexes:
 
     def test_print_state(self, tmpdir):
         ts = tskit.Tree.generate_balanced(4).tree_sequence
+        ts = matching.add_vestigial_root(ts)
         tables = ts.dump_tables()
         ll_tables = _tsinfer.LightweightTableCollection(tables.sequence_length)
         ll_tables.fromdict(tables.asdict())
@@ -331,6 +341,7 @@ class TestMatcherIndexes:
 
     def test_print_state_bad_file(self):
         ts = tskit.Tree.generate_balanced(4).tree_sequence
+        ts = matching.add_vestigial_root(ts)
         tables = ts.dump_tables()
         ll_tables = _tsinfer.LightweightTableCollection(tables.sequence_length)
         ll_tables.fromdict(tables.asdict())
