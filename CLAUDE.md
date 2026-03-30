@@ -77,7 +77,9 @@ The public API is in `tsinfer/__init__.py`, exposing three main functions from `
 Source in `lib/`. Three main classes exposed to Python:
 - `AncestorBuilder` — builds inferred ancestors from genotype data
 - `AncestorMatcher` — Li & Stephens HMM matching algorithm
-- `TreeSequenceBuilder` — constructs tree sequences incrementally
+
+When changes are made to the C library, ensure that the ``_tskit`` module is rebuilt
+before running Python tests. 
 
 Vendored dependencies in `lib/subprojects/`: tskit C library and kastore.
 
