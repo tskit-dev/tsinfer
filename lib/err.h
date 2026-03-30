@@ -30,7 +30,6 @@
 #define TSI_ERR_BAD_ANCESTRAL_STATE                                 -26
 #define TSI_ERR_MULTIPLE_MUTATIONS_AT_SITE                          -27
 #define TSI_ERR_BAD_EDGE_NODE                                      -28
-#define TSI_ERR_MULTIPLE_ROOTS                                     -29
 // clang-format on
 
 #ifdef __GNUC__
