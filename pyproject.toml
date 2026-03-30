@@ -90,7 +90,7 @@ docs = [
     "jupyter-book<2",
     "msprime",
     "pyfaidx",
-    "sphinx-argparse",
+    "sphinx-click",
     "sphinx-book-theme",
     "sphinx-issues",
 ]

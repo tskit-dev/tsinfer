@@ -1,49 +1,18 @@
-.. _sec_cli:
+.. _sec_cli_reference:
 
 ======================
 Command line interface
 ======================
 
-.. warning::
-
-    The command line interface only supports the deprecated SampleData format
-    used in tsinfer<0.4.0. 
-
-The command line interface in ``tsinfer`` is intended to provide a convenient
-interface to the high-level :ref:`API functionality <sec_api>`. There are two
-equivalent ways to invoke this program:
+The ``tsinfer`` command line interface runs the inference pipeline using a
+TOML configuration file. See the :ref:`quickstart <sec_quickstart>` for an
+introduction and the :ref:`config reference <sec_config_reference>` for all
+available options.
 
 .. code-block:: bash
 
-    $ tsinfer
+    $ tsinfer run config.toml --threads 4 -v
 
-or
-
-.. code-block:: bash
-
-    $ python3 -m tsinfer
-
-The first form is more intuitive and works well most of the time. The second
-form is useful when multiple versions of Python are installed or if the
-:command:`tsinfer` executable is not installed on your path.
-
-The :command:`tsinfer` program has five subcommands: :command:`list` prints a
-summary of the data held in one of tsinfer's :ref:`file formats <sec_file_formats>`;
-:command:`infer` runs the complete :ref:`inference process <sec_inference>` for a given
-input SampleData file; and
-:command:`generate-ancestors`, :command:`match-ancestors` and
-:command:`match-samples` run the three parts of this inference
-process as separate steps. Running the inference as separate steps like this
-is recommended for large inferences as it allows for greater control over
-the inference process.
-
-++++++++++++++++
-Argument details
-++++++++++++++++
-
-.. argparse::
-    :module: tsinfer
-    :func: get_cli_parser
-    :prog: tsinfer
-    :nodefault:
-
+.. click:: tsinfer.cli:main
+   :prog: tsinfer
+   :nested: full
