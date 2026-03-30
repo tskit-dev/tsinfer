@@ -587,6 +587,42 @@ test_matcher_indexes_mutation_site_out_of_bounds(void)
 }
 
 static void
+test_matcher_indexes_node_0_not_root(void)
+{
+    int ret;
+    matcher_indexes_t mi;
+    tsk_table_collection_t tables;
+
+    memset(&mi, 0, sizeof(mi));
+    ret = tsk_table_collection_init(&tables, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    tables.sequence_length = 100;
+
+    /* Node 0 is a leaf, node 2 is the root */
+    tsk_node_table_add_row(&tables.nodes, 0, 0.5, TSK_NULL, TSK_NULL, NULL, 0);
+    tsk_node_table_add_row(&tables.nodes, 0, 0.3, TSK_NULL, TSK_NULL, NULL, 0);
+    tsk_node_table_add_row(&tables.nodes, 0, 2.0, TSK_NULL, TSK_NULL, NULL, 0);
+
+    /* Edges: node 2 is parent of 0 and 1 (node 0 is NOT a parent) */
+    tsk_edge_table_add_row(&tables.edges, 0, 100, 2, 0, NULL, 0);
+    tsk_edge_table_add_row(&tables.edges, 0, 100, 2, 1, NULL, 0);
+
+    tsk_site_table_add_row(&tables.sites, 10, "A", 1, NULL, 0);
+    tsk_mutation_table_add_row(
+        &tables.mutations, 0, 0, TSK_NULL, TSK_UNKNOWN_TIME, "T", 1, NULL, 0);
+
+    ret = tsk_table_collection_sort(&tables, NULL, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = tsk_table_collection_build_index(&tables, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    ret = matcher_indexes_alloc(&mi, &tables, NULL, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_NODE_0_NOT_ROOT);
+    matcher_indexes_free(&mi);
+    tsk_table_collection_free(&tables);
+}
+
+static void
 test_packbits_1(void)
 {
     int ret = 0;
@@ -1417,6 +1453,59 @@ test_matching_root_switch(void)
     tsk_treeseq_free(&ts);
 }
 
+/* Test that a valid tree sequence with non-overlapping edges from node 0
+ * to different children (different roots in different trees) works correctly.
+ * This is a regression test for a previous false positive. */
+static void
+test_matching_nonzero_root_valid(void)
+{
+    int ret;
+    tsk_treeseq_t ts;
+    tsk_table_collection_t tables;
+    allele_t h[] = { 0, 0 };
+    allele_t match[2];
+    tsk_id_t left[4], right[4], parent[4];
+    tsk_size_t path_length;
+
+    ret = tsk_table_collection_init(&tables, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    tables.sequence_length = 100;
+
+    /* Node 0 = virtual root, node 1 = root of tree 1, node 2 = root of tree 2,
+     * node 3 = leaf */
+    tsk_node_table_add_row(&tables.nodes, 0, 3.0, TSK_NULL, TSK_NULL, NULL, 0);
+    tsk_node_table_add_row(&tables.nodes, 0, 2.0, TSK_NULL, TSK_NULL, NULL, 0);
+    tsk_node_table_add_row(&tables.nodes, 0, 2.0, TSK_NULL, TSK_NULL, NULL, 0);
+    tsk_node_table_add_row(&tables.nodes, 0, 1.0, TSK_NULL, TSK_NULL, NULL, 0);
+
+    /* Node 0 is parent in both halves, but with different children */
+    tsk_edge_table_add_row(&tables.edges, 0, 50, 0, 1, NULL, 0);
+    tsk_edge_table_add_row(&tables.edges, 50, 100, 0, 2, NULL, 0);
+    /* Node 3 is child of 1 in first half, child of 2 in second half */
+    tsk_edge_table_add_row(&tables.edges, 0, 50, 1, 3, NULL, 0);
+    tsk_edge_table_add_row(&tables.edges, 50, 100, 2, 3, NULL, 0);
+
+    /* One site per tree */
+    tsk_site_table_add_row(&tables.sites, 25, "A", 1, NULL, 0);
+    tsk_site_table_add_row(&tables.sites, 75, "A", 1, NULL, 0);
+    tsk_mutation_table_add_row(
+        &tables.mutations, 0, 3, TSK_NULL, TSK_UNKNOWN_TIME, "T", 1, NULL, 0);
+    tsk_mutation_table_add_row(
+        &tables.mutations, 1, 3, TSK_NULL, TSK_UNKNOWN_TIME, "T", 1, NULL, 0);
+
+    ret = tsk_table_collection_sort(&tables, NULL, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = tsk_treeseq_init(&ts, &tables, TSK_TS_INIT_BUILD_INDEXES);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    tsk_table_collection_free(&tables);
+
+    run_match(&ts, 1e-8, 1e-20, h, match, &path_length, left, right, parent);
+    /* With different roots in each tree, the path may have 1 or 2 segments */
+    CU_ASSERT_TRUE_FATAL(path_length >= 1 && path_length <= 2);
+
+    tsk_treeseq_free(&ts);
+}
+
 static void
 test_strerror(void)
 {
@@ -1521,6 +1610,7 @@ main(int argc, char **argv)
             test_matcher_indexes_mutation_node_out_of_bounds },
         { "test_matcher_indexes_mutation_site_out_of_bounds",
             test_matcher_indexes_mutation_site_out_of_bounds },
+        { "test_matcher_indexes_node_0_not_root", test_matcher_indexes_node_0_not_root },
 
         { "test_packbits_1", test_packbits_1 },
         { "test_packbits_2", test_packbits_2 },
@@ -1550,6 +1640,7 @@ main(int argc, char **argv)
         { "test_matching_impossible_extreme_mu", test_matching_impossible_extreme_mu },
         { "test_matching_impossible_zero_recomb", test_matching_impossible_zero_recomb },
         { "test_matching_root_switch", test_matching_root_switch },
+        { "test_matching_nonzero_root_valid", test_matching_nonzero_root_valid },
 
         { "test_strerror", test_strerror },
 

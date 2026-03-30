@@ -119,6 +119,9 @@ tsi_strerror(int err)
         case TSI_ERR_BAD_EDGE_NODE:
             ret = "Bad edge: parent or child node out of bounds";
             break;
+        case TSI_ERR_NODE_0_NOT_ROOT:
+            ret = "Node 0 must be the root: no edges have parent 0";
+            break;
     }
     return ret;
 }
