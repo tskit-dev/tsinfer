@@ -33,7 +33,7 @@ import tskit
 
 import _tsinfer
 
-from . import grouping, vcz
+from . import arg_ops, grouping, vcz
 
 logger = logging.getLogger(__name__)
 
@@ -380,48 +380,12 @@ def extend_ts(
     return result_ts
 
 
-def add_vestigial_root(ts):
-    """
-    Adds the nodes and edges required by tsinfer to the specified tree sequence
-    and returns it.
-    """
-    if not ts.discrete_genome:
-        raise ValueError("Only discrete genome coords supported")
-    if ts.num_nodes == 0:
-        raise ValueError("Emtpy trees not supported")
-
-    base_tables = ts.dump_tables()
-    tables = base_tables.copy()
-    tables.nodes.clear()
-    t = max(ts.nodes_time)
-    tables.nodes.add_row(time=t + 1)
-    num_additonal_nodes = 1
-    tables.mutations.node += num_additonal_nodes
-    tables.edges.child += num_additonal_nodes
-    tables.edges.parent += num_additonal_nodes
-    for node in base_tables.nodes:
-        tables.nodes.append(node)
-    if ts.num_edges > 0:
-        for tree in ts.trees():
-            # if tree.num_roots > 1:
-            #     print(ts.draw_text())
-            root = tree.root + num_additonal_nodes
-            tables.edges.add_row(
-                tree.interval.left, tree.interval.right, parent=0, child=root
-            )
-        tables.edges.squash()
-        # FIXME probably don't need to sort here most of the time, or at least we
-        # can just sort almost the end of the table.
-        tables.sort()
-    return tables.tree_sequence()
-
-
 class MatcherIndexes(_tsinfer.MatcherIndexes):
     """Wrapper around the C MatcherIndexes, built from a tree sequence."""
 
     def __init__(self, ts, *, vestigial_root=True, num_alleles=None):
         if vestigial_root:
-            ts = add_vestigial_root(ts)
+            ts = arg_ops.add_vestigial_root(ts)
         tables = ts.dump_tables()
         ll_tables = _tsinfer.LightweightTableCollection(tables.sequence_length)
         ll_tables.fromdict(tables.asdict())
