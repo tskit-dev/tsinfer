@@ -663,6 +663,43 @@ test_matcher_indexes_node_0_is_child(void)
     tsk_table_collection_free(&tables);
 }
 
+/* Node 0 is disconnected: not a child, not a parent. Edges exist but none
+ * involve node 0. This hits the "no edges have parent==0" path. */
+static void
+test_matcher_indexes_node_0_disconnected(void)
+{
+    int ret;
+    matcher_indexes_t mi;
+    tsk_table_collection_t tables;
+
+    memset(&mi, 0, sizeof(mi));
+    ret = tsk_table_collection_init(&tables, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    tables.sequence_length = 100;
+
+    /* Node 0 exists but has no edges */
+    tsk_node_table_add_row(&tables.nodes, 0, 3.0, TSK_NULL, TSK_NULL, NULL, 0);
+    tsk_node_table_add_row(&tables.nodes, 0, 2.0, TSK_NULL, TSK_NULL, NULL, 0);
+    tsk_node_table_add_row(&tables.nodes, 0, 1.0, TSK_NULL, TSK_NULL, NULL, 0);
+
+    /* Only edge is between nodes 1 and 2, node 0 not involved */
+    tsk_edge_table_add_row(&tables.edges, 0, 100, 1, 2, NULL, 0);
+
+    tsk_site_table_add_row(&tables.sites, 10, "A", 1, NULL, 0);
+    tsk_mutation_table_add_row(
+        &tables.mutations, 0, 2, TSK_NULL, TSK_UNKNOWN_TIME, "T", 1, NULL, 0);
+
+    ret = tsk_table_collection_sort(&tables, NULL, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = tsk_table_collection_build_index(&tables, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    ret = matcher_indexes_alloc(&mi, &tables, NULL, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_NODE_0_NOT_ROOT);
+    matcher_indexes_free(&mi);
+    tsk_table_collection_free(&tables);
+}
+
 static void
 test_packbits_1(void)
 {
@@ -1653,6 +1690,8 @@ main(int argc, char **argv)
             test_matcher_indexes_mutation_site_out_of_bounds },
         { "test_matcher_indexes_node_0_not_root", test_matcher_indexes_node_0_not_root },
         { "test_matcher_indexes_node_0_is_child", test_matcher_indexes_node_0_is_child },
+        { "test_matcher_indexes_node_0_disconnected",
+            test_matcher_indexes_node_0_disconnected },
 
         { "test_packbits_1", test_packbits_1 },
         { "test_packbits_2", test_packbits_2 },
