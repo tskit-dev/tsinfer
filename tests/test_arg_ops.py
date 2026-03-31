@@ -188,15 +188,17 @@ class TestCompressPaths:
         # 6 edges: 2 * (parent->PC, PC->child, PC->child)
         assert result.num_edges == 6
 
-    def test_time_validation(self):
-        """Raises ValueError when PC ancestor time would not be valid."""
+    def test_time_too_close_skipped(self):
+        """Group is skipped when PC ancestor time would not be valid."""
         inc = arg_ops.PC_ANCESTOR_INCREMENT
         ts = _make_ts(
             nodes=[(1, 1.0), (1, 1.0), (0, 1.0 + inc / 2)],
             edges=[(0, 100, 2, 0), (0, 100, 2, 1)],
         )
-        with pytest.raises(ValueError, match="path compression ancestor"):
-            arg_ops.compress_paths(ts)
+        result = arg_ops.compress_paths(ts)
+        # No compression possible, tree unchanged
+        assert result.num_nodes == ts.num_nodes
+        assert result.num_edges == ts.num_edges
 
     def test_with_mutations(self):
         """Mutations on compressed edges still reference correct nodes."""

@@ -155,13 +155,11 @@ class Matcher:
         self,
         ts: tskit.TreeSequence,
         positions: np.ndarray,  # (num_sites,) int32 — inference site positions
-        path_compression: bool = True,
         num_alleles: np.ndarray | None = None,
     ):
         self._positions = np.asarray(positions, dtype=np.int32)
         self._num_sites = len(positions)
         self._sequence_length = ts.sequence_length
-        self._path_compression = path_compression
 
         logger.info(
             "Creating Matcher: ts=%d nodes, %d edges, %.1f MiB, RSS=%.1f MiB",
