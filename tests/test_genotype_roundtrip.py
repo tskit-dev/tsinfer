@@ -39,12 +39,13 @@ from tsinfer import config, pipeline
 # ---------------------------------------------------------------------------
 
 
-def _anc_state(store):
-    return config.AncestralState(path=store, field="variant_ancestral_allele")
-
-
 def _run_pipeline(sample_store):
-    """Build config, run full pipeline, return output tree sequence."""
+    """Build config, run full pipeline, return output tree sequence.
+
+    Uses ``is_reference=True`` so the REF allele (variant_allele[:, 0])
+    is treated as the ancestral allele — the natural choice when input
+    data originates from a tree sequence.
+    """
     src = config.Source(path=sample_store, name="test")
     anc_src = config.Source(path=None, name="ancestors", sample_time="sample_time")
     cfg = config.Config(
@@ -62,7 +63,7 @@ def _run_pipeline(sample_store):
             output="output.trees",
         ),
         post_process=config.PostProcessConfig(),
-        ancestral_state=_anc_state(sample_store),
+        ancestral_state=config.AncestralState(path=sample_store, is_reference=True),
     )
     return pipeline.run(cfg)
 
@@ -103,7 +104,7 @@ def _run_pipeline_with_augment(sample_store, augment_store=None, ann_store=None)
         ),
         post_process=config.PostProcessConfig(),
         augment_sites=config.AugmentSitesConfig(sources=["augment"]),
-        ancestral_state=_anc_state(ann_store),
+        ancestral_state=config.AncestralState(path=ann_store, is_reference=True),
     )
     return pipeline.run(cfg)
 
