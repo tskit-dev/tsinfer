@@ -33,7 +33,8 @@ Specifies where to read the ancestral allele for each variant position.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `path` | string | (required) | Path to VCZ containing ancestral alleles |
-| `field` | string | (required) | Array name in the store (e.g. `"variant_AA"`) |
+| `field` | string | — | Array name in the store (e.g. `"variant_AA"`). Required unless `is_reference` is set. |
+| `is_reference` | bool | `false` | Use the REF allele (`variant_allele[:, 0]`) as the ancestral state. Useful for simulations. `field` must not be set when this is `true`. |
 
 
 ## `[[ancestors]]`

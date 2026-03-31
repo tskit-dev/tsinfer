@@ -28,8 +28,9 @@ vcf2zarr convert mydata.vcf.gz mydata.vcz
 Each site used for inference requires a known **ancestral allele**. If your VCF
 has an `AA` INFO field, `vcf2zarr` stores it as `variant_AA` in the `.vcz`
 store and you can reference it directly in the config. Alternatively, ancestral
-alleles can come from a separate VCZ store. See the
-{ref}`config reference <sec_config_reference>` for details.
+alleles can come from a separate VCZ store. For simulated data where the REF
+allele is the ancestral allele, set `is_reference = true` instead of specifying
+a field. See the {ref}`config reference <sec_config_reference>` for details.
 
 
 ## Writing the config

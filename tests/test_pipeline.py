@@ -356,6 +356,35 @@ class TestRun:
 
 
 # ---------------------------------------------------------------------------
+# TestIsReferenceConfig
+# ---------------------------------------------------------------------------
+
+
+class TestIsReferenceConfig:
+    def test_is_reference_with_field_raises(self):
+        """is_reference=True with field set raises ValueError."""
+        with pytest.raises(ValueError, match="field must not be set"):
+            config.AncestralState(path="x.vcz", field="variant_AA", is_reference=True)
+
+    def test_neither_field_nor_is_reference_raises(self):
+        """Neither field nor is_reference raises ValueError."""
+        with pytest.raises(ValueError, match="requires either"):
+            config.AncestralState(path="x.vcz")
+
+    def test_valid_field(self):
+        """field without is_reference is valid."""
+        a = config.AncestralState(path="x.vcz", field="variant_AA")
+        assert a.field == "variant_AA"
+        assert a.is_reference is None
+
+    def test_valid_is_reference(self):
+        """is_reference=True without field is valid."""
+        a = config.AncestralState(path="x.vcz", is_reference=True)
+        assert a.is_reference is True
+        assert a.field is None
+
+
+# ---------------------------------------------------------------------------
 # TestNodeMetadata
 # ---------------------------------------------------------------------------
 

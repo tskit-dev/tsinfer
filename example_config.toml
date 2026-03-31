@@ -59,6 +59,11 @@ path = "data/1kgp_chr20.vcz"
 path = "data/homo_sapiens-chr20.vcz"
 field = "variant_AA"
 
+# For simulated data where REF is the ancestral allele, use:
+# [ancestral_state]
+# path = "data/simulated.vcz"
+# is_reference = true
+
 
 # ============================================================================
 # Ancestors

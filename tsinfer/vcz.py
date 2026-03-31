@@ -2368,7 +2368,10 @@ class MultiSourceView:
         # --- Ancestral state ---
         ann_store = open_store(ancestral_state.path)
         ann_positions = np.asarray(ann_store["variant_position"][:], dtype=np.int32)
-        ann_values = np.asarray(ann_store[ancestral_state.field][:])
+        if ancestral_state.is_reference:
+            ann_values = np.asarray(ann_store["variant_allele"][:, 0])
+        else:
+            ann_values = np.asarray(ann_store[ancestral_state.field][:])
 
         # --- Unified site set (all numpy) ---
         valid_per_source = []

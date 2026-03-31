@@ -113,10 +113,28 @@ class Source:
 
 @dataclasses.dataclass
 class AncestralState:
-    """Specifies where to read the ancestral allele for each variant position."""
+    """Specifies where to read the ancestral allele for each variant position.
+
+    Exactly one of *field* or *is_reference* must be set.
+
+    If *is_reference* is ``True``, the REF allele (``variant_allele[:, 0]``)
+    from the store at *path* is used as the ancestral allele.  Otherwise
+    *field* names the array to read.
+    """
 
     path: str | pathlib.Path
-    field: str
+    field: str | None = None
+    is_reference: bool | None = None
+
+    def __post_init__(self):
+        if self.is_reference is None and self.field is None:
+            raise ValueError(
+                "[ancestral_state] requires either 'field' or 'is_reference = true'"
+            )
+        if self.is_reference is True and self.field is not None:
+            raise ValueError(
+                "[ancestral_state] field must not be set when is_reference is true"
+            )
 
 
 @dataclasses.dataclass
@@ -356,7 +374,7 @@ _KNOWN_SOURCE_KEYS = {
     "sample_time",
 }
 
-_KNOWN_ANCESTRAL_STATE_KEYS = {"path", "field"}
+_KNOWN_ANCESTRAL_STATE_KEYS = {"path", "field", "is_reference"}
 
 _KNOWN_ANCESTORS_KEYS = {
     "name",
@@ -429,13 +447,13 @@ def _parse_ancestral_state(raw: dict) -> AncestralState:
     if entry is None:
         raise ValueError("Config must contain an [ancestral_state] section")
     _check_unknown_keys("ancestral_state", entry, _KNOWN_ANCESTRAL_STATE_KEYS)
-    try:
-        return AncestralState(
-            path=_resolve_path(entry["path"]),
-            field=entry["field"],
-        )
-    except KeyError as e:
-        raise ValueError(f"[ancestral_state] missing required key: {e}") from e
+    if "path" not in entry:
+        raise ValueError("[ancestral_state] missing required key: 'path'")
+    return AncestralState(
+        path=_resolve_path(entry["path"]),
+        field=entry.get("field"),
+        is_reference=entry.get("is_reference"),
+    )
 
 
 def _parse_one_ancestor(entry: dict) -> AncestorsConfig:
