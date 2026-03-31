@@ -47,6 +47,9 @@ valgrind --leak-check=full --error-exitcode=1 ./build/tests
 Tests are in `lib/tests/tests.c` using the CUnit framework. The build uses
 `-Wall -Wextra -Werror -Wpedantic` and other strict warnings.
 
+Ensure that all new C code is covered by tests in the C test suite by running
+tests with coverage.
+
 ## Architecture
 
 **tsinfer** infers tree sequences from genetic variation data stored in VCZ (Variant Call Zarr) format.
