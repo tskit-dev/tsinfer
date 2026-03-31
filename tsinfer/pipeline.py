@@ -35,7 +35,7 @@ import psutil
 import tqdm
 import tskit
 
-from . import ancestors, config, grouping, matching, provenance
+from . import ancestors, arg_ops, config, grouping, matching, provenance
 from . import vcz as vcz_mod
 
 logger = logging.getLogger(__name__)
@@ -362,7 +362,6 @@ def _process_group(
         m = matching.Matcher(
             ts,
             positions,
-            path_compression=path_compression,
             num_alleles=reader.get_num_alleles(),
         )
         job_list = [job for _, job in group_jobs]
@@ -420,12 +419,15 @@ def _process_group(
         resources=tm.metrics.asdict(),
     )
 
-    return matching.extend_ts(
+    result = matching.extend_ts(
         ts,
         paired_results=paired_results,
         allele_mapper=allele_mapper,
         provenance_record=json.dumps(prov_dict),
     )
+    if path_compression:
+        result = arg_ops.compress_paths(result)
+    return result
 
 
 def match(

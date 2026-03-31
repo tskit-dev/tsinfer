@@ -112,11 +112,13 @@ def compress_paths(ts):
         pc_time = min_parent_time - PC_ANCESTOR_INCREMENT
         max_child_time = max(node_time[child] for child in children)
         if pc_time <= max_child_time:
-            raise ValueError(
-                f"Cannot create path compression ancestor: computed time "
-                f"{pc_time} is not greater than maximum child time "
-                f"{max_child_time}"
+            logger.debug(
+                "Skipping path compression group: computed time %f "
+                "is not greater than maximum child time %f",
+                pc_time,
+                max_child_time,
             )
+            continue
 
         # Create PC ancestor node
         pc_node = tables.nodes.add_row(flags=NODE_IS_PC_ANCESTOR, time=pc_time)
