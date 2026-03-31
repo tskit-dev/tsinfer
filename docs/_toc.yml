@@ -16,6 +16,7 @@ parts:
 - caption: Inference
   chapters:
   - file: inference
+  - file: large_scale
 - caption: Interfaces
   chapters:
   - file: cli
