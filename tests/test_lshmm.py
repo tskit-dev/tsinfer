@@ -14,7 +14,7 @@ import test_matcher_fixtures
 import tskit
 
 import _tsinfer
-from tsinfer import matching
+from tsinfer import arg_ops, matching
 
 
 @dataclasses.dataclass
@@ -78,7 +78,7 @@ class MatcherIndexes:
     def __init__(self, in_tables, *, vestigial_root=True, num_alleles=None):
         ts = in_tables.tree_sequence()
         if vestigial_root:
-            ts = matching.add_vestigial_root(ts)
+            ts = arg_ops.add_vestigial_root(ts)
         tables = ts.dump_tables()
 
         self.sequence_length = tables.sequence_length

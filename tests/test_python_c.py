@@ -28,7 +28,7 @@ import pytest
 import tskit
 
 import _tsinfer
-from tsinfer import matching
+from tsinfer import arg_ops
 
 IS_WINDOWS = sys.platform == "win32"
 
@@ -155,7 +155,7 @@ def make_matcher_indexes_and_matcher(num_samples=4):
     tables.sites.add_row(position=1, ancestral_state="A")
     tables.mutations.add_row(site=0, node=1, derived_state="T")
     ts = tables.tree_sequence()
-    ts = matching.add_vestigial_root(ts)
+    ts = arg_ops.add_vestigial_root(ts)
     ll_tables = _tsinfer.LightweightTableCollection(ts.sequence_length)
     ll_tables.fromdict(ts.dump_tables().asdict())
     mi = _tsinfer.MatcherIndexes(ll_tables)
@@ -267,7 +267,7 @@ class TestAncestorMatcher:
         tables.sites.add_row(position=1, ancestral_state="A")
         # No mutations: all nodes carry allele 0
         ts = tables.tree_sequence()
-        ts = matching.add_vestigial_root(ts)
+        ts = arg_ops.add_vestigial_root(ts)
         ll_tables = _tsinfer.LightweightTableCollection(ts.sequence_length)
         ll_tables.fromdict(ts.dump_tables().asdict())
         mi = _tsinfer.MatcherIndexes(ll_tables)
@@ -299,7 +299,7 @@ class TestAncestorMatcher:
 class TestMatcherIndexes:
     def test_single_tree(self):
         ts = tskit.Tree.generate_balanced(4).tree_sequence
-        ts = matching.add_vestigial_root(ts)
+        ts = arg_ops.add_vestigial_root(ts)
         tables = ts.dump_tables()
         ll_tables = _tsinfer.LightweightTableCollection(tables.sequence_length)
         ll_tables.fromdict(tables.asdict())
@@ -323,7 +323,7 @@ class TestMatcherIndexes:
 
     def test_print_state(self, tmpdir):
         ts = tskit.Tree.generate_balanced(4).tree_sequence
-        ts = matching.add_vestigial_root(ts)
+        ts = arg_ops.add_vestigial_root(ts)
         tables = ts.dump_tables()
         ll_tables = _tsinfer.LightweightTableCollection(tables.sequence_length)
         ll_tables.fromdict(tables.asdict())
@@ -341,7 +341,7 @@ class TestMatcherIndexes:
 
     def test_print_state_bad_file(self):
         ts = tskit.Tree.generate_balanced(4).tree_sequence
-        ts = matching.add_vestigial_root(ts)
+        ts = arg_ops.add_vestigial_root(ts)
         tables = ts.dump_tables()
         ll_tables = _tsinfer.LightweightTableCollection(tables.sequence_length)
         ll_tables.fromdict(tables.asdict())
