@@ -217,7 +217,7 @@ reduce the number of ancestral recombination events by postulating a "synthetic
 ancestor" with this breakpoint, existing at a slightly older point
 in time, from whom all the children are descended at this genomic position. We
 call the algorithm used to implement this addition to the ancestral copying
-paths, "path compression". Path compression is off by default.
+paths, "path compression".
 
 (sec_inference_match_ancestors)=
 

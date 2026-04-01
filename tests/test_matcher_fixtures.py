@@ -30,7 +30,6 @@ import numpy as np
 import pytest
 
 from tsinfer import config, matching, vcz
-from tsinfer.config import MatchJob
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -52,7 +51,7 @@ class _ArrayReader:
 
 def _match(ts, positions, query, allele_mapper):
     """Run the current Matcher and return (path, mutations) as tuples."""
-    job = MatchJob(
+    job = config.MatchJob(
         haplotype_index=0,
         source="test",
         sample_id="s0",
@@ -74,7 +73,7 @@ def _match(ts, positions, query, allele_mapper):
 
 def _add_node(ts, time, path_segments, mutations, allele_mapper):
     """Add a single ancestor node to *ts* via extend_ts."""
-    job = MatchJob(
+    job = config.MatchJob(
         haplotype_index=0,
         source="test",
         sample_id="s0",
