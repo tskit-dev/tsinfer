@@ -345,6 +345,19 @@ class TestMatcher:
             assert isinstance(m.position, float)
             assert isinstance(m.derived_state, int)
 
+    def test_match_with_custom_recombination_and_mismatch(self):
+        """Custom per-source recombination/mismatch overrides are used."""
+        hap = np.array([0, 1, 0], dtype=np.int8)
+        ts = self._make_ts_with_one_ancestor(hap)
+        source_params = {
+            "test": config.MatchSourceConfig(recombination=0.5, mismatch=0.1),
+        }
+        matcher = matching.Matcher(ts, self.positions, source_parameters=source_params)
+        results = list(matcher.match(_jobs(1), _ArrayReader([hap])))
+        assert len(results) == 1
+        _, r = results[0]
+        assert len(r.path) > 0
+
 
 # ---------------------------------------------------------------------------
 # TestExtendTs
