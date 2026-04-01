@@ -64,7 +64,7 @@ def _build_jobs_with_metadata(cfg):
 
     # Build MatchJobs directly from VCZ stores, assigning individual IDs
     # in the same pass.
-    jobs: list[grouping.MatchJob] = []
+    jobs: list[config.MatchJob] = []
     ind_key_to_id: dict[tuple[str, str], int] = {}
     hap_idx = 0
 
@@ -159,7 +159,7 @@ def _build_jobs_with_metadata(cfg):
 
             for p in range(ploidy):
                 jobs.append(
-                    grouping.MatchJob(
+                    config.MatchJob(
                         haplotype_index=hap_idx,
                         source=source.name,
                         sample_id=sid,
@@ -292,10 +292,10 @@ def compute_groups_json(cfg: config.Config) -> str:
     return json_str
 
 
-def _load_match_jobs(path) -> list[grouping.MatchJob]:
+def _load_match_jobs(path) -> list[config.MatchJob]:
     """Read a match-jobs JSON file and return a list of MatchJob objects."""
     records = json.loads(pathlib.Path(path).read_text())
-    return [grouping.MatchJob(**rec) for rec in records]
+    return [config.MatchJob(**rec) for rec in records]
 
 
 def _setup_workdir(workdir, cfg):

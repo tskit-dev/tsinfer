@@ -25,7 +25,7 @@ from __future__ import annotations
 import numpy as np
 import tskit
 
-from tsinfer import config, grouping, matching, vcz
+from tsinfer import config, matching, vcz
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -110,7 +110,7 @@ def _make_job(
     population_id=None,
 ):
     """Create a MatchJob with sensible defaults for testing."""
-    return grouping.MatchJob(
+    return config.MatchJob(
         haplotype_index=haplotype_index,
         source=source,
         sample_id=sample_id,

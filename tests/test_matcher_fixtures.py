@@ -30,7 +30,7 @@ import numpy as np
 import pytest
 
 from tsinfer import config, matching, vcz
-from tsinfer.grouping import MatchJob
+from tsinfer.config import MatchJob
 
 # ---------------------------------------------------------------------------
 # Helpers

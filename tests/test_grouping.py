@@ -29,7 +29,7 @@ import itertools
 import numpy as np
 import pytest
 
-from tsinfer import grouping
+from tsinfer import config, grouping
 
 
 @dataclasses.dataclass
@@ -558,7 +558,7 @@ class TestAssignGroups:
     """Test that assign_groups takes ungrouped MatchJobs and assigns groups."""
 
     def _make_job(self, haplotype_index, time, start=0, end=100):
-        return grouping.MatchJob(
+        return config.MatchJob(
             haplotype_index=haplotype_index,
             source="test",
             sample_id=f"s{haplotype_index}",
@@ -617,7 +617,7 @@ class TestAssignGroups:
             )
 
     def test_preserves_job_fields(self):
-        job = grouping.MatchJob(
+        job = config.MatchJob(
             haplotype_index=0,
             source="my_source",
             sample_id="my_sample",

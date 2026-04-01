@@ -33,7 +33,7 @@ import tskit
 
 import _tsinfer
 
-from . import arg_ops, config, grouping, vcz
+from . import arg_ops, config, vcz
 
 logger = logging.getLogger(__name__)
 
@@ -286,7 +286,7 @@ class Matcher:
 def extend_ts(
     ts: tskit.TreeSequence,
     *,
-    paired_results: list[tuple[grouping.MatchJob, MatchResult]],
+    paired_results: list[tuple[config.MatchJob, MatchResult]],
     allele_mapper: vcz.AlleleMapper,
     provenance_record: str | None = None,
 ) -> tskit.TreeSequence:

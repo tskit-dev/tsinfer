@@ -162,6 +162,24 @@ class MatchSourceConfig:
 
 
 @dataclasses.dataclass
+class MatchJob:
+    """One row of the compute-groups output — one per haplotype."""
+
+    haplotype_index: int
+    source: str
+    sample_id: str
+    ploidy_index: int
+    time: float
+    start_position: int
+    end_position: int
+    group: int
+    node_flags: int = 1
+    individual_id: int | None = None
+    population_id: int | None = None
+    sample_chunk: int = 0
+
+
+@dataclasses.dataclass
 class MatchConfig:
     """Configuration for the match step."""
 
