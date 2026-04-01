@@ -165,7 +165,7 @@ class MatchConfig:
 
     sources: dict[str, MatchSourceConfig]
     output: str | pathlib.Path
-    path_compression: bool = True
+    path_compression: bool = False
     reference_ts: str | pathlib.Path | None = None
     workdir: str | pathlib.Path | None = None
     keep_intermediates: bool = False
@@ -521,7 +521,7 @@ def _parse_match(raw: dict) -> MatchConfig:
         return MatchConfig(
             sources=sources,
             output=_resolve_path(entry["output"]),
-            path_compression=bool(entry.get("path_compression", True)),
+            path_compression=bool(entry.get("path_compression", False)),
             reference_ts=_resolve_path(entry.get("reference_ts")),
             workdir=_resolve_path(entry.get("workdir")),
             keep_intermediates=bool(entry.get("keep_intermediates", False)),

@@ -217,7 +217,7 @@ reduce the number of ancestral recombination events by postulating a "synthetic
 ancestor" with this breakpoint, existing at a slightly older point
 in time, from whom all the children are descended at this genomic position. We
 call the algorithm used to implement this addition to the ancestral copying
-paths, "path compression".
+paths, "path compression". Path compression is off by default.
 
 (sec_inference_match_ancestors)=
 
@@ -225,9 +225,10 @@ paths, "path compression".
 
 Matching ancestors is dependent on the time allocated to each ancestor; an
 ancestor can only copy from any older ancestor. For each ancestor,
-we find the most likely path through older ancestors: that is the path that
-maximises the product of the probabilities of recombination and mismatch
-over all sites.
+we find a copying path through older ancestors using a Li & Stephens
+hidden Markov model. This determines, at each site, which older ancestor
+the current ancestor copies from, allowing for both recombination
+(switching between ancestors) and mismatch (mutations).
 
 :::{todo}
 Schematic of the ancestors copying process.

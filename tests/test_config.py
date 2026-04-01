@@ -159,7 +159,7 @@ class TestMatchConfigConstruction:
             },
             output="out.trees",
         )
-        assert m.path_compression is True
+        assert m.path_compression is False
         assert m.reference_ts is None
         assert m.sources["cohort"].node_flags == 1
         assert m.sources["cohort"].create_individuals is True
