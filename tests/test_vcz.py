@@ -30,7 +30,7 @@ import numpy as np
 import pytest
 import zarr
 
-from tsinfer import config, grouping, vcz
+from tsinfer import config, vcz
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -346,7 +346,7 @@ class TestHaplotypeReader:
             schedule=schedule,
         )
         # a0 has genotype [0, 1, 0]
-        job = grouping.MatchJob(
+        job = config.MatchJob(
             haplotype_index=1,
             source="ancestors",
             sample_id="a0",
@@ -371,7 +371,7 @@ class TestHaplotypeReader:
             schedule=schedule,
         )
         # a1 has genotype [1, 0, 1]
-        job = grouping.MatchJob(
+        job = config.MatchJob(
             haplotype_index=2,
             source="ancestors",
             sample_id="a1",
@@ -396,7 +396,7 @@ class TestHaplotypeReader:
             schedule=schedule,
         )
         # sample_0: gt [0, 1, 1] → encoded [0=anc, 1=derived, 1=derived]
-        job = grouping.MatchJob(
+        job = config.MatchJob(
             haplotype_index=3,
             source="test",
             sample_id="sample_0",
@@ -421,7 +421,7 @@ class TestHaplotypeReader:
             schedule=schedule,
         )
         # sample_1: gt [1, 0, 0] → encoded [1=derived, 0=anc, 0=anc]
-        job = grouping.MatchJob(
+        job = config.MatchJob(
             haplotype_index=4,
             source="test",
             sample_id="sample_1",
@@ -467,7 +467,7 @@ class TestHaplotypeReader:
             anc_alleles,
             schedule=schedule,
         )
-        job = grouping.MatchJob(
+        job = config.MatchJob(
             haplotype_index=2,
             source="test",
             sample_id="sample_0",
@@ -519,7 +519,7 @@ class TestHaplotypeReader:
         schedule = [("src_a", "sample_0", 0), ("src_b", "sample_0", 0)]
         reader = vcz.HaplotypeReader(sources, positions, anc_alleles, schedule=schedule)
 
-        job_a = grouping.MatchJob(
+        job_a = config.MatchJob(
             haplotype_index=2,
             source="src_a",
             sample_id="sample_0",
@@ -529,7 +529,7 @@ class TestHaplotypeReader:
             end_position=200,
             group=2,
         )
-        job_b = grouping.MatchJob(
+        job_b = config.MatchJob(
             haplotype_index=3,
             source="src_b",
             sample_id="sample_0",
@@ -1475,7 +1475,7 @@ class TestGetSiteAlleles:
         reader = vcz.HaplotypeReader(sources, positions, anc_alleles, schedule=schedule)
 
         # Read from both sources to trigger allele discovery
-        job_a = grouping.MatchJob(
+        job_a = config.MatchJob(
             haplotype_index=0,
             source="src_a",
             sample_id="sample_0",
@@ -1485,7 +1485,7 @@ class TestGetSiteAlleles:
             end_position=200,
             group=0,
         )
-        job_b = grouping.MatchJob(
+        job_b = config.MatchJob(
             haplotype_index=1,
             source="src_b",
             sample_id="sample_0",

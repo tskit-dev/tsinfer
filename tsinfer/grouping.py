@@ -30,29 +30,13 @@ import time as time_
 import numba
 import numpy as np
 
+from . import config
+
 logging.getLogger("numba").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
-@dataclasses.dataclass
-class MatchJob:
-    """One row of the compute-groups output — one per haplotype."""
-
-    haplotype_index: int
-    source: str
-    sample_id: str
-    ploidy_index: int
-    time: float
-    start_position: int
-    end_position: int
-    group: int
-    node_flags: int = 1
-    individual_id: int | None = None
-    population_id: int | None = None
-    sample_chunk: int = 0
-
-
-def assign_groups(jobs: list[MatchJob]) -> list[MatchJob]:
+def assign_groups(jobs: list[config.MatchJob]) -> list[config.MatchJob]:
     """Assign group indices to MatchJobs, return sorted by (group, haplotype_index)."""
     if len(jobs) == 0:
         return jobs
