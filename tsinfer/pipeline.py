@@ -356,6 +356,7 @@ def _process_group(
     match_fh,
     config_str: str,
     progress: bool,
+    source_parameters: dict[str, config.MatchSourceConfig] | None = None,
 ) -> tskit.TreeSequence:
     """Match one group of haplotypes and return the extended tree sequence."""
     with provenance.TimingAndMemory() as tm:
@@ -363,6 +364,7 @@ def _process_group(
             ts,
             positions,
             num_alleles=reader.get_num_alleles(),
+            source_parameters=source_parameters,
         )
         job_list = [job for _, job in group_jobs]
         match_iter = m.match(job_list, reader, num_threads=num_threads)
@@ -592,6 +594,7 @@ def match(
             match_fh=match_fh,
             config_str=config_str,
             progress=progress,
+            source_parameters=cfg.match.sources,
         )
         completed_haps += num_in_group
         rss = psutil.Process().memory_info().rss / (1024 * 1024)

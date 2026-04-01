@@ -33,7 +33,7 @@ import tskit
 
 import _tsinfer
 
-from . import arg_ops, grouping, vcz
+from . import arg_ops, config, grouping, vcz
 
 logger = logging.getLogger(__name__)
 
@@ -156,10 +156,12 @@ class Matcher:
         ts: tskit.TreeSequence,
         positions: np.ndarray,  # (num_sites,) int32 — inference site positions
         num_alleles: np.ndarray | None = None,
+        source_parameters: dict[str, config.MatchSourceConfig] | None = None,
     ):
         self._positions = np.asarray(positions, dtype=np.int32)
         self._num_sites = len(positions)
         self._sequence_length = ts.sequence_length
+        self._source_parameters = source_parameters or {}
 
         logger.info(
             "Creating Matcher: ts=%d nodes, %d edges, %.1f MiB, RSS=%.1f MiB",
@@ -177,17 +179,27 @@ class Matcher:
             time_.monotonic() - t0,
             _rss_mib(),
         )
-        self._rho = np.full(self._num_sites, 1e-2)
-        self._mu = np.full(self._num_sites, 1e-20)
 
     def _match_one(self, job, reader) -> tuple:
         """Match a single haplotype: read, run HMM, convert to result."""
         num_sites = self._num_sites
         pos = self._positions.astype(np.float64)
 
+        # Look up per-source recombination/mismatch overrides
+        source = job.source
+        src_cfg = self._source_parameters[source]
+        recombination = 1e-2
+        if src_cfg.recombination is not None:
+            recombination = src_cfg.recombination
+        mismatch = 1e-20
+        if src_cfg.mismatch is not None:
+            mismatch = src_cfg.mismatch
+        rho = np.full(num_sites, recombination)
+        mu = np.full(num_sites, mismatch)
+
         # Each call gets its own matcher so threads don't share state
         t0 = time_.monotonic()
-        matcher = AncestorMatcher(self._matcher_indexes, self._rho, self._mu)
+        matcher = AncestorMatcher(self._matcher_indexes, rho, mu)
         t_init = time_.monotonic() - t0
 
         t0 = time_.monotonic()

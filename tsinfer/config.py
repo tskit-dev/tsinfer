@@ -157,6 +157,8 @@ class MatchSourceConfig:
 
     node_flags: int = DEFAULT_NODE_FLAGS  # tskit.NODE_IS_SAMPLE
     create_individuals: bool = True
+    recombination: float | None = None
+    mismatch: float | None = None
 
 
 @dataclasses.dataclass
@@ -396,7 +398,12 @@ _KNOWN_MATCH_KEYS = {
     "keep_intermediates",
 }
 
-_KNOWN_MATCH_SOURCE_KEYS = {"node_flags", "create_individuals"}
+_KNOWN_MATCH_SOURCE_KEYS = {
+    "node_flags",
+    "create_individuals",
+    "recombination",
+    "mismatch",
+}
 
 _KNOWN_INDIVIDUAL_METADATA_KEYS = {"fields", "population"}
 
@@ -512,9 +519,13 @@ def _parse_match(raw: dict) -> MatchConfig:
                     src_val,
                     _KNOWN_MATCH_SOURCE_KEYS,
                 )
+                raw_recomb = src_val.get("recombination")
+                raw_mismatch = src_val.get("mismatch")
                 sources[src_name] = MatchSourceConfig(
                     node_flags=int(src_val.get("node_flags", DEFAULT_NODE_FLAGS)),
                     create_individuals=bool(src_val.get("create_individuals", True)),
+                    recombination=float(raw_recomb) if raw_recomb is not None else None,
+                    mismatch=float(raw_mismatch) if raw_mismatch is not None else None,
                 )
             else:
                 sources[src_name] = MatchSourceConfig()

@@ -29,7 +29,7 @@ asserts the exact path segments and mutations.
 import numpy as np
 import pytest
 
-from tsinfer import matching, vcz
+from tsinfer import config, matching, vcz
 from tsinfer.grouping import MatchJob
 
 # ---------------------------------------------------------------------------
@@ -52,8 +52,20 @@ class _ArrayReader:
 
 def _match(ts, positions, query, allele_mapper):
     """Run the current Matcher and return (path, mutations) as tuples."""
-    matcher = matching.Matcher(ts, positions)
-    results = list(matcher.match([None], _ArrayReader([query])))
+    job = MatchJob(
+        haplotype_index=0,
+        source="test",
+        sample_id="s0",
+        ploidy_index=0,
+        time=0,
+        start_position=0,
+        end_position=int(ts.sequence_length),
+        group=0,
+    )
+    matcher = matching.Matcher(
+        ts, positions, source_parameters={"test": config.MatchSourceConfig()}
+    )
+    results = list(matcher.match([job], _ArrayReader([query])))
     _, r = results[0]
     path = [(s.left, s.right, s.parent) for s in r.path]
     mutations = [(m.position, m.derived_state) for m in r.mutations]
