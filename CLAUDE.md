@@ -128,3 +128,5 @@ Sample VCZ → `infer_ancestors` → Ancestor VCZ → `match` → raw `tskit.Tre
 - Test helpers are in `tests/helpers.py` (e.g., `make_sample_vcz`, `make_ancestor_vcz`)
 - `tests/algorithm.py` contains Python reference implementations used to verify C code
 - `msprime` is used to simulate test data
+- Run the test suite with coverage after each change to ensure that new code is fully
+  covered by tests.
