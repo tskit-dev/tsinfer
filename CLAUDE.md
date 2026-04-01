@@ -98,6 +98,9 @@ Sample VCZ → `infer_ancestors` → Ancestor VCZ → `match` → raw `tskit.Tre
 
 - Do not be overly defensive - defend only against circumstances that can
   occur within the current codebase.
+- Do not make production code more complex for the sake of minimising 
+  changes to the test suite. Simplicity and clarity of the production code 
+  is imperitive.
 - Prefer dataclasses over tuples when returning multiple values.
 - Use explicit `None` comparisons: `if x is not None` not `if x`.
 - Zarr v3 is now used (dependency: `zarr>=3`).
