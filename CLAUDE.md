@@ -17,8 +17,6 @@ The package includes a C extension (`_tsinfer`) built from `lib/` sources via se
 uv run pytest tests/ -v              # Run all tests
 uv run pytest tests/test_matching.py  # Run a single test file
 uv run pytest tests/test_matching.py::TestFoo::test_bar -v  # Run a single test
-uv run pytest --skip-slow            # Skip slow tests
-
 uv run ruff check --fix              # Lint Python code (auto-fix)
 uv run ruff format                   # Format Python code
 ```
@@ -81,7 +79,7 @@ Source in `lib/`. Three main classes exposed to Python:
 - `AncestorBuilder` — builds inferred ancestors from genotype data
 - `AncestorMatcher` — Li & Stephens HMM matching algorithm
 
-When changes are made to the C library, ensure that the ``_tskit`` module is rebuilt
+When changes are made to the C library, ensure that the ``_tsinfer`` module is rebuilt
 before running Python tests. 
 
 Vendored dependencies in `lib/subprojects/`: tskit C library and kastore.
@@ -100,10 +98,20 @@ Sample VCZ → `infer_ancestors` → Ancestor VCZ → `match` → raw `tskit.Tre
   occur within the current codebase.
 - Do not make production code more complex for the sake of minimising 
   changes to the test suite. Simplicity and clarity of the production code 
-  is imperitive.
+  is imperative.
+- Do not combine multiple complex operations in a single statement. Prefer
+  to keep a single operation per statement, and use intermediate variables
+  as a form of documentation. For example:
+  ```python
+  # Bad — multiple operations in one expression
+  result = sorted(k for k, v in mapping.items() if v in set(x.name for x in sources))
+
+  # Good — intermediate variable makes intent clear
+  source_names = {x.name for x in sources}
+  result = sorted(k for k, v in mapping.items() if v in source_names)
+  ```
 - Prefer dataclasses over tuples when returning multiple values.
 - Use explicit `None` comparisons: `if x is not None` not `if x`.
-- Zarr v3 is now used (dependency: `zarr>=3`).
 - Import all modules at the top of the file, not inside functions or methods.
 - Prefer importing a module and using module.function instead of
   using ``from module import function``. This applies to intra-package
@@ -115,6 +123,7 @@ Sample VCZ → `infer_ancestors` → Ancestor VCZ → `match` → raw `tskit.Tre
 - When a parameter has a computed default derived from another parameter,
   compute it once at the point of use (the leaf function), not at every
   layer in the call chain. Pass `None` through intermediate layers.
+- Zarr v3 is used (dependency: `zarr>=3`). Do not use Zarr v2 APIs.
 - Use PEP 604 union syntax: `int | None`, not `Optional[int]`.
 - One `logger = logging.getLogger(__name__)` per module at top level.
 
@@ -128,5 +137,5 @@ Sample VCZ → `infer_ancestors` → Ancestor VCZ → `match` → raw `tskit.Tre
 - Test helpers are in `tests/helpers.py` (e.g., `make_sample_vcz`, `make_ancestor_vcz`)
 - `tests/algorithm.py` contains Python reference implementations used to verify C code
 - `msprime` is used to simulate test data
-- Run the test suite with coverage after each change to ensure that new code is fully
-  covered by tests.
+- Run the test suite with coverage before committing to ensure that new code is
+  fully covered by tests.
