@@ -2919,7 +2919,7 @@ requires-dist = [
     { name = "psutil" },
     { name = "tqdm" },
     { name = "tskit", specifier = ">=1.0.0" },
-    { name = "vcztools", specifier = ">=0.1.2" },
+    { name = "vcztools", specifier = "==0.1.2" },
     { name = "zarr", specifier = ">=3" },
 ]
 
