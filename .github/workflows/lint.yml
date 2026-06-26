@@ -3,6 +3,9 @@ name: Lint
 on:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   Lint:
     uses: tskit-dev/.github/.github/workflows/lint.yml@v17

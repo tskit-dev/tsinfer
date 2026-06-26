@@ -6,6 +6,9 @@ on:
     branches: [main, test]
   merge_group:
 
+permissions:
+  contents: read
+
 jobs:
 
   packaging:
@@ -16,19 +19,25 @@ jobs:
 
   test-c:
     name: C tests
-    uses: tskit-dev/.github/.github/workflows/c-tests.yml@v17
+    # secrets: inherit is required: this trusted first-party tskit-dev reusable
+    # workflow reads secrets.CODECOV_TOKEN without declaring it in workflow_call.
+    uses: tskit-dev/.github/.github/workflows/c-tests.yml@v17  # zizmor: ignore[secrets-inherit]
     with:
       library-directory: lib
     secrets: inherit
 
   test-python-c:
     name: Python-C tests
-    uses: tskit-dev/.github/.github/workflows/python-c-tests.yml@v17
+    # secrets: inherit is required: this trusted first-party tskit-dev reusable
+    # workflow reads secrets.CODECOV_TOKEN without declaring it in workflow_call.
+    uses: tskit-dev/.github/.github/workflows/python-c-tests.yml@v17  # zizmor: ignore[secrets-inherit]
     secrets: inherit
 
   test:
     name: Python
-    uses: tskit-dev/.github/.github/workflows/python-tests.yml@v17
+    # secrets: inherit is required: this trusted first-party tskit-dev reusable
+    # workflow reads secrets.CODECOV_TOKEN without declaring it in workflow_call.
+    uses: tskit-dev/.github/.github/workflows/python-tests.yml@v17  # zizmor: ignore[secrets-inherit]
     with:
       os: ${{ matrix.os }}
       python-version: ${{ matrix.python }}
