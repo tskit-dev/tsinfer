@@ -13,37 +13,34 @@ jobs:
 
   packaging:
     name: Python packaging
-    uses: tskit-dev/.github/.github/workflows/python-packaging.yml@v18
+    uses: tskit-dev/.github/.github/workflows/python-packaging.yml@v19
     with:
       cli-test-cmd: tsinfer --help
 
   test-c:
     name: C tests
-    # secrets: inherit is required: this trusted first-party tskit-dev reusable
-    # workflow reads secrets.CODECOV_TOKEN without declaring it in workflow_call.
-    uses: tskit-dev/.github/.github/workflows/c-tests.yml@v17  # zizmor: ignore[secrets-inherit]
+    uses: tskit-dev/.github/.github/workflows/c-tests.yml@v19
     with:
       library-directory: lib
-    secrets: inherit
+    secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   test-python-c:
     name: Python-C tests
-    # secrets: inherit is required: this trusted first-party tskit-dev reusable
-    # workflow reads secrets.CODECOV_TOKEN without declaring it in workflow_call.
-    uses: tskit-dev/.github/.github/workflows/python-c-tests.yml@v17  # zizmor: ignore[secrets-inherit]
-    secrets: inherit
+    uses: tskit-dev/.github/.github/workflows/python-c-tests.yml@v19
+    secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   test:
     name: Python
-    # secrets: inherit is required: this trusted first-party tskit-dev reusable
-    # workflow reads secrets.CODECOV_TOKEN without declaring it in workflow_call.
-    uses: tskit-dev/.github/.github/workflows/python-tests.yml@v17  # zizmor: ignore[secrets-inherit]
+    uses: tskit-dev/.github/.github/workflows/python-tests.yml@v19
     with:
       os: ${{ matrix.os }}
       python-version: ${{ matrix.python }}
       coverage-directory: tsinfer
       fix-lwt-symlink: "true"
-    secrets: inherit
+    secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     strategy:
       matrix:
         python: [ 3.11, 3.13 ]
