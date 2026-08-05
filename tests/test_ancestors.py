@@ -236,28 +236,29 @@ class AncestorBuilder:
             site_time = self.sites[site_index].time
             derived_count = self.sites[site_index].derived_count
 
-            for j, u in enumerate(sample_set):
-                if (
-                    disagree[u]
-                    and (g_l[u] != consensus)
-                    and (g_l[u] != tskit.MISSING_DATA)
-                ):
-                    sample_set[j] = -1
-
             if site_time > focal_time:
                 if ones + zeros == 0:
                     a[site_index] = tskit.MISSING_DATA
                 else:
                     a[site_index] = consensus
 
-            if (site_time > focal_time) or (derived_count > ones):
+            if ((site_time > focal_time) or (derived_count > ones)) and ones + zeros > 0:
+                for j, u in enumerate(sample_set):
+                    if (
+                        disagree[u]
+                        and (g_l[u] != consensus)
+                        and (g_l[u] != tskit.MISSING_DATA)
+                    ):
+                        sample_set[j] = -1
+
                 for u in sample_set:
                     if u != -1:
                         disagree[u] = (
                             g_l[u] != consensus and g_l[u] != tskit.MISSING_DATA
                         )
 
-            sample_set = sample_set[sample_set != -1]
+                sample_set = sample_set[sample_set != -1]
+
             if len(sample_set) <= min_sample_set_size:
                 break
 

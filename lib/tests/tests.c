@@ -219,6 +219,52 @@ test_ancestor_builder_multi_site(void)
 }
 
 static void
+test_ancestor_builder_stopping_condition(void)
+{
+    /*
+     * 8 samples, 5 sites. Site 0 is focal at time 2.0; the rest are older.
+     * The focal carriers are samples {0, 1}. Sample 1 disagrees with the
+     * consensus at sites 1 and 3. Site 2 is missing for both carriers and
+     * must preserve the disagreement. Removing sample 1 at site 3 halves
+     * the sample set, so extension stops before site 4.
+     */
+    int ret = 0;
+    ancestor_builder_t ab;
+    size_t num_samples = 8;
+    size_t max_sites = 5;
+    allele_t g0[8] = { 1, 1, 0, 0, 0, 0, 0, 0 };   /* focal */
+    allele_t g1[8] = { 1, 0, 1, 1, 0, 0, 0, 0 };   /* first disagreement */
+    allele_t g2[8] = { -1, -1, 1, 1, 1, 0, 0, 0 }; /* missing for focal carriers */
+    allele_t g3[8] = { 1, 0, 1, 1, 0, 0, 0, 0 };   /* second disagreement */
+    allele_t g4[8] = { 1, 1, 1, 1, 0, 0, 0, 0 };   /* beyond the stopping point */
+    allele_t ancestor[5];
+    tsk_id_t focal_sites[] = { 0 };
+    tsk_id_t start, end;
+
+    ret = ancestor_builder_alloc(&ab, num_samples, max_sites, -1, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = ancestor_builder_add_site(&ab, 2.0, g0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = ancestor_builder_add_site(&ab, 3.0, g1);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = ancestor_builder_add_site(&ab, 3.0, g2);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = ancestor_builder_add_site(&ab, 3.0, g3);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = ancestor_builder_add_site(&ab, 3.0, g4);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = ancestor_builder_finalise(&ab);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    ret = ancestor_builder_make_ancestor(&ab, 1, focal_sites, &start, &end, ancestor);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    CU_ASSERT_EQUAL(start, 0);
+    CU_ASSERT_EQUAL(end, 4);
+
+    ancestor_builder_free(&ab);
+}
+
+static void
 test_ancestor_builder_break_ancestor(void)
 {
     /*
@@ -1677,6 +1723,8 @@ main(int argc, char **argv)
         { "test_ancestor_builder_errors", test_ancestor_builder_errors },
         { "test_ancestor_builder_one_site", test_ancestor_builder_one_site },
         { "test_ancestor_builder_multi_site", test_ancestor_builder_multi_site },
+        { "test_ancestor_builder_stopping_condition",
+            test_ancestor_builder_stopping_condition },
         { "test_ancestor_builder_break_ancestor", test_ancestor_builder_break_ancestor },
         { "test_ancestor_builder_one_bit_encoding",
             test_ancestor_builder_one_bit_encoding },
