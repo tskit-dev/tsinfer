@@ -187,6 +187,7 @@ def infer_ancestors_cmd(
         num_threads=threads,
         write_threads=write_threads,
         genotype_encoding=_ENCODING_NAMES[genotype_encoding],
+        contig=cfg.contig,
     )
     logger.info("Ancestor inference complete")
 

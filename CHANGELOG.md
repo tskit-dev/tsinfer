@@ -4,6 +4,10 @@
 
 In development
 
+- Contig metadata is read from `variant_contig`, rather than assuming the first
+  contig in the header, and the top-level `contig` config option selects one
+  contig from multi-contig VCZ stores.
+
 ## [0.5.1] - 2026-03-05
 
 - Require tskit >= 1.0

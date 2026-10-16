@@ -509,9 +509,13 @@ def infer_ancestors(
     num_threads: int | None = None,
     write_threads: int | None = None,
     genotype_encoding: int | None = None,
+    contig: str | None = None,
 ) -> zarr.Group:
     """
     Build the ancestor VCZ store from one or more samples VCZ stores.
+
+    Only variants on the specified contig are used; if ``contig`` is None,
+    the variants in all sources must lie on a single contig.
 
     Two-pass approach:
       Pass 1 — Identify inference sites and compute times (chunk-aware).
@@ -550,10 +554,9 @@ def infer_ancestors(
         if source.targets is not None:
             logger.info("Targets filter: %s", source.targets)
 
-    view = vcz_mod.MultiSourceView(sources, ancestral_state)
+    view = vcz_mod.MultiSourceView(sources, ancestral_state, contig)
     total_haplotypes = view.num_haplotypes
-    source_stores = [view.source_store(j) for j in range(len(sources))]
-    contig = vcz_mod.resolve_contig(source_stores)
+    contig = view.contig
     logger.info("Contig: %s (length=%d)", contig.id, contig.length)
     logger.info(
         "Inference sites identified: %d (%d total haplotypes)",

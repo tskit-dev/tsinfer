@@ -225,6 +225,7 @@ class Config:
     Full pipeline configuration. Constructed directly or via Config.from_toml().
 
     sources: mapping from source name → Source
+    contig: the contig to infer; required when stores hold several contigs
     """
 
     sources: dict[str, Source]
@@ -234,6 +235,7 @@ class Config:
     individual_metadata: IndividualMetadataConfig | None = None
     post_process: PostProcessConfig | None = None
     augment_sites: AugmentSitesConfig | None = None
+    contig: str | None = None
 
     def __post_init__(self):
         if len(self.ancestors) == 0 and self.match.reference_ts is None:
@@ -250,6 +252,9 @@ class Config:
     def format(self) -> str:
         """Return the resolved config as a human-readable string."""
         lines = []
+        if self.contig is not None:
+            lines.append(f"contig = {self.contig}")
+            lines.append("")
         for name, src in self.sources.items():
             lines.append(f"[source.{name}]")
             lines.append(f"  path = {src.path}")
@@ -374,6 +379,7 @@ class Config:
 
 
 _KNOWN_TOP_LEVEL_KEYS = {
+    "contig",
     "source",
     "ancestral_state",
     "ancestors",
@@ -620,4 +626,5 @@ def _parse_config(raw: dict) -> Config:
         individual_metadata=_parse_individual_metadata(raw),
         post_process=_parse_post_process(raw),
         augment_sites=_parse_augment_sites(raw),
+        contig=raw.get("contig"),
     )
