@@ -280,18 +280,251 @@ class TestResolveFieldErrors:
 
 
 class TestConvenienceAccessors:
-    def test_sequence_length(self, sample_store):
-        assert vcz.sequence_length(sample_store) == 1000
-
     def test_num_contigs(self, sample_store):
         assert vcz.num_contigs(sample_store) == 1
 
-    def test_sequence_length_custom(self):
+
+def _contig_store(contig_ids, contig_lengths, contig_index, num_sites=2):
+    gt = np.zeros((num_sites, 1, 1), dtype=np.int8)
+    positions = np.arange(num_sites, dtype=np.int32) * 10 + 10
+    store = helpers.make_sample_vcz(
+        gt,
+        positions,
+        [["A", "T"]] * num_sites,
+        ["A"] * num_sites,
+        sequence_length=1000,
+    )
+    return helpers.set_contigs(store, contig_ids, contig_lengths, contig_index)
+
+
+class TestGetContig:
+    def test_single_contig(self, sample_store):
+        contig = vcz.get_contig(sample_store)
+        assert contig == vcz.Contig(id="1", length=1000)
+
+    def test_custom_length(self):
         gt = np.zeros((1, 1, 1), dtype=np.int8)
         store = helpers.make_sample_vcz(
             gt, [10], [["A", "T"]], ["A"], sequence_length=999_999
         )
-        assert vcz.sequence_length(store) == 999_999
+        assert vcz.get_contig(store).length == 999_999
+
+    @pytest.mark.parametrize("contig_index", [0, 1, 2])
+    def test_multi_contig_header(self, contig_index):
+        store = _contig_store(["chr1", "chr2", "chr3"], [3000, 2000, 1000], contig_index)
+        contig = vcz.get_contig(store)
+        assert contig.id == ["chr1", "chr2", "chr3"][contig_index]
+        assert contig.length == [3000, 2000, 1000][contig_index]
+
+    def test_no_contig_length(self):
+        store = _contig_store(["chr1", "chr2"], None, 1)
+        assert vcz.get_contig(store) == vcz.Contig(id="chr2", length=None)
+
+    def test_variants_on_multiple_contigs(self):
+        store = _contig_store(["chr1", "chr2"], [3000, 2000], 0)
+        store["variant_contig"][1] = 1
+        with pytest.raises(ValueError, match="multiple contigs"):
+            vcz.get_contig(store)
+
+    def test_no_variants(self):
+        store = _contig_store(["chr1", "chr2"], [3000, 2000], 1, num_sites=0)
+        assert vcz.get_contig(store) is None
+
+
+class TestResolveContig:
+    def test_single_store(self):
+        store = _contig_store(["chr1", "chr2"], [3000, 2000], 1)
+        assert vcz.resolve_contig([store]) == vcz.Contig(id="chr2", length=2000)
+
+    def test_agreeing_stores(self):
+        store1 = _contig_store(["chr1", "chr2"], [3000, 2000], 1)
+        store2 = _contig_store(["chr2"], [2000], 0)
+        contig = vcz.resolve_contig([store1, store2])
+        assert contig == vcz.Contig(id="chr2", length=2000)
+
+    @pytest.mark.parametrize("order", [1, -1])
+    def test_length_from_one_store(self, order):
+        store1 = _contig_store(["chr1", "chr2"], None, 1)
+        store2 = _contig_store(["chr1", "chr2"], [3000, 2000], 1)
+        stores = [store1, store2][::order]
+        assert vcz.resolve_contig(stores) == vcz.Contig(id="chr2", length=2000)
+
+    def test_empty_store_ignored(self):
+        store1 = _contig_store(["chr1"], [3000], 0, num_sites=0)
+        store2 = _contig_store(["chr1", "chr2"], [3000, 2000], 1)
+        contig = vcz.resolve_contig([store1, store2])
+        assert contig == vcz.Contig(id="chr2", length=2000)
+
+    def test_conflicting_lengths(self):
+        store1 = _contig_store(["chr2"], [2000], 0)
+        store2 = _contig_store(["chr2"], [2001], 0)
+        with pytest.warns(UserWarning, match="conflicting lengths"):
+            contig = vcz.resolve_contig([store1, store2])
+        assert contig == vcz.Contig(id="chr2", length=2001)
+
+    def test_conflicting_ids(self):
+        store1 = _contig_store(["chr20"], [2000], 0)
+        store2 = _contig_store(["20"], [2000], 0)
+        with pytest.raises(ValueError, match="different contigs"):
+            vcz.resolve_contig([store1, store2])
+
+    def test_no_lengths(self):
+        store1 = _contig_store(["chr2"], None, 0)
+        store2 = _contig_store(["chr2"], None, 0)
+        with pytest.raises(ValueError, match="must provide contig_length"):
+            vcz.resolve_contig([store1, store2])
+
+    def test_no_variants(self):
+        store = _contig_store(["chr1"], [3000], 0, num_sites=0)
+        with pytest.raises(ValueError, match="No variants"):
+            vcz.resolve_contig([store])
+
+
+def _small_contig_stores():
+    """Three single-contig stores, B and C sharing positions."""
+    stores = []
+    for genotypes, positions in [
+        ([[0, 1], [1, 0], [1, 1]], [10, 20, 30]),
+        ([[1, 0], [0, 1]], [10, 25]),
+        ([[0, 0], [1, 1]], [10, 25]),
+    ]:
+        gt = np.array(genotypes, dtype=np.int8)[:, :, np.newaxis]
+        num_sites = len(positions)
+        store = helpers.make_sample_vcz(
+            gt, positions, [["A", "T"]] * num_sites, ["A"] * num_sites, 1000
+        )
+        stores.append(store)
+    return stores
+
+
+class TestContigVariantRows:
+    @pytest.mark.parametrize(
+        ("contig_id", "rows"),
+        [("A", slice(0, 3)), ("B", slice(3, 5)), ("C", slice(5, 7))],
+    )
+    def test_contigs(self, contig_id, rows):
+        store = helpers.combine_contigs(_small_contig_stores(), ["A", "B", "C"], 2)
+        assert vcz.contig_variant_rows(store, contig_id) == rows
+
+    def test_contig_without_variants(self):
+        store = _contig_store(["chr1", "chr2"], [3000, 2000], 1)
+        assert vcz.contig_variant_rows(store, "chr1") == slice(0, 0)
+
+    def test_contig_not_in_header(self):
+        store = _contig_store(["chr1", "chr2"], [3000, 2000], 1)
+        with pytest.raises(ValueError, match="not declared"):
+            vcz.contig_variant_rows(store, "chr3")
+
+    def test_not_contiguous(self):
+        store = _contig_store(["chr1", "chr2"], [3000, 2000], 0, num_sites=3)
+        store["variant_contig"][1] = 1
+        with pytest.raises(ValueError, match="not contiguous"):
+            vcz.contig_variant_rows(store, "chr1")
+
+
+class TestContigExplicitId:
+    def test_get_contig(self):
+        store = helpers.combine_contigs(_small_contig_stores(), ["A", "B", "C"], 2)
+        store["contig_length"][:] = [1000, 2000, 3000]
+        assert vcz.get_contig(store, "B") == vcz.Contig(id="B", length=2000)
+
+    def test_get_contig_without_variants(self):
+        store = _contig_store(["chr1", "chr2"], [3000, 2000], 1)
+        assert vcz.get_contig(store, "chr1") == vcz.Contig(id="chr1", length=3000)
+
+    def test_get_contig_not_in_header(self):
+        store = _contig_store(["chr1"], [3000], 0)
+        with pytest.raises(ValueError, match="not declared"):
+            vcz.get_contig(store, "chr2")
+
+    def test_get_contig_multiple_without_id(self):
+        store = helpers.combine_contigs(_small_contig_stores(), ["A", "B", "C"], 2)
+        with pytest.raises(ValueError, match="contig option"):
+            vcz.get_contig(store)
+
+    def test_resolve_contig(self):
+        combined = helpers.combine_contigs(_small_contig_stores(), ["A", "B", "C"], 2)
+        single = _contig_store(["B"], [1000], 0)
+        contig = vcz.resolve_contig([combined, single], "B")
+        assert contig == vcz.Contig(id="B", length=1000)
+
+
+class TestMultiContigReaders:
+    """Reading one contig of a multi-contig store matches a single-contig store."""
+
+    @pytest.fixture
+    def stores(self):
+        singles = _small_contig_stores()
+        combined = helpers.combine_contigs(singles, ["A", "B", "C"], 2)
+        return singles, combined
+
+    def _view_output(self, store, contig_id=None, **source_kwargs):
+        source = config.Source(path=store, name="test", **source_kwargs)
+        anc_state = config.AncestralState(path=store, field="variant_ancestral_allele")
+        view = vcz.MultiSourceView(source, anc_state, contig_id)
+        variants = list(view.iter_genotypes())
+        return view.positions, variants
+
+    @pytest.mark.parametrize("index", [0, 1, 2])
+    def test_multi_source_view(self, stores, index):
+        singles, combined = stores
+        contig_id = ["A", "B", "C"][index]
+        positions, variants = self._view_output(combined, contig_id)
+        single_positions, single_variants = self._view_output(singles[index])
+        np.testing.assert_array_equal(positions, single_positions)
+        assert len(variants) == len(single_variants)
+        for var, single_var in zip(variants, single_variants):
+            assert var.position == single_var.position
+            assert var.alleles == single_var.alleles
+            np.testing.assert_array_equal(var.genotypes, single_var.genotypes)
+
+    def test_filter_on_other_contig(self, stores):
+        # C has the same positions as B, but the filter selects only C
+        _, combined = stores
+        _, variants = self._view_output(combined, "B", include='CHROM="C"')
+        assert len(variants) == 2
+        for var in variants:
+            assert np.all(var.genotypes == -1)
+
+    def test_filter_on_contig(self, stores):
+        singles, combined = stores
+        _, variants = self._view_output(combined, "B", include="POS>=20")
+        _, single_variants = self._view_output(singles[1])
+        np.testing.assert_array_equal(variants[0].genotypes, -1)
+        np.testing.assert_array_equal(
+            variants[1].genotypes, single_variants[1].genotypes
+        )
+
+    def _read_haplotypes(self, store, positions, contig_id=None):
+        source = config.Source(path=store, name="test")
+        ancestral_alleles = np.array(["A"] * len(positions))
+        schedule = [("test", "sample_0", 0), ("test", "sample_1", 0)]
+        reader = vcz.HaplotypeReader(
+            {"test": source},
+            positions,
+            ancestral_alleles,
+            schedule=schedule,
+            contig_id=contig_id,
+        )
+        haplotypes = []
+        for _, sample_id, _ in schedule:
+            haplotypes.append(reader._get_reader("test").read_haplotype(sample_id, 0))
+        reader.shutdown()
+        return np.array(haplotypes)
+
+    @pytest.mark.parametrize("index", [0, 1, 2])
+    def test_haplotype_reader(self, stores, index):
+        singles, combined = stores
+        positions = singles[index]["variant_position"][:]
+        contig_id = ["A", "B", "C"][index]
+        haplotypes = self._read_haplotypes(combined, positions, contig_id)
+        single_haplotypes = self._read_haplotypes(singles[index], positions)
+        np.testing.assert_array_equal(haplotypes, single_haplotypes)
+
+    def test_haplotype_reader_no_contig(self, stores):
+        _, combined = stores
+        with pytest.raises(ValueError, match="contig option"):
+            self._read_haplotypes(combined, np.array([10, 25]))
 
 
 # ---------------------------------------------------------------------------

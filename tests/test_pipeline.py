@@ -194,6 +194,87 @@ class TestMatch:
         assert out_ts.num_sites == 2
 
 
+class TestMatchContig:
+    def _sample_store(self):
+        sim_ts = _simulate(num_samples=6, random_seed=7)
+        return helpers.ts_to_sample_vcz(sim_ts)
+
+    def _infer(self, sample_store):
+        anc_cfg = config.AncestorsConfig(name="ancestors", path=None, sources=["test"])
+        return ancestors.infer_ancestors(
+            config.Source(path=sample_store, name="test"),
+            anc_cfg,
+            _anc_state(sample_store),
+        )
+
+    def test_sequence_length_from_variant_contig(self):
+        sample_store = self._sample_store()
+        helpers.set_contigs(sample_store, ["chr1", "chr2"], [900_000, 200_000], 1)
+        ancestor_store = self._infer(sample_store)
+        out_ts = pipeline.match(_make_config(sample_store, ancestor_store))
+        assert out_ts.sequence_length == 200_000
+
+    def test_sequence_length_from_ancestors(self):
+        # Sample store omits contig_length; the ancestor store supplies it
+        sample_store = self._sample_store()
+        helpers.set_contigs(sample_store, ["chr1", "chr2"], [900_000, 200_000], 1)
+        ancestor_store = self._infer(sample_store)
+        helpers.set_contigs(sample_store, ["chr1", "chr2"], None, 1)
+        out_ts = pipeline.match(_make_config(sample_store, ancestor_store))
+        assert out_ts.sequence_length == 200_000
+
+    def test_ancestor_sample_length_mismatch(self):
+        sample_store = self._sample_store()
+        ancestor_store = self._infer(sample_store)
+        helpers.set_contigs(sample_store, ["1"], [200_000], 0)
+        with pytest.warns(UserWarning, match="conflicting lengths"):
+            out_ts = pipeline.match(_make_config(sample_store, ancestor_store))
+        assert out_ts.sequence_length == 200_000
+
+
+class TestMultiContig:
+    """Inference on one contig of a multi-contig store matches a single-contig store."""
+
+    @pytest.fixture(scope="class")
+    def stores(self):
+        ts_a = _simulate(num_samples=6, sequence_length=100_000, random_seed=11)
+        ts_b = _simulate(num_samples=6, sequence_length=80_000, random_seed=12)
+        store_a = helpers.ts_to_sample_vcz(ts_a, contig_id="A")
+        store_b = helpers.ts_to_sample_vcz(ts_b, contig_id="B")
+        # C has the same positions as B but different genotypes
+        store_c = helpers.ts_to_sample_vcz(ts_b, contig_id="C")
+        store_c["call_genotype"][:] = store_b["call_genotype"][:][:, ::-1]
+        singles = [store_a, store_b, store_c]
+        combined = helpers.combine_contigs(singles, ["A", "B", "C"], 7)
+        return singles, combined
+
+    def _run(self, sample_store, contig=None):
+        cfg = _make_config_for_run(sample_store)
+        cfg.contig = contig
+        cfg.augment_sites = config.AugmentSitesConfig(sources=["test"])
+        return pipeline.run(cfg)
+
+    @pytest.mark.parametrize("index", [0, 1, 2])
+    def test_matches_single_contig(self, stores, index):
+        singles, combined = stores
+        contig_id = ["A", "B", "C"][index]
+        ts = self._run(combined, contig_id)
+        single_ts = self._run(singles[index])
+        assert ts.sequence_length == single_ts.sequence_length
+        assert ts.num_sites > 0
+        ts.tables.assert_equals(single_ts.tables, ignore_provenance=True)
+
+    def test_no_contig(self, stores):
+        _, combined = stores
+        with pytest.raises(ValueError, match="contig option"):
+            self._run(combined)
+
+    def test_unknown_contig(self, stores):
+        _, combined = stores
+        with pytest.raises(ValueError, match="not declared"):
+            self._run(combined, "D")
+
+
 # ---------------------------------------------------------------------------
 # TestPostProcess
 # ---------------------------------------------------------------------------

@@ -509,9 +509,13 @@ def infer_ancestors(
     num_threads: int | None = None,
     write_threads: int | None = None,
     genotype_encoding: int | None = None,
+    contig: str | None = None,
 ) -> zarr.Group:
     """
     Build the ancestor VCZ store from one or more samples VCZ stores.
+
+    Only variants on the specified contig are used; if ``contig`` is None,
+    the variants in all sources must lie on a single contig.
 
     Two-pass approach:
       Pass 1 — Identify inference sites and compute times (chunk-aware).
@@ -550,8 +554,10 @@ def infer_ancestors(
         if source.targets is not None:
             logger.info("Targets filter: %s", source.targets)
 
-    view = vcz_mod.MultiSourceView(sources, ancestral_state)
+    view = vcz_mod.MultiSourceView(sources, ancestral_state, contig)
     total_haplotypes = view.num_haplotypes
+    contig = view.contig
+    logger.info("Contig: %s (length=%d)", contig.id, contig.length)
     logger.info(
         "Inference sites identified: %d (%d total haplotypes)",
         view.num_sites,
@@ -599,9 +605,6 @@ def infer_ancestors(
     )
     num_inf = len(final_positions)
 
-    # Use first source's store for contig metadata
-    first_store = view.source_store(0)
-
     # Determine the write path: use a PID-suffixed temp path for atomicity
     if cfg.path is not None:
         final_path = pathlib.Path(cfg.path)
@@ -615,17 +618,14 @@ def infer_ancestors(
         store_path = None  # in-memory
 
     if num_inf == 0:
-        seq_len = vcz_mod.sequence_length(first_store)
         seq_intervals = compute_sequence_intervals(
-            final_positions, seq_len, cfg.max_gap_length
+            final_positions, contig.length, cfg.max_gap_length
         )
-        contig_id = str(first_store["contig_id"][0])
-        contig_length = int(first_store["contig_length"][0])
         result = vcz_mod.write_empty_ancestor_vcz(
             seq_intervals,
             store=store_path,
-            contig_id=contig_id,
-            contig_length=contig_length,
+            contig_id=contig.id,
+            contig_length=contig.length,
             compressor=compressor,
         )
         if tmp_path is not None:
@@ -634,9 +634,8 @@ def infer_ancestors(
         return result
 
     # --- 3. Compute sequence intervals ---
-    seq_len = vcz_mod.sequence_length(first_store)
     seq_intervals = compute_sequence_intervals(
-        final_positions, seq_len, cfg.max_gap_length
+        final_positions, contig.length, cfg.max_gap_length
     )
     logger.info(
         "Sequence intervals: %d (max_gap_length=%d)",
@@ -667,9 +666,6 @@ def infer_ancestors(
         )
     site_interval_idx = _assign_site_intervals(final_positions, seq_intervals)
 
-    contig_id = str(first_store["contig_id"][0])
-    contig_length = int(first_store["contig_length"][0])
-
     # Create zarr group with fixed arrays
     zarr_root = vcz_mod.setup_ancestor_zarr(
         num_inf,
@@ -680,8 +676,8 @@ def infer_ancestors(
         store=store_path,
         samples_chunk_size=cfg.samples_chunk_size,
         variants_chunk_size=cfg.variants_chunk_size,
-        contig_id=contig_id,
-        contig_length=contig_length,
+        contig_id=contig.id,
+        contig_length=contig.length,
         compressor=compressor,
     )
 

@@ -487,16 +487,12 @@ def match(
     site_alleles = np.asarray(anc_store["variant_allele"][:])
     seq_intervals = np.asarray(anc_store["sequence_intervals"][:], dtype=np.int32)
 
-    # Derive seq_len from first non-ancestor sample source (or seq_intervals)
-    ancestor_names = {anc.name for anc in cfg.ancestors}
-    seq_len = None
+    # All match sources (ancestors included) must agree on the contig
+    match_stores = []
     for source_name in cfg.match.sources:
-        if source_name not in ancestor_names:
-            source = cfg.sources[source_name]
-            seq_len = float(vcz_mod.sequence_length(vcz_mod.open_store(source.path)))
-            break
-    if seq_len is None:
-        seq_len = float(np.max(seq_intervals)) if len(seq_intervals) > 0 else 1.0
+        match_stores.append(vcz_mod.open_store(cfg.sources[source_name].path))
+    contig = vcz_mod.resolve_contig(match_stores, cfg.contig)
+    seq_len = float(contig.length)
 
     # 3. Group jobs and build read schedule
     groups_dict = collections.defaultdict(list)
@@ -524,6 +520,7 @@ def match(
         schedule=schedule,
         read_workers=read_workers,
         num_threads=num_threads,
+        contig_id=contig.id,
     )
     allele_mapper = reader.allele_mapper
 
@@ -743,6 +740,7 @@ def augment_sites(
     view = vcz_mod.MultiSourceView(
         source_configs,
         cfg.ancestral_state,
+        cfg.contig,
     )
 
     positions = view.positions_in_intervals(intervals)
@@ -850,6 +848,7 @@ def run(
         progress=progress,
         num_threads=num_threads,
         genotype_encoding=genotype_encoding,
+        contig=cfg.contig,
     )
 
     original_path = anc_cfg.path

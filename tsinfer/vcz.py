@@ -29,8 +29,14 @@ Low-level utilities for reading and writing VCZ (VCF Zarr) stores.
     Map a field specification (string, {path,field} dict, scalar, or None)
     to a numpy array.  Used to resolve per-source metadata like sample_time.
 
-``sequence_length``
-    Read the contig length from a VCZ store (``contig_length[0]``).
+``get_contig``
+    Return the contig that a VCZ store's variants lie on (via ``variant_contig``).
+
+``resolve_contig``
+    Return the single contig shared by several VCZ stores, checking consistency.
+
+``contig_variant_rows``
+    Return the slice of variant rows in a VCZ store that lie on a given contig.
 
 ``num_contigs``
     Return the number of contigs declared in a VCZ store.
@@ -342,7 +348,7 @@ def iter_genotypes(store, positions, ancestral_allele_index, sample_include=None
             i += 1
 
 
-def iter_raw_genotypes(store, positions, sample_include=None):
+def iter_raw_genotypes(store, positions, sample_include, variant_rows):
     """
     Yield ``(num_haplotypes,)`` int8 raw allele-index rows for the requested
     positions, one row per position in the order given.
@@ -356,10 +362,13 @@ def iter_raw_genotypes(store, positions, sample_include=None):
         VCZ store containing ``call_genotype`` and ``variant_position``.
     positions : array-like of int
         Genomic positions to retrieve (must be non-decreasing and present
-        in ``variant_position``).
+        in ``variant_position`` within ``variant_rows``).
     sample_include : array-like of bool or None
         Boolean mask (length ``num_samples``) where True means keep this
         sample.  ``None`` keeps all samples.
+    variant_rows : slice
+        The rows of the store (e.g. those on one contig) in which to look
+        up *positions*.
 
     Yields
     ------
@@ -371,8 +380,9 @@ def iter_raw_genotypes(store, positions, sample_include=None):
     if len(positions) == 0:
         return
 
-    all_positions = np.asarray(store["variant_position"][:], dtype=np.int32)
-    site_indices = np.searchsorted(all_positions, positions).astype(np.int64)
+    row_positions = np.asarray(store["variant_position"][variant_rows], dtype=np.int32)
+    local_indices = np.searchsorted(row_positions, positions)
+    site_indices = local_indices.astype(np.int64) + variant_rows.start
 
     if sample_include is not None:
         sample_include = np.asarray(sample_include, dtype=bool)
@@ -402,9 +412,107 @@ def iter_raw_genotypes(store, positions, sample_include=None):
             i += 1
 
 
-def sequence_length(store: zarr.Group) -> int:
-    """Return the sequence length (first contig length) from a VCZ store."""
-    return int(store["contig_length"][0])
+@dataclasses.dataclass
+class Contig:
+    """A contig named in a VCZ store's header."""
+
+    id: str
+    length: int | None  # None if the store has no contig_length array
+
+
+def _contig_index(store: zarr.Group, contig_id: str) -> int:
+    """Return the index of the specified contig in a VCZ store's header."""
+    header_ids = [str(x) for x in store["contig_id"][:].tolist()]
+    if contig_id not in header_ids:
+        raise ValueError(
+            f"Contig {contig_id!r} is not declared in the store's contig_id "
+            f"header: {header_ids}"
+        )
+    return header_ids.index(contig_id)
+
+
+def get_contig(store: zarr.Group, contig_id: str | None = None) -> Contig | None:
+    """
+    Return the specified contig from a VCZ store's header. If ``contig_id`` is
+    None, return the contig that the store's variants lie on, as indexed by
+    ``variant_contig``; this is None if the store has no variants, and a
+    ValueError is raised if the variants lie on more than one contig.
+    """
+    if contig_id is not None:
+        index = _contig_index(store, contig_id)
+    else:
+        variant_contig = store["variant_contig"][:]
+        contig_indexes = np.unique(variant_contig)
+        if len(contig_indexes) == 0:
+            return None
+        if len(contig_indexes) > 1:
+            contig_ids = store["contig_id"][:]
+            names = [str(contig_ids[j]) for j in contig_indexes]
+            raise ValueError(
+                f"Variants lie on multiple contigs {names}; set the top-level "
+                "contig option to choose which contig to infer."
+            )
+        index = int(contig_indexes[0])
+    length = None
+    if "contig_length" in store:
+        length = int(store["contig_length"][index])
+    return Contig(id=str(store["contig_id"][index]), length=length)
+
+
+def contig_variant_rows(store: zarr.Group, contig_id: str) -> slice:
+    """
+    Return the slice of variant rows in a VCZ store that lie on the specified
+    contig. Raises a ValueError if these rows are not contiguous.
+    """
+    index = _contig_index(store, contig_id)
+    variant_contig = store["variant_contig"][:]
+    rows = np.flatnonzero(variant_contig == index)
+    if len(rows) == 0:
+        return slice(0, 0)
+    start = int(rows[0])
+    stop = int(rows[-1]) + 1
+    if len(rows) != stop - start:
+        raise ValueError(
+            f"Variants on contig {contig_id!r} are not contiguous: the store "
+            "must be sorted by contig"
+        )
+    return slice(start, stop)
+
+
+def resolve_contig(stores, contig_id: str | None = None) -> Contig:
+    """
+    Return the single contig shared by all the specified VCZ stores. If
+    ``contig_id`` is None, this is the contig that the variants in all stores
+    lie on. Contig IDs must agree, and at least one store must declare the
+    contig length; if the declared lengths differ, a warning is issued and
+    the largest is used.
+    """
+    contigs = []
+    for store in stores:
+        contig = get_contig(store, contig_id)
+        if contig is not None:
+            contigs.append(contig)
+    if len(contigs) == 0:
+        raise ValueError("No variants found: cannot determine the contig")
+    contig_ids = sorted({contig.id for contig in contigs})
+    if len(contig_ids) > 1:
+        raise ValueError(
+            f"Sources have variants on different contigs: {contig_ids}. All "
+            "sources must refer to the same contig, with the same contig ID."
+        )
+    lengths = sorted({c.length for c in contigs if c.length is not None})
+    if len(lengths) == 0:
+        raise ValueError(
+            f"No source declares the length of contig {contig_ids[0]}: at "
+            "least one source must provide contig_length"
+        )
+    if len(lengths) > 1:
+        warnings.warn(
+            f"Sources declare conflicting lengths for contig {contig_ids[0]}: "
+            f"{lengths}; using the largest",
+            stacklevel=2,
+        )
+    return Contig(id=contig_ids[0], length=lengths[-1])
 
 
 def num_contigs(store: zarr.Group) -> int:
@@ -1703,6 +1811,9 @@ class VCZHaplotypeReader:
         Shared chunk cache instance.
     samples_selection : np.ndarray or None
         Optional subset of sample indices to use.
+    variant_rows : slice or None
+        The rows of the store (e.g. those on one contig) to align to the
+        reference positions.  ``None`` means all rows.
     """
 
     def __init__(
@@ -1714,9 +1825,12 @@ class VCZHaplotypeReader:
         source_name: str,
         cache: ScheduledCache,
         samples_selection: np.ndarray | None = None,
+        variant_rows: slice | None = None,
         _allele_mapper: AlleleMapper | None = None,
     ):
         self._store = open_store(store)
+        if variant_rows is None:
+            variant_rows = slice(0, self._store["variant_position"].shape[0])
         self._ref_positions = np.asarray(positions, dtype=np.int32)
         self._num_ref_sites = len(self._ref_positions)
         self._samples_selection = samples_selection
@@ -1739,8 +1853,11 @@ class VCZHaplotypeReader:
         self._ploidy = call_gt.shape[2]
         self._num_store_samples = call_gt.shape[1]
 
-        # Build position alignment map
-        src_positions = np.asarray(self._store["variant_position"][:], dtype=np.int32)
+        # Build position alignment map, in indexes local to variant_rows
+        src_positions = np.asarray(
+            self._store["variant_position"][variant_rows], dtype=np.int32
+        )
+        self._src_positions = src_positions
         src_pos_to_idx = {}
         for i, p in enumerate(src_positions.tolist()):
             src_pos_to_idx[p] = i
@@ -1768,7 +1885,7 @@ class VCZHaplotypeReader:
         }
 
         # Source allele strings (for encoding during load)
-        self._src_alleles = np.asarray(self._store["variant_allele"][:])
+        self._src_alleles = np.asarray(self._store["variant_allele"][variant_rows])
 
         self._ancestral_allele_index = np.full(num_src_sites, -1, dtype=np.int8)
         for i in range(num_src_sites):
@@ -1808,19 +1925,26 @@ class VCZHaplotypeReader:
             else call_gt.shape[0]
         )
 
-        # Precompute which variant chunks contain selected sites
+        # Precompute which variant chunks contain selected sites. Chunks
+        # are addressed by absolute store row; selections are local to
+        # variant_rows.
         vc_size = self._variant_chunk_size
-        n_vc = math.ceil(num_src_sites / vc_size) if num_src_sites > 0 else 0
-        self._needed_vc = []  # [(vc_idx, local_indices, out_rows), ...]
-        for vc_idx in range(n_vc):
+        rows_start = variant_rows.start
+        rows_stop = variant_rows.stop
+        first_vc = rows_start // vc_size
+        stop_vc = math.ceil(rows_stop / vc_size)
+        self._needed_vc = []  # [(vc_idx, block_indices, out_rows), ...]
+        for vc_idx in range(first_vc, stop_vc):
             vc_start = vc_idx * vc_size
-            vc_end = min(vc_start + vc_size, num_src_sites)
-            local_select = self._variant_select[vc_start:vc_end]
+            lo = max(vc_start, rows_start)
+            hi = min(vc_start + vc_size, rows_stop)
+            local_select = self._variant_select[lo - rows_start : hi - rows_start]
             if not np.any(local_select):
                 continue
-            local_indices = np.where(local_select)[0]
-            out_rows = self._src_var_to_selected_row[vc_start + local_indices]
-            self._needed_vc.append((vc_idx, local_indices, out_rows))
+            selected = np.where(local_select)[0]
+            block_indices = lo - vc_start + selected
+            out_rows = self._src_var_to_selected_row[lo - rows_start + selected]
+            self._needed_vc.append((vc_idx, block_indices, out_rows))
 
         # Allele remap table — populated by _precompute_allele_remap()
         self._allele_remap = None
@@ -1881,14 +2005,14 @@ class VCZHaplotypeReader:
         n_zarr = 0
         n_sites = 0
 
-        for vc_idx, local_indices, out_rows in self._needed_vc:
+        for vc_idx, block_indices, out_rows in self._needed_vc:
             t0 = _time.monotonic()
             block = np.asarray(call_gt.blocks[vc_idx, chunk_idx], dtype=np.int8)
             t_zarr += _time.monotonic() - t0
             n_zarr += 1
 
             t0 = _time.monotonic()
-            raw = block[local_indices]  # (n, chunk_samples, ploidy)
+            raw = block[block_indices]  # (n, chunk_samples, ploidy)
             n = len(out_rows)
             n_sites += n
 
@@ -2009,6 +2133,7 @@ class HaplotypeReader:
         schedule: list[tuple[str, str, int]] | None = None,
         read_workers: int | None = None,
         num_threads: int = 0,
+        contig_id: str | None = None,
     ):
         """
         Parameters
@@ -2032,6 +2157,9 @@ class HaplotypeReader:
         num_threads : int
             Number of matching threads (used to derive ``read_workers``
             default).
+        contig_id : str or None
+            Contig whose variants are read from each source.  If None, the
+            one contig that all the sources' variants lie on.
         """
         if read_workers is None:
             read_workers = max(1, num_threads // 2)
@@ -2040,6 +2168,10 @@ class HaplotypeReader:
         self._positions = np.asarray(positions, dtype=np.int32)
         self._ancestral_alleles = ancestral_alleles
         self._sources = sources
+        if contig_id is None:
+            stores = [open_store(source.path) for source in sources.values()]
+            contig_id = resolve_contig(stores).id
+        self._contig_id = contig_id
         max_bytes = cache_size_mb * 1024 * 1024
 
         # Eagerly create all source readers so we can validate sizes
@@ -2055,16 +2187,14 @@ class HaplotypeReader:
                 source_name=name,
                 cache=None,  # placeholder, set below
                 samples_selection=samples_selection,
+                variant_rows=contig_variant_rows(store, self._contig_id),
             )
             self._readers[name] = reader
 
         # Build fixed allele map from all sources via build_allele_mapper
         per_source_alleles = []
         for reader in self._readers.values():
-            src_positions = np.asarray(
-                reader._store["variant_position"][:], dtype=np.int32
-            )
-            per_source_alleles.append((src_positions, reader._src_alleles))
+            per_source_alleles.append((reader._src_positions, reader._src_alleles))
 
         self._allele_mapper = build_allele_mapper(
             self._positions, ancestral_alleles, per_source_alleles
@@ -2151,6 +2281,7 @@ class HaplotypeReader:
                 source_name=source_name,
                 cache=self._cache,
                 samples_selection=samples_selection,
+                variant_rows=contig_variant_rows(store, self._contig_id),
                 _allele_mapper=self._allele_mapper,
             )
             self._readers[source_name] = reader
@@ -2319,19 +2450,27 @@ class MultiSourceView:
     deferred to ``prepare(positions)``, which must be called before
     ``iter_genotypes``.  If ``iter_genotypes`` is called without a prior
     ``prepare``, it calls ``prepare`` automatically with all positions.
+
+    Only variants on a single contig are considered: ``contig_id`` if
+    specified, and otherwise the one contig that all variants lie on.
     """
 
     def __init__(
         self,
         sources,
         ancestral_state,
+        contig_id: str | None = None,
     ):
         if isinstance(sources, config.Source):
             sources = [sources]
 
         n_sources = len(sources)
         self._sources = sources
-        self._stores = []
+        self._stores = [open_store(source.path) for source in sources]
+        ann_store = open_store(ancestral_state.path)
+        self.contig = resolve_contig(self._stores + [ann_store], contig_id)
+        self._variant_rows = []
+        self._contig_indexes = []
         self._sample_includes = []
         self._ploidies = []
         self._num_haplotypes_per_source = []
@@ -2340,9 +2479,10 @@ class MultiSourceView:
         self._alleles_per_source = []
 
         # --- Per-source initialization ---
-        for source in sources:
-            store = open_store(source.path)
-            self._stores.append(store)
+        for source, store in zip(sources, self._stores):
+            rows = contig_variant_rows(store, self.contig.id)
+            self._variant_rows.append(rows)
+            self._contig_indexes.append(_contig_index(store, self.contig.id))
 
             samples_selection = resolve_samples_selection(store, source.samples)
             gt_shape = store["call_genotype"].shape
@@ -2359,19 +2499,21 @@ class MultiSourceView:
             raw_ids = store["sample_id"][:][samples_selection]
             self._sample_ids_per_source.append([str(x) for x in raw_ids.tolist()])
 
-            # Positions and alleles (bulk reads)
-            src_positions = np.asarray(store["variant_position"][:], dtype=np.int32)
-            src_alleles = np.asarray(store["variant_allele"][:])
+            # Positions and alleles on the contig (bulk reads)
+            src_positions = np.asarray(store["variant_position"][rows], dtype=np.int32)
+            src_alleles = np.asarray(store["variant_allele"][rows])
             self._positions_per_source.append(src_positions)
             self._alleles_per_source.append(src_alleles)
 
         # --- Ancestral state ---
-        ann_store = open_store(ancestral_state.path)
-        ann_positions = np.asarray(ann_store["variant_position"][:], dtype=np.int32)
+        ann_rows = contig_variant_rows(ann_store, self.contig.id)
+        ann_positions = np.asarray(
+            ann_store["variant_position"][ann_rows], dtype=np.int32
+        )
         if ancestral_state.is_reference:
-            ann_values = np.asarray(ann_store["variant_allele"][:, 0])
+            ann_values = np.asarray(ann_store["variant_allele"][ann_rows, 0])
         else:
-            ann_values = np.asarray(ann_store[ancestral_state.field][:])
+            ann_values = np.asarray(ann_store[ancestral_state.field][ann_rows])
 
         # --- Unified site set (all numpy) ---
         valid_per_source = []
@@ -2422,15 +2564,17 @@ class MultiSourceView:
             return self._filtered_positions_cache[src_idx]
         source = self._sources[src_idx]
         filtered = set()
+        contig_index = self._contig_indexes[src_idx]
         for var in iter_variants(
             self._stores[src_idx],
-            fields=["variant_position"],
+            fields=["variant_position", "variant_contig"],
             include=source.include,
             exclude=source.exclude,
             regions=source.regions,
             targets=source.targets,
         ):
-            filtered.add(int(var["variant_position"]))
+            if var["variant_contig"] == contig_index:
+                filtered.add(int(var["variant_position"]))
         self._filtered_positions_cache[src_idx] = filtered
         return filtered
 
@@ -2672,6 +2816,7 @@ class MultiSourceView:
                         self._stores[src_idx],
                         src_positions,
                         self._sample_includes[src_idx],
+                        self._variant_rows[src_idx],
                     )
                 )
             else:
