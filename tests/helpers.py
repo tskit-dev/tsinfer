@@ -378,3 +378,30 @@ def ts_to_sample_vcz(
         contig_id=contig_id,
         sample_ids=sample_ids,
     )
+
+
+def biallelic_sites_vcz(
+    store: zarr.Group, samples: np.ndarray | None = None
+) -> zarr.Group:
+    """
+    Return a copy of a sample VCZ store, restricted to the specified sample
+    indexes (default: all), keeping only the sites where every genotype is 0,
+    1 or missing. With allele 0 as the ancestral allele (as produced by
+    ``ts_to_sample_vcz``), the result is valid input for ancestor generation.
+    """
+    genotypes = store["call_genotype"][:]
+    sample_ids = store["sample_id"][:]
+    if samples is not None:
+        genotypes = genotypes[:, samples]
+        sample_ids = sample_ids[samples]
+    num_sites = genotypes.shape[0]
+    keep = np.all(genotypes.reshape(num_sites, -1) <= 1, axis=1)
+    return make_sample_vcz(
+        genotypes=genotypes[keep],
+        positions=store["variant_position"][:][keep],
+        alleles=store["variant_allele"][:][keep],
+        ancestral_state=store["variant_ancestral_allele"][:][keep],
+        sequence_length=int(store["contig_length"][0]),
+        contig_id=str(store["contig_id"][0]),
+        sample_ids=sample_ids,
+    )

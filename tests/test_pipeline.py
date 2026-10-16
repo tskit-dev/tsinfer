@@ -51,7 +51,7 @@ def _simulate(
     ploidy=1,
     random_seed=42,
 ):
-    """Simulate a tree sequence with msprime and return it."""
+    """Simulate a tree sequence with biallelic mutations and return it."""
     ts = msprime.sim_ancestry(
         samples=num_samples,
         sequence_length=sequence_length,
@@ -60,7 +60,12 @@ def _simulate(
         population_size=10_000,
         random_seed=random_seed,
     )
-    ts = msprime.sim_mutations(ts, rate=mutation_rate, random_seed=random_seed)
+    ts = msprime.sim_mutations(
+        ts,
+        rate=mutation_rate,
+        model=msprime.BinaryMutationModel(),
+        random_seed=random_seed,
+    )
     return ts
 
 
