@@ -491,7 +491,7 @@ def match(
     match_stores = []
     for source_name in cfg.match.sources:
         match_stores.append(vcz_mod.open_store(cfg.sources[source_name].path))
-    contig = vcz_mod.resolve_contig(match_stores)
+    contig = vcz_mod.resolve_contig(match_stores, cfg.contig)
     seq_len = float(contig.length)
 
     # 3. Group jobs and build read schedule
@@ -520,6 +520,7 @@ def match(
         schedule=schedule,
         read_workers=read_workers,
         num_threads=num_threads,
+        contig_id=contig.id,
     )
     allele_mapper = reader.allele_mapper
 
@@ -739,6 +740,7 @@ def augment_sites(
     view = vcz_mod.MultiSourceView(
         source_configs,
         cfg.ancestral_state,
+        cfg.contig,
     )
 
     positions = view.positions_in_intervals(intervals)
@@ -846,6 +848,7 @@ def run(
         progress=progress,
         num_threads=num_threads,
         genotype_encoding=genotype_encoding,
+        contig=cfg.contig,
     )
 
     original_path = anc_cfg.path

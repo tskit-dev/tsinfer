@@ -1041,8 +1041,9 @@ class TestInferAncestorsFormat:
             config.Source(path=store1, name="a"),
             config.Source(path=store2, name="b"),
         ]
-        with pytest.raises(ValueError, match="conflicting lengths"):
-            ancestors.infer_ancestors(sources, _cfg(), _anc_state(store1))
+        with pytest.warns(UserWarning, match="conflicting lengths"):
+            anc = ancestors.infer_ancestors(sources, _cfg(), _anc_state(store1))
+        assert int(anc["contig_length"][0]) == 6000
 
     def test_contig_arrays_present_empty(self):
         # All sites are fixed → zero inference sites → empty ancestor VCZ
