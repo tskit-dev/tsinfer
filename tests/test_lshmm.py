@@ -75,7 +75,9 @@ class MatcherIndexes:
     The memory that can be shared between AncestorMatcher instances.
     """
 
-    def __init__(self, in_tables, *, vestigial_root=True, num_alleles=None):
+    def __init__(
+        self, in_tables, *, vestigial_root=True, alleles=None, num_alleles=None
+    ):
         ts = in_tables.tree_sequence()
         if vestigial_root:
             ts = arg_ops.add_vestigial_root(ts)
@@ -93,6 +95,16 @@ class MatcherIndexes:
             tables.edges, tables.indexes.edge_removal_order
         )
 
+        if alleles is not None:
+            allele_index = {allele: j for j, allele in enumerate(alleles)}
+            ancestral_state = [allele_index[s.ancestral_state] for s in tables.sites]
+            derived_state = [allele_index[m.derived_state] for m in tables.mutations]
+            if num_alleles is None:
+                num_alleles = np.full(self.num_sites, len(alleles))
+        else:
+            ancestral_state = np.zeros(self.num_sites, dtype=int)
+            derived_state = np.ones(len(tables.mutations), dtype=int)
+        self.ancestral_state = np.asarray(ancestral_state, dtype=int)
         if num_alleles is not None:
             self.num_alleles = np.asarray(num_alleles, dtype=int)
         else:
@@ -100,14 +112,11 @@ class MatcherIndexes:
         self.sites_position = np.zeros(ts.num_sites + 1, dtype=np.uint32)
         self.sites_position[:-1] = tables.sites.position
         self.sites_position[-1] = tables.sequence_length
+        # Mutations are in tskit order, so a child mutation on the same node
+        # as its parent comes later and takes precedence.
         self.mutations = collections.defaultdict(list)
-        last_site = -1
-        for mutation in tables.mutations:
-            if last_site == mutation.site:
-                raise ValueError("Only single mutations supported for now")
-            # FIXME - should be allele index
-            self.mutations[mutation.site].append((mutation.node, 1))
-            last_site = mutation.site
+        for mutation, state in zip(tables.mutations, derived_state):
+            self.mutations[mutation.site].append((mutation.node, state))
 
 
 COMPRESSED = -1
@@ -174,8 +183,7 @@ class AncestorMatcher:
         Sets the allelic state array to reflect the mutations at this site.
         """
         # We know that 0 is always a root.
-        # FIXME assuming for now that the ancestral state is always zero.
-        self.allelic_state[0] = 0
+        self.allelic_state[0] = self.matcher_indexes.ancestral_state[site]
         for node, state in self.matcher_indexes.mutations[site]:
             self.allelic_state[node] = state
 
@@ -639,13 +647,15 @@ def run_match_tsinfer(ts, h):
     return match_py
 
 
-def run_match(ts, h):
+def run_match(ts, h, *, alleles=None, recombination=None, mismatch=None):
     h = np.array(h).astype(np.int8)
     assert len(h) == ts.num_sites
-    recombination = np.zeros(ts.num_sites) + 1e-9
-    mismatch = np.zeros(ts.num_sites)
+    if recombination is None:
+        recombination = np.zeros(ts.num_sites) + 1e-9
+    if mismatch is None:
+        mismatch = np.zeros(ts.num_sites)
     precision = 22
-    matcher_indexes = MatcherIndexes(ts.tables)
+    matcher_indexes = MatcherIndexes(ts.tables, alleles=alleles)
     matcher = AncestorMatcher(
         matcher_indexes,
         recombination=recombination,
@@ -655,7 +665,7 @@ def run_match(ts, h):
     match_py = matcher.find_path(h)
 
     if ts.num_sites > 0:
-        mi = matching.MatcherIndexes(ts)
+        mi = matching.MatcherIndexes(ts, alleles=alleles)
         am = matching.AncestorMatcher(mi, recombination, mismatch)
         match_out = np.zeros(ts.num_sites, dtype=np.int8)
         non_missing = np.where(h >= 0)[0]
@@ -936,6 +946,182 @@ class TestSimulationExamples:
         assert ts.num_trees > 1
         ts = add_unique_sample_mutations(ts)
         self.check_switch_all_samples(ts)
+
+
+ACGT = ("A", "C", "G", "T")
+
+
+def multiallelic_example_ts():
+    # 2.00┊    6    ┊
+    #     ┊  ┏━┻━┓  ┊
+    # 1.00┊  4   5  ┊
+    #     ┊ ┏┻┓ ┏┻┓ ┊
+    # 0.00┊ 0 1 2 3 ┊
+    #     0         8
+    tables = tskit.Tree.generate_balanced(4, span=8).tree_sequence.dump_tables()
+    # Site 0: ancestral G, recurrent mutations to T on 0 and 3
+    site = tables.sites.add_row(position=1, ancestral_state="G")
+    tables.mutations.add_row(site=site, node=0, derived_state="T")
+    tables.mutations.add_row(site=site, node=3, derived_state="T")
+    # Site 1: ancestral A, C on 4 then back mutation to A on 1
+    site = tables.sites.add_row(position=3, ancestral_state="A")
+    m = tables.mutations.add_row(site=site, node=4, derived_state="C", time=1.5)
+    tables.mutations.add_row(site=site, node=1, derived_state="A", parent=m, time=0.5)
+    # Site 2: ancestral T, three different derived states
+    site = tables.sites.add_row(position=5, ancestral_state="T")
+    tables.mutations.add_row(site=site, node=0, derived_state="A")
+    tables.mutations.add_row(site=site, node=2, derived_state="C")
+    tables.mutations.add_row(site=site, node=3, derived_state="G")
+    # Site 3: ancestral C, two stacked mutations on the same node
+    site = tables.sites.add_row(position=7, ancestral_state="C")
+    m = tables.mutations.add_row(site=site, node=2, derived_state="A", time=0.8)
+    tables.mutations.add_row(site=site, node=2, derived_state="G", parent=m, time=0.2)
+    tables.sort()
+    tables.build_index()
+    tables.compute_mutation_parents()
+    return tables.tree_sequence()
+
+
+class TestMultipleMutationsPerSite:
+    def test_example_genotypes(self):
+        ts = multiallelic_example_ts()
+        H = ts.genotype_matrix(alleles=ACGT).T
+        np.testing.assert_array_equal(
+            H,
+            [
+                [3, 1, 0, 1],  # T C A C
+                [2, 0, 3, 1],  # G A T C
+                [2, 0, 1, 2],  # G A C G
+                [3, 0, 2, 1],  # T A G C
+            ],
+        )
+
+    @pytest.mark.parametrize("j", [0, 1, 2, 3])
+    def test_example_exact_match(self, j):
+        ts = multiallelic_example_ts()
+        h = ts.genotype_matrix(alleles=ACGT)[:, j]
+        m = run_match(ts, h, alleles=ACGT)
+        np.testing.assert_array_equal(h, m.matched_haplotype)
+        assert list(m.path.left) == [0]
+        assert list(m.path.right) == [ts.sequence_length]
+        # Sample 1 has the same haplotype as nodes 5 and 6
+        expected = (1, 5, 6) if j == 1 else (j,)
+        assert len(m.path) == 1
+        assert m.path.parent[0] in expected
+
+    def test_example_ancestral_haplotype(self):
+        ts = multiallelic_example_ts()
+        h = [2, 0, 3, 1]  # G A T C: the root haplotype
+        m = run_match(ts, h, alleles=ACGT)
+        np.testing.assert_array_equal(h, m.matched_haplotype)
+        # Sample 1, node 5 and the root 6 all carry this haplotype.
+        assert len(m.path) == 1
+        assert m.path.parent[0] in (1, 5, 6)
+
+    def test_example_recombinant(self):
+        ts = multiallelic_example_ts()
+        H = ts.genotype_matrix(alleles=ACGT).T
+        h = np.concatenate([H[0][:2], H[3][2:]])
+        m = run_match(ts, h, alleles=ACGT)
+        np.testing.assert_array_equal(h, m.matched_haplotype)
+        assert list(m.path.parent) == [0, 3]
+
+    def test_example_mismatch(self):
+        ts = multiallelic_example_ts()
+        h = [3, 1, 0, 0]  # sample 0 with mismatch at last site
+        m = run_match(
+            ts,
+            h,
+            alleles=ACGT,
+            recombination=np.full(ts.num_sites, 1e-6),
+            mismatch=np.full(ts.num_sites, 1e-3),
+        )
+        assert list(m.path.parent) == [0]
+        np.testing.assert_array_equal(m.matched_haplotype, [3, 1, 0, 1])
+
+    def test_binary_default_unchanged_with_alleles(self):
+        ts = TestSingleBalancedTreeExample.ts()
+        h = np.array([1, 0, 0, 0])
+        m1 = run_match(ts, h)
+        m2 = run_match(ts, h, alleles=("0", "1"))
+        m1.assert_equals(m2)
+
+    @staticmethod
+    def simulate(n, seed):
+        ts = msprime.sim_ancestry(
+            n,
+            ploidy=1,
+            sequence_length=50,
+            recombination_rate=0.01,
+            random_seed=seed,
+        )
+        ts = msprime.sim_mutations(ts, rate=0.1, model=msprime.JC69(), random_seed=seed)
+        assert np.any(np.bincount(ts.mutations_site) > 1)
+        return ts
+
+    @pytest.mark.parametrize("seed", [1, 2, 3])
+    def test_simulated_exact_matches(self, seed):
+        ts = self.simulate(8, seed)
+        H = ts.genotype_matrix(alleles=ACGT).T
+        for h in H:
+            m = run_match(ts, h, alleles=ACGT)
+            np.testing.assert_array_equal(h, m.matched_haplotype)
+
+    @pytest.mark.parametrize("seed", [1, 2, 3])
+    def test_simulated_random_haplotypes(self, seed):
+        ts = self.simulate(8, seed)
+        rng = np.random.default_rng(seed)
+        for _ in range(5):
+            h = rng.integers(0, 4, size=ts.num_sites)
+            run_match(
+                ts,
+                h,
+                alleles=ACGT,
+                recombination=np.full(ts.num_sites, 1e-2),
+                mismatch=np.full(ts.num_sites, 1e-2),
+            )
+
+    @pytest.mark.parametrize("seed", [1, 2])
+    def test_simulated_recombinants(self, seed):
+        ts = self.simulate(8, seed)
+        H = ts.genotype_matrix(alleles=ACGT).T
+        k = ts.num_sites // 2
+        h = np.concatenate([H[0][:k], H[1][k:]])
+        m = run_match(ts, h, alleles=ACGT)
+        np.testing.assert_array_equal(h, m.matched_haplotype)
+
+
+class TestEncodeAlleles:
+    def test_example(self):
+        ts = multiallelic_example_ts()
+        ancestral_state, derived_state = matching.encode_alleles(ts, ACGT)
+        assert ancestral_state.dtype == np.int8
+        assert derived_state.dtype == np.int8
+        np.testing.assert_array_equal(ancestral_state, [2, 0, 3, 1])
+        np.testing.assert_array_equal(derived_state, [3, 3, 1, 0, 0, 1, 2, 0, 2])
+
+    def test_too_many_alleles(self):
+        ts = multiallelic_example_ts()
+        alleles = [str(j) for j in range(128)]
+        with pytest.raises(ValueError, match="Too many alleles"):
+            matching.encode_alleles(ts, alleles)
+
+    def test_duplicate_alleles(self):
+        ts = multiallelic_example_ts()
+        with pytest.raises(ValueError, match="unique"):
+            matching.encode_alleles(ts, ["A", "C", "G", "T", "A"])
+
+    def test_unknown_ancestral_state(self):
+        ts = multiallelic_example_ts()
+        with pytest.raises(ValueError, match="Unknown ancestral state: 'G'"):
+            matching.encode_alleles(ts, ["A", "C", "T"])
+
+    def test_unknown_derived_state(self):
+        tables = multiallelic_example_ts().dump_tables()
+        tables.mutations.clear()
+        tables.mutations.add_row(site=0, node=0, derived_state="X")
+        with pytest.raises(ValueError, match="Unknown derived state: 'X'"):
+            matching.encode_alleles(tables.tree_sequence(), ACGT)
 
 
 # ---------------------------------------------------------------------------

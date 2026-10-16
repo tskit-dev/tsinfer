@@ -321,6 +321,49 @@ class TestMatcherIndexes:
         mi = _tsinfer.MatcherIndexes(ll_tables, num_alleles=num_alleles)
         assert mi is not None
 
+    def test_allele_encoding(self):
+        ts, _, _ = make_matcher_indexes_and_matcher()
+        ll_tables = _tsinfer.LightweightTableCollection(ts.sequence_length)
+        ll_tables.fromdict(ts.dump_tables().asdict())
+        mi = _tsinfer.MatcherIndexes(
+            ll_tables,
+            num_alleles=np.full(ts.num_sites, 4, dtype=np.uint64),
+            ancestral_state=np.zeros(ts.num_sites, dtype=np.int8),
+            derived_state=np.full(ts.num_mutations, 3, dtype=np.int8),
+        )
+        assert mi is not None
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"num_alleles": np.full(3, 2, dtype=np.uint64)},
+            {"ancestral_state": np.zeros(3, dtype=np.int8)},
+            {"derived_state": np.zeros(3, dtype=np.int8)},
+        ],
+    )
+    def test_allele_encoding_bad_length(self, kwargs):
+        ts, _, _ = make_matcher_indexes_and_matcher()
+        ll_tables = _tsinfer.LightweightTableCollection(ts.sequence_length)
+        ll_tables.fromdict(ts.dump_tables().asdict())
+        with pytest.raises(ValueError):
+            _tsinfer.MatcherIndexes(ll_tables, **kwargs)
+
+    @pytest.mark.parametrize(
+        ("kwargs", "match"),
+        [
+            ({"ancestral_state": [2]}, "Ancestral state"),
+            ({"ancestral_state": [-1]}, "Ancestral state"),
+            ({"derived_state": [2]}, "derived state"),
+            ({"derived_state": [-1]}, "derived state"),
+        ],
+    )
+    def test_allele_encoding_bad_state(self, kwargs, match):
+        ts, _, _ = make_matcher_indexes_and_matcher()
+        ll_tables = _tsinfer.LightweightTableCollection(ts.sequence_length)
+        ll_tables.fromdict(ts.dump_tables().asdict())
+        with pytest.raises(_tsinfer.LibraryError, match=match):
+            _tsinfer.MatcherIndexes(ll_tables, **kwargs)
+
     def test_print_state(self, tmpdir):
         ts = tskit.Tree.generate_balanced(4).tree_sequence
         ts = arg_ops.add_vestigial_root(ts)
