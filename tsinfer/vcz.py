@@ -29,8 +29,11 @@ Low-level utilities for reading and writing VCZ (VCF Zarr) stores.
     Map a field specification (string, {path,field} dict, scalar, or None)
     to a numpy array.  Used to resolve per-source metadata like sample_time.
 
-``sequence_length``
-    Read the contig length from a VCZ store (``contig_length[0]``).
+``get_contig``
+    Return the contig that a VCZ store's variants lie on (via ``variant_contig``).
+
+``resolve_contig``
+    Return the single contig shared by several VCZ stores, checking consistency.
 
 ``num_contigs``
     Return the number of contigs declared in a VCZ store.
@@ -402,9 +405,70 @@ def iter_raw_genotypes(store, positions, sample_include=None):
             i += 1
 
 
-def sequence_length(store: zarr.Group) -> int:
-    """Return the sequence length (first contig length) from a VCZ store."""
-    return int(store["contig_length"][0])
+@dataclasses.dataclass
+class Contig:
+    """A contig named in a VCZ store's header."""
+
+    id: str
+    length: int | None  # None if the store has no contig_length array
+
+
+def get_contig(store: zarr.Group) -> Contig | None:
+    """
+    Return the contig that the variants in a VCZ store lie on, as indexed by
+    ``variant_contig``. Returns None if the store has no variants. Raises a
+    ValueError if the variants lie on more than one contig.
+    """
+    variant_contig = store["variant_contig"][:]
+    contig_indexes = np.unique(variant_contig)
+    if len(contig_indexes) == 0:
+        return None
+    contig_ids = store["contig_id"][:]
+    if len(contig_indexes) > 1:
+        names = [str(contig_ids[j]) for j in contig_indexes]
+        raise ValueError(
+            f"Variants lie on multiple contigs {names}; inference requires "
+            "the variants in each source to be on a single contig. Use the "
+            "source's regions or targets filters to select one, or split "
+            "the store by contig."
+        )
+    index = int(contig_indexes[0])
+    length = None
+    if "contig_length" in store:
+        length = int(store["contig_length"][index])
+    return Contig(id=str(contig_ids[index]), length=length)
+
+
+def resolve_contig(stores) -> Contig:
+    """
+    Return the single contig that the variants in all the specified VCZ stores
+    lie on. Contig IDs must agree, and the declared contig lengths must agree
+    where present; at least one store must declare the length.
+    """
+    contigs = []
+    for store in stores:
+        contig = get_contig(store)
+        if contig is not None:
+            contigs.append(contig)
+    if len(contigs) == 0:
+        raise ValueError("No variants found: cannot determine the contig")
+    contig_ids = sorted({contig.id for contig in contigs})
+    if len(contig_ids) > 1:
+        raise ValueError(
+            f"Sources have variants on different contigs: {contig_ids}. All "
+            "sources must refer to the same contig, with the same contig ID."
+        )
+    lengths = sorted({c.length for c in contigs if c.length is not None})
+    if len(lengths) == 0:
+        raise ValueError(
+            f"No source declares the length of contig {contig_ids[0]}: at "
+            "least one source must provide contig_length"
+        )
+    if len(lengths) > 1:
+        raise ValueError(
+            f"Sources declare conflicting lengths for contig {contig_ids[0]}: {lengths}"
+        )
+    return Contig(id=contig_ids[0], length=lengths[0])
 
 
 def num_contigs(store: zarr.Group) -> int:

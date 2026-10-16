@@ -263,6 +263,30 @@ def make_ancestor_vcz(
     return root
 
 
+def set_contigs(
+    root: zarr.Group,
+    contig_ids: list[str],
+    contig_lengths: list[int] | None,
+    contig_index: int,
+) -> zarr.Group:
+    """
+    Replace the contig header of a VCZ store and place all its variants on
+    ``contig_ids[contig_index]``. If ``contig_lengths`` is None the
+    ``contig_length`` array is removed. Returns the modified store.
+    """
+    num_sites = root["variant_position"].shape[0]
+    for name in ["contig_id", "contig_length", "variant_contig"]:
+        if name in root:
+            del root[name]
+    _str_array(root, "contig_id", np.array(contig_ids), ["contigs"])
+    if contig_lengths is not None:
+        lengths = np.array(contig_lengths, dtype=np.int64)
+        _arr(root, "contig_length", lengths, ["contigs"])
+    variant_contig = np.full(num_sites, contig_index, dtype=np.int8)
+    _arr(root, "variant_contig", variant_contig, ["variants"])
+    return root
+
+
 def vcz_to_vcf(root: zarr.Group, *, no_version: bool = True) -> str:
     """
     Convert an in-memory VCZ group to VCF text using vcztools internals.

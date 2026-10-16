@@ -194,6 +194,43 @@ class TestMatch:
         assert out_ts.num_sites == 2
 
 
+class TestMatchContig:
+    def _sample_store(self):
+        sim_ts = _simulate(num_samples=6, random_seed=7)
+        return helpers.ts_to_sample_vcz(sim_ts)
+
+    def _infer(self, sample_store):
+        anc_cfg = config.AncestorsConfig(name="ancestors", path=None, sources=["test"])
+        return ancestors.infer_ancestors(
+            config.Source(path=sample_store, name="test"),
+            anc_cfg,
+            _anc_state(sample_store),
+        )
+
+    def test_sequence_length_from_variant_contig(self):
+        sample_store = self._sample_store()
+        helpers.set_contigs(sample_store, ["chr1", "chr2"], [900_000, 200_000], 1)
+        ancestor_store = self._infer(sample_store)
+        out_ts = pipeline.match(_make_config(sample_store, ancestor_store))
+        assert out_ts.sequence_length == 200_000
+
+    def test_sequence_length_from_ancestors(self):
+        # Sample store omits contig_length; the ancestor store supplies it
+        sample_store = self._sample_store()
+        helpers.set_contigs(sample_store, ["chr1", "chr2"], [900_000, 200_000], 1)
+        ancestor_store = self._infer(sample_store)
+        helpers.set_contigs(sample_store, ["chr1", "chr2"], None, 1)
+        out_ts = pipeline.match(_make_config(sample_store, ancestor_store))
+        assert out_ts.sequence_length == 200_000
+
+    def test_ancestor_sample_length_mismatch(self):
+        sample_store = self._sample_store()
+        ancestor_store = self._infer(sample_store)
+        helpers.set_contigs(sample_store, ["1"], [200_000], 0)
+        with pytest.raises(ValueError, match="conflicting lengths"):
+            pipeline.match(_make_config(sample_store, ancestor_store))
+
+
 # ---------------------------------------------------------------------------
 # TestPostProcess
 # ---------------------------------------------------------------------------

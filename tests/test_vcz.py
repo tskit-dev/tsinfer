@@ -280,18 +280,103 @@ class TestResolveFieldErrors:
 
 
 class TestConvenienceAccessors:
-    def test_sequence_length(self, sample_store):
-        assert vcz.sequence_length(sample_store) == 1000
-
     def test_num_contigs(self, sample_store):
         assert vcz.num_contigs(sample_store) == 1
 
-    def test_sequence_length_custom(self):
+
+def _contig_store(contig_ids, contig_lengths, contig_index, num_sites=2):
+    gt = np.zeros((num_sites, 1, 1), dtype=np.int8)
+    positions = np.arange(num_sites, dtype=np.int32) * 10 + 10
+    store = helpers.make_sample_vcz(
+        gt,
+        positions,
+        [["A", "T"]] * num_sites,
+        ["A"] * num_sites,
+        sequence_length=1000,
+    )
+    return helpers.set_contigs(store, contig_ids, contig_lengths, contig_index)
+
+
+class TestGetContig:
+    def test_single_contig(self, sample_store):
+        contig = vcz.get_contig(sample_store)
+        assert contig == vcz.Contig(id="1", length=1000)
+
+    def test_custom_length(self):
         gt = np.zeros((1, 1, 1), dtype=np.int8)
         store = helpers.make_sample_vcz(
             gt, [10], [["A", "T"]], ["A"], sequence_length=999_999
         )
-        assert vcz.sequence_length(store) == 999_999
+        assert vcz.get_contig(store).length == 999_999
+
+    @pytest.mark.parametrize("contig_index", [0, 1, 2])
+    def test_multi_contig_header(self, contig_index):
+        store = _contig_store(["chr1", "chr2", "chr3"], [3000, 2000, 1000], contig_index)
+        contig = vcz.get_contig(store)
+        assert contig.id == ["chr1", "chr2", "chr3"][contig_index]
+        assert contig.length == [3000, 2000, 1000][contig_index]
+
+    def test_no_contig_length(self):
+        store = _contig_store(["chr1", "chr2"], None, 1)
+        assert vcz.get_contig(store) == vcz.Contig(id="chr2", length=None)
+
+    def test_variants_on_multiple_contigs(self):
+        store = _contig_store(["chr1", "chr2"], [3000, 2000], 0)
+        store["variant_contig"][1] = 1
+        with pytest.raises(ValueError, match="multiple contigs"):
+            vcz.get_contig(store)
+
+    def test_no_variants(self):
+        store = _contig_store(["chr1", "chr2"], [3000, 2000], 1, num_sites=0)
+        assert vcz.get_contig(store) is None
+
+
+class TestResolveContig:
+    def test_single_store(self):
+        store = _contig_store(["chr1", "chr2"], [3000, 2000], 1)
+        assert vcz.resolve_contig([store]) == vcz.Contig(id="chr2", length=2000)
+
+    def test_agreeing_stores(self):
+        store1 = _contig_store(["chr1", "chr2"], [3000, 2000], 1)
+        store2 = _contig_store(["chr2"], [2000], 0)
+        contig = vcz.resolve_contig([store1, store2])
+        assert contig == vcz.Contig(id="chr2", length=2000)
+
+    @pytest.mark.parametrize("order", [1, -1])
+    def test_length_from_one_store(self, order):
+        store1 = _contig_store(["chr1", "chr2"], None, 1)
+        store2 = _contig_store(["chr1", "chr2"], [3000, 2000], 1)
+        stores = [store1, store2][::order]
+        assert vcz.resolve_contig(stores) == vcz.Contig(id="chr2", length=2000)
+
+    def test_empty_store_ignored(self):
+        store1 = _contig_store(["chr1"], [3000], 0, num_sites=0)
+        store2 = _contig_store(["chr1", "chr2"], [3000, 2000], 1)
+        contig = vcz.resolve_contig([store1, store2])
+        assert contig == vcz.Contig(id="chr2", length=2000)
+
+    def test_conflicting_lengths(self):
+        store1 = _contig_store(["chr2"], [2000], 0)
+        store2 = _contig_store(["chr2"], [2001], 0)
+        with pytest.raises(ValueError, match="conflicting lengths"):
+            vcz.resolve_contig([store1, store2])
+
+    def test_conflicting_ids(self):
+        store1 = _contig_store(["chr20"], [2000], 0)
+        store2 = _contig_store(["20"], [2000], 0)
+        with pytest.raises(ValueError, match="different contigs"):
+            vcz.resolve_contig([store1, store2])
+
+    def test_no_lengths(self):
+        store1 = _contig_store(["chr2"], None, 0)
+        store2 = _contig_store(["chr2"], None, 0)
+        with pytest.raises(ValueError, match="must provide contig_length"):
+            vcz.resolve_contig([store1, store2])
+
+    def test_no_variants(self):
+        store = _contig_store(["chr1"], [3000], 0, num_sites=0)
+        with pytest.raises(ValueError, match="No variants"):
+            vcz.resolve_contig([store])
 
 
 # ---------------------------------------------------------------------------

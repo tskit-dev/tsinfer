@@ -976,6 +976,74 @@ class TestInferAncestorsFormat:
         assert variant_contig.shape == (num_sites,)
         np.testing.assert_array_equal(variant_contig, np.zeros(num_sites, dtype=np.int8))
 
+    def test_contig_from_variant_contig(self):
+        # Variants on chr2 of a multi-contig header, not the first contig
+        gt = _haploid_store(
+            [[0, 1], [1, 0]],
+            positions=[100, 200],
+            alleles=[["A", "T"]] * 2,
+            anc_states=["A", "A"],
+        )
+        helpers.set_contigs(gt, ["chr1", "chr2", "chr3"], [9000, 5000, 7000], 1)
+        anc = ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+        assert str(anc["contig_id"][0]) == "chr2"
+        assert int(anc["contig_length"][0]) == 5000
+        assert np.max(anc["sequence_intervals"][:]) <= 5000
+
+    def test_contig_from_variant_contig_empty(self):
+        # All sites are fixed → empty ancestor VCZ, still labelled chr2
+        gt = _haploid_store(
+            [[1, 1], [1, 1]],
+            positions=[100, 200],
+            alleles=[["A", "T"]] * 2,
+            anc_states=["A", "A"],
+        )
+        helpers.set_contigs(gt, ["chr1", "chr2"], [9000, 5000], 1)
+        anc = ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+        assert str(anc["contig_id"][0]) == "chr2"
+        assert int(anc["contig_length"][0]) == 5000
+
+    def test_contig_length_from_second_source(self):
+        positions = [100, 200]
+        alleles = [["A", "T"]] * 2
+        store1 = _haploid_store([[0, 1], [1, 0]], positions, alleles, ["A", "A"])
+        store2 = _haploid_store(
+            [[0, 1], [1, 0]],
+            positions,
+            alleles,
+            ["A", "A"],
+            sample_ids=np.array(["other_0", "other_1"]),
+        )
+        helpers.set_contigs(store1, ["chr1", "chr2"], None, 1)
+        helpers.set_contigs(store2, ["chr2"], [5000], 0)
+        sources = [
+            config.Source(path=store1, name="a"),
+            config.Source(path=store2, name="b"),
+        ]
+        anc = ancestors.infer_ancestors(sources, _cfg(), _anc_state(store1))
+        assert str(anc["contig_id"][0]) == "chr2"
+        assert int(anc["contig_length"][0]) == 5000
+
+    def test_conflicting_contig_lengths(self):
+        positions = [100, 200]
+        alleles = [["A", "T"]] * 2
+        store1 = _haploid_store([[0, 1], [1, 0]], positions, alleles, ["A", "A"])
+        store2 = _haploid_store(
+            [[0, 1], [1, 0]],
+            positions,
+            alleles,
+            ["A", "A"],
+            sample_ids=np.array(["other_0", "other_1"]),
+        )
+        helpers.set_contigs(store1, ["chr2"], [5000], 0)
+        helpers.set_contigs(store2, ["chr2"], [6000], 0)
+        sources = [
+            config.Source(path=store1, name="a"),
+            config.Source(path=store2, name="b"),
+        ]
+        with pytest.raises(ValueError, match="conflicting lengths"):
+            ancestors.infer_ancestors(sources, _cfg(), _anc_state(store1))
+
     def test_contig_arrays_present_empty(self):
         # All sites are fixed → zero inference sites → empty ancestor VCZ
         gt = _haploid_store(
