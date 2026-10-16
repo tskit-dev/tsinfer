@@ -174,6 +174,7 @@ typedef struct {
         coordinate_t *position;
         mutation_list_node_t **mutations;
         tsk_size_t *num_alleles;
+        allele_t *ancestral_state;
     } sites;
     edge_t *left_index_edges;
     edge_t *right_index_edges;
@@ -225,7 +226,8 @@ int ancestor_builder_make_ancestor(const ancestor_builder_t *self,
 size_t ancestor_builder_get_memsize(const ancestor_builder_t *self);
 
 int matcher_indexes_alloc(matcher_indexes_t *self, const tsk_table_collection_t *tables,
-    const tsk_size_t *num_alleles, tsk_flags_t options);
+    const tsk_size_t *num_alleles, const allele_t *ancestral_state,
+    const allele_t *derived_state, tsk_flags_t options);
 int matcher_indexes_print_state(const matcher_indexes_t *self, FILE *out);
 int matcher_indexes_free(matcher_indexes_t *self);
 

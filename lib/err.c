@@ -112,10 +112,6 @@ tsi_strerror(int err)
         case TSI_ERR_BAD_ANCESTRAL_STATE:
             ret = "Ancestral state must be >= 0 and < num_alleles";
             break;
-        case TSI_ERR_MULTIPLE_MUTATIONS_AT_SITE:
-            ret = "Sites with multiple mutations are not supported "
-                  "in matcher_indexes";
-            break;
         case TSI_ERR_BAD_EDGE_NODE:
             ret = "Bad edge: parent or child node out of bounds";
             break;

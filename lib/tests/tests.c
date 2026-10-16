@@ -454,6 +454,9 @@ test_matcher_indexes_errors(void)
     int ret;
     matcher_indexes_t mi;
     tsk_table_collection_t tables;
+    tsk_size_t num_alleles[] = { 4 };
+    allele_t ancestral_state[] = { 0 };
+    allele_t derived_state[] = { 1, 1 };
 
     memset(&mi, 0, sizeof(mi));
     ret = tsk_table_collection_init(&tables, 0);
@@ -480,10 +483,113 @@ test_matcher_indexes_errors(void)
     ret = tsk_table_collection_build_index(&tables, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
 
-    ret = matcher_indexes_alloc(&mi, &tables, NULL, 0);
-    CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_MULTIPLE_MUTATIONS_AT_SITE);
+    /* Multiple mutations at a site are fine */
+    ret = matcher_indexes_alloc(&mi, &tables, NULL, NULL, NULL, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    CU_ASSERT_EQUAL(mi.num_mutations, 2);
     matcher_indexes_free(&mi);
 
+    /* Ancestral state out of range with the default of 2 alleles */
+    memset(&mi, 0, sizeof(mi));
+    ancestral_state[0] = 2;
+    ret = matcher_indexes_alloc(&mi, &tables, NULL, ancestral_state, NULL, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_BAD_ANCESTRAL_STATE);
+    matcher_indexes_free(&mi);
+
+    memset(&mi, 0, sizeof(mi));
+    ancestral_state[0] = -1;
+    ret = matcher_indexes_alloc(&mi, &tables, NULL, ancestral_state, NULL, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_BAD_ANCESTRAL_STATE);
+    matcher_indexes_free(&mi);
+
+    /* Derived state out of range */
+    memset(&mi, 0, sizeof(mi));
+    derived_state[0] = 1;
+    derived_state[1] = 2;
+    ret = matcher_indexes_alloc(&mi, &tables, NULL, NULL, derived_state, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_BAD_MUTATION_DERIVED_STATE);
+    matcher_indexes_free(&mi);
+
+    memset(&mi, 0, sizeof(mi));
+    derived_state[1] = -1;
+    ret = matcher_indexes_alloc(&mi, &tables, NULL, NULL, derived_state, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_BAD_MUTATION_DERIVED_STATE);
+    matcher_indexes_free(&mi);
+
+    /* Same states are fine with more alleles */
+    memset(&mi, 0, sizeof(mi));
+    ancestral_state[0] = 2;
+    derived_state[1] = 3;
+    ret = matcher_indexes_alloc(
+        &mi, &tables, num_alleles, ancestral_state, derived_state, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    matcher_indexes_free(&mi);
+
+    tsk_table_collection_free(&tables);
+}
+
+static void
+test_matching_multiple_mutations(void)
+{
+    /* Chain 0 -> 1 -> 2, one site with ancestral state A, a mutation to T
+     * on node 1, and a mutation to C on node 2. With alleles ACGT, the
+     * haplotypes are node 0 = A, node 1 = T and node 2 = C. Node 0 is
+     * the vestigial root and cannot be copied, so we only query T and C. */
+    int ret;
+    tsk_table_collection_t tables;
+    matcher_indexes_t mi;
+    ancestor_matcher_t am;
+    tsk_size_t num_alleles[] = { 4 };
+    allele_t ancestral_state[] = { 0 };
+    allele_t derived_state[] = { 3, 1 };
+    double rho[] = { 1e-9 };
+    double mu[] = { 0 };
+    allele_t match[1];
+    tsk_id_t left[2], right[2], parent[2];
+    tsk_size_t path_length;
+    allele_t h[1];
+    tsk_id_t expected_parent[] = { -1, 2, -1, 1 };
+    allele_t state;
+
+    ret = tsk_table_collection_init(&tables, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    tables.sequence_length = 100;
+    tsk_node_table_add_row(&tables.nodes, 0, 2.0, TSK_NULL, TSK_NULL, NULL, 0);
+    tsk_node_table_add_row(&tables.nodes, 0, 1.0, TSK_NULL, TSK_NULL, NULL, 0);
+    tsk_node_table_add_row(&tables.nodes, 0, 0.5, TSK_NULL, TSK_NULL, NULL, 0);
+    tsk_edge_table_add_row(&tables.edges, 0, 100, 0, 1, NULL, 0);
+    tsk_edge_table_add_row(&tables.edges, 0, 100, 1, 2, NULL, 0);
+    tsk_site_table_add_row(&tables.sites, 10, "A", 1, NULL, 0);
+    tsk_mutation_table_add_row(
+        &tables.mutations, 0, 1, TSK_NULL, TSK_UNKNOWN_TIME, "T", 1, NULL, 0);
+    tsk_mutation_table_add_row(
+        &tables.mutations, 0, 2, 0, TSK_UNKNOWN_TIME, "C", 1, NULL, 0);
+    ret = tsk_table_collection_sort(&tables, NULL, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = tsk_table_collection_build_index(&tables, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    ret = matcher_indexes_alloc(
+        &mi, &tables, num_alleles, ancestral_state, derived_state, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    for (state = 0; state < 4; state++) {
+        if (expected_parent[state] == -1) {
+            continue;
+        }
+        ret = ancestor_matcher_alloc(&am, &mi, rho, mu, DBL_MIN, 0);
+        CU_ASSERT_EQUAL_FATAL(ret, 0);
+        h[0] = state;
+        ret = ancestor_matcher_find_path(
+            &am, 0, 1, h, match, &path_length, left, right, parent);
+        CU_ASSERT_EQUAL_FATAL(ret, 0);
+        CU_ASSERT_EQUAL(path_length, 1);
+        CU_ASSERT_EQUAL(parent[0], expected_parent[state]);
+        CU_ASSERT_EQUAL(match[0], state);
+        ancestor_matcher_free(&am);
+    }
+
+    matcher_indexes_free(&mi);
     tsk_table_collection_free(&tables);
 }
 
@@ -522,7 +628,7 @@ test_matcher_indexes_edge_node_out_of_bounds(void)
     /* Overwrite child of second edge to out-of-bounds value */
     tables.edges.child[1] = 5;
 
-    ret = matcher_indexes_alloc(&mi, &tables, NULL, 0);
+    ret = matcher_indexes_alloc(&mi, &tables, NULL, NULL, NULL, 0);
     CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_BAD_EDGE_NODE);
     matcher_indexes_free(&mi);
     tsk_table_collection_free(&tables);
@@ -552,7 +658,7 @@ test_matcher_indexes_edge_node_out_of_bounds(void)
     /* Overwrite parent of second edge to out-of-bounds value */
     tables.edges.parent[1] = 10;
 
-    ret = matcher_indexes_alloc(&mi, &tables, NULL, 0);
+    ret = matcher_indexes_alloc(&mi, &tables, NULL, NULL, NULL, 0);
     CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_BAD_EDGE_NODE);
     matcher_indexes_free(&mi);
     tsk_table_collection_free(&tables);
@@ -589,7 +695,7 @@ test_matcher_indexes_mutation_node_out_of_bounds(void)
     /* Overwrite mutation node to out-of-bounds value */
     tables.mutations.node[0] = 99;
 
-    ret = matcher_indexes_alloc(&mi, &tables, NULL, 0);
+    ret = matcher_indexes_alloc(&mi, &tables, NULL, NULL, NULL, 0);
     CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_BAD_MUTATION_NODE);
     matcher_indexes_free(&mi);
     tsk_table_collection_free(&tables);
@@ -626,7 +732,7 @@ test_matcher_indexes_mutation_site_out_of_bounds(void)
     /* Overwrite site ID after sort/index to bypass tskit's checks */
     tables.mutations.site[0] = 5;
 
-    ret = matcher_indexes_alloc(&mi, &tables, NULL, 0);
+    ret = matcher_indexes_alloc(&mi, &tables, NULL, NULL, NULL, 0);
     CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_BAD_MUTATION_SITE);
     matcher_indexes_free(&mi);
     tsk_table_collection_free(&tables);
@@ -662,7 +768,7 @@ test_matcher_indexes_node_0_not_root(void)
     ret = tsk_table_collection_build_index(&tables, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
 
-    ret = matcher_indexes_alloc(&mi, &tables, NULL, 0);
+    ret = matcher_indexes_alloc(&mi, &tables, NULL, NULL, NULL, 0);
     CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_NODE_0_NOT_ROOT);
     matcher_indexes_free(&mi);
     tsk_table_collection_free(&tables);
@@ -703,7 +809,7 @@ test_matcher_indexes_node_0_is_child(void)
     /* Overwrite child of first edge to make node 0 a child */
     tables.edges.child[0] = 0;
 
-    ret = matcher_indexes_alloc(&mi, &tables, NULL, 0);
+    ret = matcher_indexes_alloc(&mi, &tables, NULL, NULL, NULL, 0);
     CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_NODE_0_NOT_ROOT);
     matcher_indexes_free(&mi);
     tsk_table_collection_free(&tables);
@@ -740,7 +846,7 @@ test_matcher_indexes_node_0_disconnected(void)
     ret = tsk_table_collection_build_index(&tables, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
 
-    ret = matcher_indexes_alloc(&mi, &tables, NULL, 0);
+    ret = matcher_indexes_alloc(&mi, &tables, NULL, NULL, NULL, 0);
     CU_ASSERT_EQUAL_FATAL(ret, TSI_ERR_NODE_0_NOT_ROOT);
     matcher_indexes_free(&mi);
     tsk_table_collection_free(&tables);
@@ -846,7 +952,7 @@ run_match(const tsk_treeseq_t *ts, double rho, double mu, const allele_t *h,
         recombination_rate[j] = rho;
     }
 
-    ret = matcher_indexes_alloc(&mi, ts->tables, NULL, 0);
+    ret = matcher_indexes_alloc(&mi, ts->tables, NULL, NULL, NULL, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
     /* matcher_indexes_print_state(&mi, stdout); */
     ret = ancestor_matcher_alloc(
@@ -1227,7 +1333,7 @@ test_matching_triallelic_ts(void)
 
     build_star_ts(&ts);
 
-    ret = matcher_indexes_alloc(&mi, ts.tables, num_alleles, 0);
+    ret = matcher_indexes_alloc(&mi, ts.tables, num_alleles, NULL, NULL, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
     ret = ancestor_matcher_alloc(&am, &mi, rho, mu, 14, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
@@ -1263,7 +1369,7 @@ test_matching_print_state(void)
 
     build_star_ts(&ts);
 
-    ret = matcher_indexes_alloc(&mi, ts.tables, NULL, 0);
+    ret = matcher_indexes_alloc(&mi, ts.tables, NULL, NULL, NULL, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
     matcher_indexes_print_state(&mi, _devnull);
 
@@ -1301,7 +1407,7 @@ test_matching_extended_checks(void)
 
     build_star_ts(&ts);
 
-    ret = matcher_indexes_alloc(&mi, ts.tables, NULL, 0);
+    ret = matcher_indexes_alloc(&mi, ts.tables, NULL, NULL, NULL, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
     ret = ancestor_matcher_alloc(&am, &mi, rho, mu, DBL_MIN, TSI_EXTENDED_CHECKS);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
@@ -1339,7 +1445,7 @@ test_matching_getters(void)
 
     build_star_ts(&ts);
 
-    ret = matcher_indexes_alloc(&mi, ts.tables, NULL, 0);
+    ret = matcher_indexes_alloc(&mi, ts.tables, NULL, NULL, NULL, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
     ret = ancestor_matcher_alloc(&am, &mi, rho, mu, DBL_MIN, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
@@ -1378,7 +1484,7 @@ test_matching_bad_haplotype_allele(void)
 
     build_star_ts(&ts);
 
-    ret = matcher_indexes_alloc(&mi, ts.tables, NULL, 0);
+    ret = matcher_indexes_alloc(&mi, ts.tables, NULL, NULL, NULL, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
     ret = ancestor_matcher_alloc(&am, &mi, rho, mu, DBL_MIN, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
@@ -1417,7 +1523,7 @@ test_matching_impossible_extreme_mu(void)
 
     double rho[] = { 1e-9, 1e-9, 1e-9 };
     double mu[] = { 0, 0, 0 };
-    ret = matcher_indexes_alloc(&mi, ts.tables, NULL, 0);
+    ret = matcher_indexes_alloc(&mi, ts.tables, NULL, NULL, NULL, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
     ret = ancestor_matcher_alloc(&am, &mi, rho, mu, DBL_MIN, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
@@ -1460,7 +1566,7 @@ test_matching_impossible_zero_recomb(void)
 
     build_star_ts(&ts);
 
-    ret = matcher_indexes_alloc(&mi, ts.tables, num_alleles, 0);
+    ret = matcher_indexes_alloc(&mi, ts.tables, num_alleles, NULL, NULL, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
     ret = ancestor_matcher_alloc(&am, &mi, rho, mu, DBL_MIN, 0);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
@@ -1761,6 +1867,7 @@ main(int argc, char **argv)
         { "test_matching_two_tree_ts", test_matching_two_tree_ts },
         { "test_matching_deep_chain_ts", test_matching_deep_chain_ts },
         { "test_matching_triallelic_ts", test_matching_triallelic_ts },
+        { "test_matching_multiple_mutations", test_matching_multiple_mutations },
 
         { "test_matching_print_state", test_matching_print_state },
         { "test_matching_extended_checks", test_matching_extended_checks },

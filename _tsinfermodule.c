@@ -426,13 +426,21 @@ MatcherIndexes_init(MatcherIndexes *self, PyObject *args, PyObject *kwds)
     int err;
     LightweightTableCollection *tables;
     PyObject *num_alleles_obj = NULL;
+    PyObject *ancestral_state_obj = NULL;
+    PyObject *derived_state_obj = NULL;
     PyArrayObject *num_alleles_array = NULL;
+    PyArrayObject *ancestral_state_array = NULL;
+    PyArrayObject *derived_state_array = NULL;
     tsk_size_t *num_alleles_data = NULL;
-    static char *kwlist[] = { "tables", "num_alleles", NULL };
+    allele_t *ancestral_state_data = NULL;
+    allele_t *derived_state_data = NULL;
+    static char *kwlist[]
+        = { "tables", "num_alleles", "ancestral_state", "derived_state", NULL };
 
     self->matcher_indexes = NULL;
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!|O", kwlist,
-            &LightweightTableCollectionType, &tables, &num_alleles_obj)) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!|OOO", kwlist,
+            &LightweightTableCollectionType, &tables, &num_alleles_obj,
+            &ancestral_state_obj, &derived_state_obj)) {
         goto out;
     }
     if (LightweightTableCollection_check_state(tables) != 0) {
@@ -444,7 +452,40 @@ MatcherIndexes_init(MatcherIndexes *self, PyObject *args, PyObject *kwds)
         if (num_alleles_array == NULL) {
             goto out;
         }
+        if (PyArray_DIM(num_alleles_array, 0)
+            != (npy_intp) tables->tables->sites.num_rows) {
+            PyErr_SetString(PyExc_ValueError, "num_alleles must have length num_sites");
+            goto out;
+        }
         num_alleles_data = PyArray_DATA(num_alleles_array);
+    }
+    if (ancestral_state_obj != NULL && ancestral_state_obj != Py_None) {
+        ancestral_state_array = (PyArrayObject *) PyArray_FROMANY(
+            ancestral_state_obj, NPY_INT8, 1, 1, NPY_ARRAY_IN_ARRAY);
+        if (ancestral_state_array == NULL) {
+            goto out;
+        }
+        if (PyArray_DIM(ancestral_state_array, 0)
+            != (npy_intp) tables->tables->sites.num_rows) {
+            PyErr_SetString(
+                PyExc_ValueError, "ancestral_state must have length num_sites");
+            goto out;
+        }
+        ancestral_state_data = PyArray_DATA(ancestral_state_array);
+    }
+    if (derived_state_obj != NULL && derived_state_obj != Py_None) {
+        derived_state_array = (PyArrayObject *) PyArray_FROMANY(
+            derived_state_obj, NPY_INT8, 1, 1, NPY_ARRAY_IN_ARRAY);
+        if (derived_state_array == NULL) {
+            goto out;
+        }
+        if (PyArray_DIM(derived_state_array, 0)
+            != (npy_intp) tables->tables->mutations.num_rows) {
+            PyErr_SetString(
+                PyExc_ValueError, "derived_state must have length num_mutations");
+            goto out;
+        }
+        derived_state_data = PyArray_DATA(derived_state_array);
     }
 
     self->matcher_indexes = PyMem_Calloc(1, sizeof(*self->matcher_indexes));
@@ -452,8 +493,8 @@ MatcherIndexes_init(MatcherIndexes *self, PyObject *args, PyObject *kwds)
         PyErr_NoMemory();
         goto out;
     }
-    err = matcher_indexes_alloc(
-        self->matcher_indexes, tables->tables, num_alleles_data, 0);
+    err = matcher_indexes_alloc(self->matcher_indexes, tables->tables, num_alleles_data,
+        ancestral_state_data, derived_state_data, 0);
     if (err != 0) {
         handle_library_error(err);
         goto out;
@@ -461,6 +502,8 @@ MatcherIndexes_init(MatcherIndexes *self, PyObject *args, PyObject *kwds)
     ret = 0;
 out:
     Py_XDECREF(num_alleles_array);
+    Py_XDECREF(ancestral_state_array);
+    Py_XDECREF(derived_state_array);
     return ret;
 }
 

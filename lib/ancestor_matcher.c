@@ -170,13 +170,21 @@ out:
     return ret;
 }
 
+/* Copy the site and mutation data into the matcher indexes. The
+ * ancestral_state (per site) and derived_state (per mutation) arrays
+ * give the integer-encoded alleles; if NULL, the ancestral state is 0
+ * and every mutation has derived state 1. Mutations must be in tskit
+ * order, so that when two mutations at a site are on the same node the
+ * later one (the child) takes precedence. */
 static int
 matcher_indexes_copy_mutation_data(matcher_indexes_t *self,
-    const tsk_table_collection_t *tables, const tsk_size_t *num_alleles)
+    const tsk_table_collection_t *tables, const tsk_size_t *num_alleles,
+    const allele_t *ancestral_state, const allele_t *derived_state)
 {
     int ret = 0;
     tsk_size_t j;
-    tsk_id_t site, last_site;
+    tsk_id_t site;
+    allele_t state;
     const double *restrict sites_position = tables->sites.position;
     const tsk_id_t *restrict mutations_site = tables->mutations.site;
     const tsk_id_t *restrict mutations_node = tables->mutations.node;
@@ -188,23 +196,26 @@ matcher_indexes_copy_mutation_data(matcher_indexes_t *self,
         converted_position[j] = (coordinate_t) sites_position[j];
         self->sites.mutations[j] = NULL;
         self->sites.num_alleles[j] = num_alleles != NULL ? num_alleles[j] : 2;
+        state = ancestral_state != NULL ? ancestral_state[j] : 0;
+        if (state < 0 || (tsk_size_t) state >= self->sites.num_alleles[j]) {
+            ret = TSI_ERR_BAD_ANCESTRAL_STATE;
+            goto out;
+        }
+        self->sites.ancestral_state[j] = state;
     }
     converted_position[j] = (coordinate_t) tables->sequence_length;
 
-    last_site = -1;
     for (j = 0; j < total_mutations; j++) {
         site = mutations_site[j];
-        if (site == last_site) {
-            ret = TSI_ERR_MULTIPLE_MUTATIONS_AT_SITE;
+        state = derived_state != NULL ? derived_state[j] : 1;
+        if (state < 0 || (tsk_size_t) state >= self->sites.num_alleles[site]) {
+            ret = TSI_ERR_BAD_MUTATION_DERIVED_STATE;
             goto out;
         }
-
-        self->sites.mutations[site] = NULL;
-        ret = matcher_indexes_add_mutation(self, site, mutations_node[j], 1);
+        ret = matcher_indexes_add_mutation(self, site, mutations_node[j], state);
         if (ret != 0) {
             goto out;
         }
-        last_site = site;
     }
 
 out:
@@ -252,7 +263,8 @@ matcher_indexes_validate_tables(
 
 int
 matcher_indexes_alloc(matcher_indexes_t *self, const tsk_table_collection_t *tables,
-    const tsk_size_t *num_alleles, tsk_flags_t flags)
+    const tsk_size_t *num_alleles, const allele_t *ancestral_state,
+    const allele_t *derived_state, tsk_flags_t flags)
 {
     int ret = 0;
 
@@ -273,11 +285,13 @@ matcher_indexes_alloc(matcher_indexes_t *self, const tsk_table_collection_t *tab
     self->right_index_edges = malloc(self->num_edges * sizeof(*self->right_index_edges));
     self->sites.mutations = malloc(self->num_sites * sizeof(*self->sites.mutations));
     self->sites.num_alleles = malloc(self->num_sites * sizeof(*self->sites.num_alleles));
+    self->sites.ancestral_state
+        = malloc(self->num_sites * sizeof(*self->sites.ancestral_state));
     self->sites.position
         = malloc((self->num_sites + 1) * sizeof(*self->sites.mutations));
     if (self->left_index_edges == NULL || self->right_index_edges == NULL
         || self->sites.mutations == NULL || self->sites.position == NULL
-        || self->sites.num_alleles == NULL) {
+        || self->sites.num_alleles == NULL || self->sites.ancestral_state == NULL) {
         ret = TSI_ERR_NO_MEMORY;
         goto out;
     }
@@ -290,7 +304,8 @@ matcher_indexes_alloc(matcher_indexes_t *self, const tsk_table_collection_t *tab
     if (ret != 0) {
         goto out;
     }
-    ret = matcher_indexes_copy_mutation_data(self, tables, num_alleles);
+    ret = matcher_indexes_copy_mutation_data(
+        self, tables, num_alleles, ancestral_state, derived_state);
     if (ret != 0) {
         goto out;
     }
@@ -306,6 +321,7 @@ matcher_indexes_free(matcher_indexes_t *self)
     tsk_safe_free(self->sites.mutations);
     tsk_safe_free(self->sites.position);
     tsk_safe_free(self->sites.num_alleles);
+    tsk_safe_free(self->sites.ancestral_state);
     tsi_blkalloc_free(&self->allocator);
     return 0;
 }
@@ -550,8 +566,7 @@ ancestor_matcher_set_allelic_state(
 {
     mutation_list_node_t *mutation;
 
-    /* FIXME assuming that 0 is always the ancestral state */
-    allelic_state[0] = 0;
+    allelic_state[0] = self->matcher_indexes->sites.ancestral_state[site];
 
     for (mutation = self->matcher_indexes->sites.mutations[site]; mutation != NULL;
         mutation = mutation->next) {
