@@ -23,8 +23,10 @@ Tests for tsinfer.matching: make_root_ts, Matcher, extend_ts.
 from __future__ import annotations
 
 import numpy as np
+import pytest
 import tskit
 
+import _tsinfer
 from tsinfer import config, matching, vcz
 
 # ---------------------------------------------------------------------------
@@ -255,7 +257,12 @@ class TestMatcher:
         """Matching an identical haplotype returns a MatchResult with path edges."""
         hap = np.array([0, 1, 0], dtype=np.int8)
         ts = self._make_ts_with_one_ancestor(hap)
-        matcher = matching.Matcher(ts, self.positions, source_parameters=_SOURCE_PARAMS)
+        matcher = matching.Matcher(
+            ts,
+            self.positions,
+            allele_mapper=self.allele_mapper,
+            source_parameters=_SOURCE_PARAMS,
+        )
         results = list(matcher.match(_jobs(1), _ArrayReader([hap])))
         assert len(results) == 1
         _, r = results[0]
@@ -268,7 +275,12 @@ class TestMatcher:
         ts = self._make_ts_with_one_ancestor(ancestor_hap)
         # Query haplotype has derived state at site 1
         query_hap = np.array([0, 1, 0], dtype=np.int8)
-        matcher = matching.Matcher(ts, self.positions, source_parameters=_SOURCE_PARAMS)
+        matcher = matching.Matcher(
+            ts,
+            self.positions,
+            allele_mapper=self.allele_mapper,
+            source_parameters=_SOURCE_PARAMS,
+        )
         results = list(matcher.match(_jobs(1), _ArrayReader([query_hap])))
         _, r = results[0]
         # There should be a mutation at position 20 (site index 1)
@@ -280,7 +292,12 @@ class TestMatcher:
         hap = np.array([0, 1, 0], dtype=np.int8)
         ts = self._make_ts_with_one_ancestor(hap)
         missing_hap = np.array([-1, -1, -1], dtype=np.int8)
-        matcher = matching.Matcher(ts, self.positions, source_parameters=_SOURCE_PARAMS)
+        matcher = matching.Matcher(
+            ts,
+            self.positions,
+            allele_mapper=self.allele_mapper,
+            source_parameters=_SOURCE_PARAMS,
+        )
         results = list(matcher.match(_jobs(1), _ArrayReader([missing_hap])))
         assert len(results) == 1
 
@@ -289,7 +306,12 @@ class TestMatcher:
         hap = np.array([0, 1, 0], dtype=np.int8)
         ts = self._make_ts_with_one_ancestor(hap)
         query_hap = np.array([-1, 1, 0], dtype=np.int8)
-        matcher = matching.Matcher(ts, self.positions, source_parameters=_SOURCE_PARAMS)
+        matcher = matching.Matcher(
+            ts,
+            self.positions,
+            allele_mapper=self.allele_mapper,
+            source_parameters=_SOURCE_PARAMS,
+        )
         results = list(matcher.match(_jobs(1), _ArrayReader([query_hap])))
         assert len(results) == 1
         _, r = results[0]
@@ -302,7 +324,12 @@ class TestMatcher:
         hap = np.array([0, 1, 0], dtype=np.int8)
         ts = self._make_ts_with_one_ancestor(hap)
         haplotypes = np.array([[0, 1, 0], [0, 0, 1], [1, 0, 0]], dtype=np.int8)
-        matcher = matching.Matcher(ts, self.positions, source_parameters=_SOURCE_PARAMS)
+        matcher = matching.Matcher(
+            ts,
+            self.positions,
+            allele_mapper=self.allele_mapper,
+            source_parameters=_SOURCE_PARAMS,
+        )
         results = list(matcher.match(_jobs(3), _ArrayReader(haplotypes)))
         assert len(results) == 3
 
@@ -310,7 +337,12 @@ class TestMatcher:
         """MatchResult should contain PathSegment and Mutation objects."""
         hap = np.array([0, 1, 0], dtype=np.int8)
         ts = self._make_ts_with_one_ancestor(hap)
-        matcher = matching.Matcher(ts, self.positions, source_parameters=_SOURCE_PARAMS)
+        matcher = matching.Matcher(
+            ts,
+            self.positions,
+            allele_mapper=self.allele_mapper,
+            source_parameters=_SOURCE_PARAMS,
+        )
         results = list(matcher.match(_jobs(1), _ArrayReader([hap])))
         _, r = results[0]
         assert isinstance(r.path, list)
@@ -325,7 +357,12 @@ class TestMatcher:
         """PathSegment left < right for every segment."""
         hap = np.array([0, 1, 0], dtype=np.int8)
         ts = self._make_ts_with_one_ancestor(hap)
-        matcher = matching.Matcher(ts, self.positions, source_parameters=_SOURCE_PARAMS)
+        matcher = matching.Matcher(
+            ts,
+            self.positions,
+            allele_mapper=self.allele_mapper,
+            source_parameters=_SOURCE_PARAMS,
+        )
         results = list(matcher.match(_jobs(1), _ArrayReader([hap])))
         _, r = results[0]
         for seg in r.path:
@@ -336,7 +373,12 @@ class TestMatcher:
         hap = np.array([0, 0, 0], dtype=np.int8)
         ts = self._make_ts_with_one_ancestor(hap)
         query = np.array([1, 1, 0], dtype=np.int8)
-        matcher = matching.Matcher(ts, self.positions, source_parameters=_SOURCE_PARAMS)
+        matcher = matching.Matcher(
+            ts,
+            self.positions,
+            allele_mapper=self.allele_mapper,
+            source_parameters=_SOURCE_PARAMS,
+        )
         results = list(matcher.match(_jobs(1), _ArrayReader([query])))
         _, r = results[0]
         assert len(r.mutations) > 0
@@ -352,7 +394,12 @@ class TestMatcher:
         source_params = {
             "test": config.MatchSourceConfig(recombination=0.5, mismatch=0.1),
         }
-        matcher = matching.Matcher(ts, self.positions, source_parameters=source_params)
+        matcher = matching.Matcher(
+            ts,
+            self.positions,
+            allele_mapper=self.allele_mapper,
+            source_parameters=source_params,
+        )
         results = list(matcher.match(_jobs(1), _ArrayReader([hap])))
         assert len(results) == 1
         _, r = results[0]
@@ -362,6 +409,99 @@ class TestMatcher:
 # ---------------------------------------------------------------------------
 # TestExtendTs
 # ---------------------------------------------------------------------------
+
+
+class TestMatcherMultiallelic:
+    """Matcher uses the real allele code of each mutation in the panel."""
+
+    def setup_method(self):
+        self.positions = np.array([10, 20, 30], dtype=np.int32)
+        self.seq_len = 100.0
+        self.allele_mapper = vcz.AlleleMapper(3, [["A", "T", "G"]] * 3)
+
+    def _make_ts(self, haplotypes):
+        """
+        Panel with one node per haplotype (ids 2, 3, ...) under the virtual
+        root, carrying a mutation to each non-zero allele code.
+        """
+        ts = matching.make_root_ts(
+            self.seq_len,
+            self.positions,
+            np.array([[10, 31]], dtype=np.int32),
+            max_time=1.0,
+            allele_mapper=self.allele_mapper,
+        )
+        paired_results = []
+        for j, hap in enumerate(haplotypes):
+            mutations = [
+                matching.Mutation(position=float(pos), derived_state=int(a))
+                for pos, a in zip(self.positions, hap)
+                if a > 0
+            ]
+            path = [matching.PathSegment(left=10.0, right=self.seq_len, parent=1)]
+            result = matching.MatchResult(path=path, mutations=mutations)
+            job = _make_job(haplotype_index=j, time=0.5, individual_id=None)
+            paired_results.append((job, result))
+        return matching.extend_ts(
+            ts, paired_results=paired_results, allele_mapper=self.allele_mapper
+        )
+
+    def _match(self, ts, haplotypes):
+        matcher = matching.Matcher(
+            ts,
+            self.positions,
+            allele_mapper=self.allele_mapper,
+            source_parameters=_SOURCE_PARAMS,
+        )
+        jobs = _jobs(len(haplotypes))
+        return [r for _, r in matcher.match(jobs, _ArrayReader(haplotypes))]
+
+    def test_copy_second_derived_allele(self):
+        ts = self._make_ts([[0, 2, 0]])
+        (r,) = self._match(ts, [[0, 2, 0]])
+        assert r.mutations == []
+        assert [s.parent for s in r.path] == [2]
+
+    def test_mismatch_to_first_derived_allele(self):
+        ts = self._make_ts([[0, 2, 0]])
+        (r,) = self._match(ts, [[0, 1, 0]])
+        assert [(m.position, m.derived_state) for m in r.mutations] == [(20.0, 1)]
+
+    def test_multiple_mutations_at_site(self):
+        ts = self._make_ts([[1, 1, 0], [0, 2, 1]])
+        assert ts.num_mutations == 4
+        assert list(ts.mutations_site) == [0, 1, 1, 2]
+        r1, r2 = self._match(ts, [[1, 1, 0], [0, 2, 1]])
+        assert r1.mutations == []
+        assert [s.parent for s in r1.path] == [2]
+        assert r2.mutations == []
+        assert [s.parent for s in r2.path] == [3]
+
+    def test_back_mutation_to_ancestral(self):
+        ts = self._make_ts([[1, 1, 1]])
+        result = matching.MatchResult(
+            path=[matching.PathSegment(left=10.0, right=self.seq_len, parent=2)],
+            mutations=[matching.Mutation(position=20.0, derived_state=0)],
+        )
+        job = _make_job(time=0.25, individual_id=None)
+        ts = matching.extend_ts(
+            ts, paired_results=[(job, result)], allele_mapper=self.allele_mapper
+        )
+        assert list(ts.mutations_derived_state) == ["T", "T", "A", "T"]
+        (r,) = self._match(ts, [[1, 0, 1]])
+        assert r.mutations == []
+        assert [s.parent for s in r.path] == [3]
+
+    def test_unknown_derived_state(self):
+        tables = self._make_ts([[0, 0, 0]]).dump_tables()
+        tables.mutations.add_row(site=1, node=2, derived_state="X")
+        with pytest.raises(_tsinfer.LibraryError, match="derived state"):
+            matching.Matcher(
+                tables.tree_sequence(),
+                self.positions,
+                allele_mapper=self.allele_mapper,
+                source_parameters=_SOURCE_PARAMS,
+            )
 
 
 class TestExtendTs:
@@ -689,7 +829,12 @@ class TestMatcherExtendCycle:
 
     def _match_and_pair(self, ts, haplotypes):
         """Match haplotypes against ts and return paired_results list."""
-        matcher = matching.Matcher(ts, self.positions, source_parameters=_SOURCE_PARAMS)
+        matcher = matching.Matcher(
+            ts,
+            self.positions,
+            allele_mapper=self.allele_mapper,
+            source_parameters=_SOURCE_PARAMS,
+        )
         results = list(matcher.match(_jobs(len(haplotypes)), _ArrayReader(haplotypes)))
         return results
 
@@ -722,7 +867,10 @@ class TestMatcherExtendCycle:
         # Now match a sample against ts2
         sample_hap = np.array([0, 0, 1, 1, 0], dtype=np.int8)
         matcher2 = matching.Matcher(
-            ts2, self.positions, source_parameters=_SOURCE_PARAMS
+            ts2,
+            self.positions,
+            allele_mapper=self.allele_mapper,
+            source_parameters=_SOURCE_PARAMS,
         )
         results2 = list(matcher2.match(_jobs(1), _ArrayReader([sample_hap])))
         _, r = results2[0]

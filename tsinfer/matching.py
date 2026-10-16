@@ -53,7 +53,7 @@ class Mutation:
     """A single mutation placed by the matching HMM."""
 
     position: float  # absolute genomic position
-    derived_state: int  # allele index (typically 1)
+    derived_state: int  # allele code at this site (0 = ancestral)
 
 
 @dataclasses.dataclass
@@ -155,7 +155,7 @@ class Matcher:
         self,
         ts: tskit.TreeSequence,
         positions: np.ndarray,  # (num_sites,) int32 — inference site positions
-        num_alleles: np.ndarray | None = None,
+        allele_mapper: vcz.AlleleMapper,
         source_parameters: dict[str, config.MatchSourceConfig] | None = None,
     ):
         self._positions = np.asarray(positions, dtype=np.int32)
@@ -171,8 +171,17 @@ class Matcher:
             _rss_mib(),
         )
         t0 = time_.monotonic()
+        # Sites in ts correspond one-to-one with the allele mapper's sites,
+        # and their ancestral states are allele code 0.
+        num_alleles = allele_mapper.num_alleles_array()
+        derived_state = allele_mapper.encode_mutations(
+            ts.mutations_site, ts.mutations_derived_state
+        )
         self._matcher_indexes = MatcherIndexes(
-            ts, vestigial_root=False, num_alleles=num_alleles
+            ts,
+            vestigial_root=False,
+            num_alleles=num_alleles,
+            derived_state=derived_state,
         )
         logger.info(
             "Matcher ready in %.3fs, RSS=%.1f MiB",
@@ -426,15 +435,23 @@ class MatcherIndexes(_tsinfer.MatcherIndexes):
     Wrapper around the C MatcherIndexes, built from a tree sequence.
 
     By default, the ancestral state of every site is 0 and every mutation has
-    derived state 1. If ``alleles`` is specified, states are instead encoded
-    as their index in this list, and ``num_alleles`` defaults to its length.
+    derived state 1, unless the encoded ``derived_state`` of each mutation is
+    given. If ``alleles`` is specified, states are instead encoded as their
+    index in this list, and ``num_alleles`` defaults to its length.
     """
 
-    def __init__(self, ts, *, vestigial_root=True, alleles=None, num_alleles=None):
+    def __init__(
+        self,
+        ts,
+        *,
+        vestigial_root=True,
+        alleles=None,
+        num_alleles=None,
+        derived_state=None,
+    ):
         if vestigial_root:
             ts = arg_ops.add_vestigial_root(ts)
         ancestral_state = None
-        derived_state = None
         if alleles is not None:
             ancestral_state, derived_state = encode_alleles(ts, alleles)
             if num_alleles is None:

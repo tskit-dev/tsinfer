@@ -20,9 +20,9 @@
 End-to-end genotype round-trip tests for the tsinfer pipeline.
 
 Verifies that the output tree sequence from run() reproduces the input
-genotype data. TestGenotypeRoundtrip covers biallelic inference sites only.
-TestAugmentedRoundtrip adds augment_sites to recover singletons and
-multi-allelic sites as well.
+genotype data. TestGenotypeRoundtrip and TestMultiallelicRoundtrip cover
+polymorphic inference sites. TestAugmentedRoundtrip adds augment_sites to
+recover singletons and monomorphic sites as well.
 """
 
 from __future__ import annotations
@@ -39,14 +39,15 @@ from tsinfer import config, pipeline
 # ---------------------------------------------------------------------------
 
 
-def _run_pipeline(sample_store):
+def _run_pipeline(sample_store, sample_time=None):
     """Build config, run full pipeline, return output tree sequence.
 
     Uses ``is_reference=True`` so the REF allele (variant_allele[:, 0])
     is treated as the ancestral allele — the natural choice when input
-    data originates from a tree sequence.
+    data originates from a tree sequence. *sample_time* is passed through
+    as the sample source's ``sample_time`` field spec.
     """
-    src = config.Source(path=sample_store, name="test")
+    src = config.Source(path=sample_store, name="test", sample_time=sample_time)
     anc_src = config.Source(path=None, name="ancestors", sample_time="sample_time")
     cfg = config.Config(
         sources={"test": src, "ancestors": anc_src},
@@ -112,9 +113,10 @@ def _run_pipeline_with_augment(sample_store, augment_store=None, ann_store=None)
 def _check_genotypes(input_store, output_ts, ploidy=1, check_all=False):
     """Assert output TS sample genotypes match input VCZ genotypes.
 
-    When *check_all* is False (default), pre-filters to biallelic polymorphic
-    inference sites. When True, checks all sites with at least one non-missing
-    genotype (including singletons, multi-allelic, and monomorphic).
+    When *check_all* is False (default), pre-filters to inference sites:
+    those where both the ancestral and some derived allele are present.
+    When True, checks all sites with at least one non-missing genotype
+    (including singletons, multi-allelic, and monomorphic).
     """
     input_gt = input_store["call_genotype"][:]  # (S, N, P)
     input_pos = input_store["variant_position"][:]  # (S,)
@@ -131,16 +133,14 @@ def _check_genotypes(input_store, output_ts, ploidy=1, check_all=False):
     # Build set of positions to check
     pos_to_idx = {}
     for i, p in enumerate(input_pos):
-        allele_list = [str(a) for a in input_alleles[i] if str(a) != ""]
         gt_flat = input_gt[i].reshape(-1)
         non_missing = gt_flat[gt_flat >= 0]
         if len(non_missing) == 0:
             continue
         if not check_all:
-            # Inference-only mode: biallelic polymorphic sites only
-            if len(allele_list) != 2:
-                continue
-            if len(np.unique(non_missing)) < 2:
+            # Inference-only mode: sites carrying both the ancestral allele
+            # and at least one derived allele
+            if not (np.any(non_missing == 0) and np.any(non_missing > 0)):
                 continue
         pos_to_idx[int(p)] = i
 
@@ -170,6 +170,7 @@ def _simulate(
     mutation_rate=1e-8,
     ploidy=1,
     random_seed=42,
+    model=None,
 ):
     """Simulate a tree sequence with msprime and return it."""
     ts = msprime.sim_ancestry(
@@ -180,7 +181,9 @@ def _simulate(
         population_size=10_000,
         random_seed=random_seed,
     )
-    ts = msprime.sim_mutations(ts, rate=mutation_rate, random_seed=random_seed)
+    ts = msprime.sim_mutations(
+        ts, rate=mutation_rate, model=model, random_seed=random_seed
+    )
     return ts
 
 
@@ -337,6 +340,73 @@ class TestGenotypeRoundtrip:
         store = helpers.ts_to_sample_vcz(sim_ts)
         ts = _run_pipeline(store)
         _check_genotypes(store, ts, ploidy=1)
+
+
+class TestMultiallelicRoundtrip:
+    """Inference sites with more than two alleles and recurrent mutations."""
+
+    def test_hand_constructed_triallelic(self):
+        """One triallelic site; samples carry each of the three alleles."""
+        genotypes = np.array(
+            [
+                [[0], [1], [2], [2]],
+                [[1], [0], [1], [0]],
+            ],
+            dtype=np.int8,
+        )
+        store = helpers.make_sample_vcz(
+            genotypes=genotypes,
+            positions=np.array([10, 20], dtype=np.int32),
+            alleles=np.array([["A", "T", "G"], ["C", "G", ""]]),
+            ancestral_state=np.array(["A", "C"]),
+            sequence_length=100,
+        )
+        ts = _run_pipeline(store)
+        _check_genotypes(store, ts, ploidy=1)
+
+    @pytest.mark.parametrize("seed", [1, 2, 3, 4])
+    def test_simulated_jc69(self, seed):
+        sim_ts = _simulate(
+            num_samples=10,
+            sequence_length=2_000,
+            recombination_rate=1e-7,
+            mutation_rate=2e-6,
+            random_seed=seed,
+            model=msprime.JC69(),
+        )
+        num_alleles = np.array([len(v.alleles) for v in sim_ts.variants()])
+        assert np.any(num_alleles > 2)
+        store = helpers.ts_to_sample_vcz(sim_ts)
+        ts = _run_pipeline(store)
+        _check_genotypes(store, ts, ploidy=1)
+        assert np.any(np.bincount(ts.mutations_site) > 1)
+
+    @pytest.mark.parametrize("seed", [1, 2, 3, 4])
+    def test_simulated_jc69_two_sample_groups(self, seed):
+        """
+        Half of the samples are slightly older, so they are matched in an
+        earlier group and their mutations (to any derived allele) are in
+        the reference panel when the remaining samples are matched.
+        """
+        sim_ts = _simulate(
+            num_samples=10,
+            sequence_length=2_000,
+            recombination_rate=1e-7,
+            mutation_rate=2e-6,
+            random_seed=seed,
+            model=msprime.JC69(),
+        )
+        store = helpers.ts_to_sample_vcz(sim_ts)
+        sample_time = np.zeros(10)
+        sample_time[::2] = 1e-6
+        helpers._arr(store, "sample_time", sample_time, ["samples"])
+        ts = _run_pipeline(store, sample_time="sample_time")
+        _check_genotypes(store, ts, ploidy=1)
+        samples = ts.samples()
+        older_samples = samples[ts.nodes_time[samples] > 0]
+        assert len(older_samples) == 5
+        # Younger samples copy from older samples carrying shared alleles
+        assert np.any(np.isin(ts.edges_parent, older_samples))
 
 
 # ---------------------------------------------------------------------------

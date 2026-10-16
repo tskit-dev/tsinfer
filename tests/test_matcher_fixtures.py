@@ -62,7 +62,10 @@ def _match(ts, positions, query, allele_mapper):
         group=0,
     )
     matcher = matching.Matcher(
-        ts, positions, source_parameters={"test": config.MatchSourceConfig()}
+        ts,
+        positions,
+        allele_mapper=allele_mapper,
+        source_parameters={"test": config.MatchSourceConfig()},
     )
     results = list(matcher.match([job], _ArrayReader([query])))
     _, r = results[0]
