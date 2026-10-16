@@ -363,7 +363,7 @@ def _process_group(
         m = matching.Matcher(
             ts,
             positions,
-            num_alleles=reader.get_num_alleles(),
+            allele_mapper=allele_mapper,
             source_parameters=source_parameters,
         )
         job_list = [job for _, job in group_jobs]
