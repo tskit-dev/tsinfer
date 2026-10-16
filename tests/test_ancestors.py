@@ -1393,6 +1393,121 @@ class TestInferAncestorsScenarios:
         assert len(intervals) == 2
 
 
+class TestInferAncestorsAlleleCodes:
+    """
+    Ancestor generation requires the genotypes at every site to be the
+    ancestral allele (0), one derived allele (1) or missing.
+    """
+
+    def test_triallelic_site_raises(self):
+        gt = _haploid_store(
+            [[0, 1, 0, 1], [0, 1, 2, 1]],
+            positions=[100, 200],
+            alleles=[["A", "T", ""], ["A", "T", "G"]],
+            anc_states=["A", "A"],
+        )
+        with pytest.raises(ValueError, match=r"position 200 .*\['A', 'T', 'G'\]"):
+            ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+
+    def test_ancestral_allele_not_in_alleles_raises(self):
+        gt = _haploid_store(
+            [[0, 1, 0, 1], [0, 1, 1, 0]],
+            positions=[100, 200],
+            alleles=[["A", "T"], ["A", "T"]],
+            anc_states=["A", "C"],
+        )
+        with pytest.raises(ValueError, match=r"position 200 .*\['C', 'A', 'T'\]"):
+            ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+
+    def test_only_second_alt_allele_observed_raises(self):
+        gt = _haploid_store(
+            [[0, 2, 0, 2]],
+            positions=[100],
+            alleles=[["A", "T", "G"]],
+            anc_states=["A"],
+        )
+        with pytest.raises(ValueError, match="position 100 "):
+            ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+
+    def test_only_first_alt_allele_observed(self):
+        gt = _haploid_store(
+            [[0, 1, 0, 1]],
+            positions=[100],
+            alleles=[["A", "T", "G"]],
+            anc_states=["A"],
+        )
+        anc = ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+        np.testing.assert_array_equal(anc["variant_position"][:], [100])
+        assert list(anc["variant_allele"][0][:2]) == ["A", "T"]
+        np.testing.assert_array_equal(_anc_genotypes(anc), [[1]])
+
+    def test_missing_data_with_triallelic_site_raises(self):
+        gt = _haploid_store(
+            [[-1, 1, 0, 2]],
+            positions=[100],
+            alleles=[["A", "T", "G"]],
+            anc_states=["A"],
+        )
+        with pytest.raises(ValueError, match="position 100 "):
+            ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+
+    def test_two_sources_combined_triallelic_raises(self):
+        store_a = _haploid_store(
+            [[0, 1, 0, 1]],
+            positions=[100],
+            alleles=[["A", "T"]],
+            anc_states=["A"],
+            sample_ids=np.array(["a0", "a1", "a2", "a3"]),
+        )
+        store_b = _haploid_store(
+            [[0, 1, 1, 0]],
+            positions=[100],
+            alleles=[["A", "G"]],
+            anc_states=["A"],
+            sample_ids=np.array(["b0", "b1", "b2", "b3"]),
+        )
+        sources = [
+            config.Source(path=store_a, name="a"),
+            config.Source(path=store_b, name="b"),
+        ]
+        with pytest.raises(ValueError, match="position 100 "):
+            ancestors.infer_ancestors(sources, _cfg(), _anc_state(store_a))
+
+    def test_two_sources_same_alleles(self):
+        store_a = _haploid_store(
+            [[0, 1, 0, 1]],
+            positions=[100],
+            alleles=[["A", "T"]],
+            anc_states=["A"],
+            sample_ids=np.array(["a0", "a1", "a2", "a3"]),
+        )
+        store_b = _haploid_store(
+            [[0, 1, 1, 0]],
+            positions=[100],
+            alleles=[["T", "A"]],
+            anc_states=["A"],
+            sample_ids=np.array(["b0", "b1", "b2", "b3"]),
+        )
+        sources = [
+            config.Source(path=store_a, name="a"),
+            config.Source(path=store_b, name="b"),
+        ]
+        anc = ancestors.infer_ancestors(sources, _cfg(), _anc_state(store_a))
+        np.testing.assert_array_equal(anc["variant_position"][:], [100])
+
+    def test_unknown_ancestral_allele_skipped(self, caplog):
+        gt = _haploid_store(
+            [[0, 1, 0, 1], [0, 1, 1, 0], [0, 1, 2, 0]],
+            positions=[100, 200, 300],
+            alleles=[["A", "T", ""], ["A", "T", ""], ["A", "T", "G"]],
+            anc_states=["A", "", ""],
+        )
+        with caplog.at_level(logging.INFO, logger="tsinfer.ancestors"):
+            anc = ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+        np.testing.assert_array_equal(anc["variant_position"][:], [100])
+        assert "Skipping 2 sites with unknown ancestral allele" in caplog.text
+
+
 # ---------------------------------------------------------------------------
 # Per-interval builder equivalence
 # ---------------------------------------------------------------------------

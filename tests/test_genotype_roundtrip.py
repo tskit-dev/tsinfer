@@ -39,20 +39,33 @@ from tsinfer import config, pipeline
 # ---------------------------------------------------------------------------
 
 
-def _run_pipeline(sample_store, sample_time=None):
+def _ancestor_data_sources(sample_store, ancestor_store):
+    """
+    Return the (sources, ancestor source names) used to generate ancestors:
+    the sample store itself, or *ancestor_store* if it is given.
+    """
+    if ancestor_store is None:
+        return {}, ["test"]
+    src = config.Source(path=ancestor_store, name="ancestor_data")
+    return {"ancestor_data": src}, ["ancestor_data"]
+
+
+def _run_pipeline(sample_store, sample_time=None, ancestor_store=None):
     """Build config, run full pipeline, return output tree sequence.
 
     Uses ``is_reference=True`` so the REF allele (variant_allele[:, 0])
     is treated as the ancestral allele — the natural choice when input
     data originates from a tree sequence. *sample_time* is passed through
-    as the sample source's ``sample_time`` field spec.
+    as the sample source's ``sample_time`` field spec. If *ancestor_store*
+    is given, ancestors are generated from it instead of *sample_store*.
     """
     src = config.Source(path=sample_store, name="test", sample_time=sample_time)
     anc_src = config.Source(path=None, name="ancestors", sample_time="sample_time")
+    extra_sources, ancestor_data = _ancestor_data_sources(sample_store, ancestor_store)
     cfg = config.Config(
-        sources={"test": src, "ancestors": anc_src},
+        sources={"test": src, "ancestors": anc_src, **extra_sources},
         ancestors=[
-            config.AncestorsConfig(name="ancestors", path=None, sources=["test"])
+            config.AncestorsConfig(name="ancestors", path=None, sources=ancestor_data)
         ],
         match=config.MatchConfig(
             sources={
@@ -69,7 +82,9 @@ def _run_pipeline(sample_store, sample_time=None):
     return pipeline.run(cfg)
 
 
-def _run_pipeline_with_augment(sample_store, augment_store=None, ann_store=None):
+def _run_pipeline_with_augment(
+    sample_store, augment_store=None, ann_store=None, ancestor_store=None
+):
     """Run pipeline with augment_sites to recover non-inference sites.
 
     If *augment_store* is None, the same *sample_store* is reused as the
@@ -77,6 +92,8 @@ def _run_pipeline_with_augment(sample_store, augment_store=None, ann_store=None)
     inference pipeline dropped (singletons, multi-allelic, fixed, etc.).
 
     If *ann_store* is None, *sample_store* is used as the annotation store.
+    If *ancestor_store* is given, ancestors are generated from it instead of
+    *sample_store*.
     """
     if augment_store is None:
         augment_store = sample_store
@@ -85,14 +102,16 @@ def _run_pipeline_with_augment(sample_store, augment_store=None, ann_store=None)
     src = config.Source(path=sample_store, name="test")
     aug_src = config.Source(path=augment_store, name="augment")
     anc_src = config.Source(path=None, name="ancestors", sample_time="sample_time")
+    extra_sources, ancestor_data = _ancestor_data_sources(sample_store, ancestor_store)
     cfg = config.Config(
         sources={
             "test": src,
             "augment": aug_src,
             "ancestors": anc_src,
+            **extra_sources,
         },
         ancestors=[
-            config.AncestorsConfig(name="ancestors", path=None, sources=["test"])
+            config.AncestorsConfig(name="ancestors", path=None, sources=ancestor_data)
         ],
         match=config.MatchConfig(
             sources={
@@ -110,14 +129,28 @@ def _run_pipeline_with_augment(sample_store, augment_store=None, ann_store=None)
     return pipeline.run(cfg)
 
 
-def _check_genotypes(input_store, output_ts, ploidy=1, check_all=False):
+def _inference_positions(store):
+    """
+    Positions of the sites in *store* used for ancestor generation: those
+    where both the ancestral allele (0) and a derived allele are present.
+    """
+    gt = store["call_genotype"][:]
+    gt = gt.reshape(gt.shape[0], -1)
+    is_inference = np.any(gt == 0, axis=1) & np.any(gt > 0, axis=1)
+    return store["variant_position"][:][is_inference]
+
+
+def _check_genotypes(input_store, output_ts, ploidy=1, check_all=False, positions=None):
     """Assert output TS sample genotypes match input VCZ genotypes.
 
-    When *check_all* is False (default), pre-filters to inference sites:
-    those where both the ancestral and some derived allele are present.
+    When *check_all* is False (default), checks the inference sites of
+    *input_store* (see ``_inference_positions``), or the given *positions*.
     When True, checks all sites with at least one non-missing genotype
     (including singletons, multi-allelic, and monomorphic).
     """
+    if positions is None:
+        positions = _inference_positions(input_store)
+    positions = set(np.asarray(positions).tolist())
     input_gt = input_store["call_genotype"][:]  # (S, N, P)
     input_pos = input_store["variant_position"][:]  # (S,)
     input_alleles = input_store["variant_allele"][:]  # (S, A)
@@ -137,11 +170,8 @@ def _check_genotypes(input_store, output_ts, ploidy=1, check_all=False):
         non_missing = gt_flat[gt_flat >= 0]
         if len(non_missing) == 0:
             continue
-        if not check_all:
-            # Inference-only mode: sites carrying both the ancestral allele
-            # and at least one derived allele
-            if not (np.any(non_missing == 0) and np.any(non_missing > 0)):
-                continue
+        if not check_all and int(p) not in positions:
+            continue
         pos_to_idx[int(p)] = i
 
     for variant in output_ts.variants():
@@ -172,7 +202,12 @@ def _simulate(
     random_seed=42,
     model=None,
 ):
-    """Simulate a tree sequence with msprime and return it."""
+    """
+    Simulate a tree sequence with msprime and return it. Mutations are
+    biallelic unless a different mutation *model* is given.
+    """
+    if model is None:
+        model = msprime.BinaryMutationModel()
     ts = msprime.sim_ancestry(
         samples=num_samples,
         sequence_length=sequence_length,
@@ -343,10 +378,13 @@ class TestGenotypeRoundtrip:
 
 
 class TestMultiallelicRoundtrip:
-    """Inference sites with more than two alleles and recurrent mutations."""
+    """
+    Ancestors are generated from biallelic data, and samples carrying other
+    alleles at the inference sites are matched in afterwards.
+    """
 
     def test_hand_constructed_triallelic(self):
-        """One triallelic site; samples carry each of the three alleles."""
+        """Samples matched in carry a third allele at an inference site."""
         genotypes = np.array(
             [
                 [[0], [1], [2], [2]],
@@ -361,50 +399,67 @@ class TestMultiallelicRoundtrip:
             ancestral_state=np.array(["A", "C"]),
             sequence_length=100,
         )
-        ts = _run_pipeline(store)
-        _check_genotypes(store, ts, ploidy=1)
+        ancestor_store = helpers.biallelic_sites_vcz(store, samples=[0, 1])
+        ts = _run_pipeline(store, ancestor_store=ancestor_store)
+        _check_genotypes(store, ts, ploidy=1, positions=[10, 20])
+        site = ts.site(position=10)
+        derived_states = {m.derived_state for m in site.mutations}
+        assert derived_states == {"T", "G"}
 
-    @pytest.mark.parametrize("seed", [1, 2, 3, 4])
-    def test_simulated_jc69(self, seed):
+    @staticmethod
+    def simulate(seed):
         sim_ts = _simulate(
-            num_samples=10,
+            num_samples=20,
             sequence_length=2_000,
             recombination_rate=1e-7,
             mutation_rate=2e-6,
             random_seed=seed,
             model=msprime.JC69(),
         )
-        num_alleles = np.array([len(v.alleles) for v in sim_ts.variants()])
-        assert np.any(num_alleles > 2)
         store = helpers.ts_to_sample_vcz(sim_ts)
-        ts = _run_pipeline(store)
-        _check_genotypes(store, ts, ploidy=1)
-        assert np.any(np.bincount(ts.mutations_site) > 1)
+        # Ancestors come from the biallelic sites of the first 10 samples
+        ancestor_store = helpers.biallelic_sites_vcz(store, samples=np.arange(10))
+        return store, ancestor_store
 
-    @pytest.mark.parametrize("seed", [1, 2, 3, 4])
+    @staticmethod
+    def check_multiallelic_inference_sites(ts, ancestor_store):
+        inference_positions = _inference_positions(ancestor_store)
+        num_alleles = np.array([len(set(v.alleles) - {None}) for v in ts.variants()])
+        is_inference = np.isin(ts.sites_position, inference_positions)
+        assert np.any(num_alleles[is_inference] > 2)
+        num_mutations = np.bincount(ts.mutations_site, minlength=ts.num_sites)
+        assert np.any(num_mutations[is_inference] > 1)
+
+    @pytest.mark.parametrize("seed", [1, 2, 4, 5])
+    def test_simulated_jc69(self, seed):
+        store, ancestor_store = self.simulate(seed)
+        ts = _run_pipeline(store, ancestor_store=ancestor_store)
+        _check_genotypes(
+            store, ts, ploidy=1, positions=_inference_positions(ancestor_store)
+        )
+        self.check_multiallelic_inference_sites(ts, ancestor_store)
+
+    @pytest.mark.parametrize("seed", [1, 2, 4, 5])
     def test_simulated_jc69_two_sample_groups(self, seed):
         """
         Half of the samples are slightly older, so they are matched in an
         earlier group and their mutations (to any derived allele) are in
         the reference panel when the remaining samples are matched.
         """
-        sim_ts = _simulate(
-            num_samples=10,
-            sequence_length=2_000,
-            recombination_rate=1e-7,
-            mutation_rate=2e-6,
-            random_seed=seed,
-            model=msprime.JC69(),
-        )
-        store = helpers.ts_to_sample_vcz(sim_ts)
-        sample_time = np.zeros(10)
+        store, ancestor_store = self.simulate(seed)
+        sample_time = np.zeros(20)
         sample_time[::2] = 1e-6
         helpers._arr(store, "sample_time", sample_time, ["samples"])
-        ts = _run_pipeline(store, sample_time="sample_time")
-        _check_genotypes(store, ts, ploidy=1)
+        ts = _run_pipeline(
+            store, sample_time="sample_time", ancestor_store=ancestor_store
+        )
+        _check_genotypes(
+            store, ts, ploidy=1, positions=_inference_positions(ancestor_store)
+        )
+        self.check_multiallelic_inference_sites(ts, ancestor_store)
         samples = ts.samples()
         older_samples = samples[ts.nodes_time[samples] > 0]
-        assert len(older_samples) == 5
+        assert len(older_samples) == 10
         # Younger samples copy from older samples carrying shared alleles
         assert np.any(np.isin(ts.edges_parent, older_samples))
 
@@ -453,7 +508,7 @@ class TestAugmentedRoundtrip:
         genotypes = np.array(
             [
                 [[0], [1], [1]],  # biallelic
-                [[0], [1], [2]],  # tri-allelic — dropped by inference
+                [[0], [1], [2]],  # tri-allelic — not used for ancestors
                 [[1], [0], [1]],  # biallelic
             ],
             dtype=np.int8,
@@ -469,7 +524,9 @@ class TestAugmentedRoundtrip:
             ancestral_state=ancestral,
             sequence_length=1000,
         )
-        ts = _run_pipeline_with_augment(store)
+        ts = _run_pipeline_with_augment(
+            store, ancestor_store=helpers.biallelic_sites_vcz(store)
+        )
 
         # All 3 sites should be in the output
         output_positions = set(ts.sites_position)
@@ -504,7 +561,9 @@ class TestAugmentedRoundtrip:
             ancestral_state=ancestral,
             sequence_length=1000,
         )
-        ts = _run_pipeline_with_augment(store)
+        ts = _run_pipeline_with_augment(
+            store, ancestor_store=helpers.biallelic_sites_vcz(store)
+        )
 
         output_positions = set(ts.sites_position)
         for p in [100, 200, 300, 400]:
@@ -739,10 +798,13 @@ class TestAugmentedRoundtrip:
             ploidy=1,
             mutation_rate=1e-7,
             random_seed=seed,
+            model=msprime.JC69(),
         )
         assert sim_ts.num_sites > 0, "Simulation produced no sites"
         store = helpers.ts_to_sample_vcz(sim_ts)
-        ts = _run_pipeline_with_augment(store)
+        ts = _run_pipeline_with_augment(
+            store, ancestor_store=helpers.biallelic_sites_vcz(store)
+        )
 
         gt = store["call_genotype"][:]
         input_positions = set()

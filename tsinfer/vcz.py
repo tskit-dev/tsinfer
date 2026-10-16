@@ -2509,6 +2509,11 @@ class MultiSourceView:
         return self._positions
 
     @property
+    def ancestral_alleles(self) -> np.ndarray:
+        """Ancestral allele strings aligned with ``positions`` ("" if unknown)."""
+        return self._ancestral_alleles
+
+    @property
     def alleles(self) -> np.ndarray:
         if self._allele_mapper is None:
             raise RuntimeError("prepare() must be called before alleles")

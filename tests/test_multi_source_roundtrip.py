@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import helpers
 import numpy as np
+import pytest
 import zarr
 
 from tsinfer import config, pipeline
@@ -613,17 +614,9 @@ create_individuals = false
 """
         config_path = _write_toml(tmp_path, toml_content)
         cfg = config.Config.from_toml(config_path)
-        ts = pipeline.run(cfg)
-
-        # Verify site 0 has 3 alleles
-        site0 = ts.site(0)
-        all_alleles = {site0.ancestral_state}
-        for mut in site0.mutations:
-            all_alleles.add(mut.derived_state)
-        assert len(all_alleles) >= 3, f"Expected triallelic, got {all_alleles}"
-
-        _check_genotypes(path_a, ts)
-        _check_genotypes(path_b, ts)
+        # Combined, the ancestor sources have alleles A/T/G at site 0
+        with pytest.raises(ValueError, match="position 100 "):
+            pipeline.run(cfg)
 
     def test_triallelic_ancestors_from_one_source(self, tmp_path):
         """Ancestors from source A only; source B matched against them."""
@@ -664,6 +657,9 @@ create_individuals = false
         ts = pipeline.run(cfg)
         _check_genotypes(path_a, ts)
         _check_genotypes(path_b, ts)
+        # Source B brings in G at site 0 at the matching stage
+        site0 = ts.site(position=100)
+        assert {m.derived_state for m in site0.mutations} == {"T", "G"}
 
     def test_all_sites_same_alleles_across_sources(self, tmp_path):
         """Control: both sources have identical alleles (all biallelic)."""
@@ -726,3 +722,98 @@ create_individuals = false
         ts = pipeline.run(cfg)
         _check_genotypes(path_a, ts)
         _check_genotypes(path_b, ts)
+
+
+# Site 0 has a third allele carried only by samples s4-s7, which are matched
+# in but not used for ancestor generation.
+_SUBSET_GT = np.array(
+    [
+        [[0], [1], [0], [1], [2], [2], [1], [0]],
+        [[0], [1], [0], [1], [0], [1], [1], [0]],
+        [[0], [1], [1], [0], [1], [0], [0], [1]],
+        [[0], [1], [1], [0], [0], [0], [1], [1]],
+        [[1], [0], [0], [1], [1], [1], [0], [0]],
+        [[1], [0], [1], [0], [0], [1], [0], [1]],
+    ],
+    dtype=np.int8,
+)
+
+
+def _write_subset_vcz(tmp_path, *, swap_alt_alleles=False):
+    """
+    Write the store with site 0 alleles A,T,G; or, if *swap_alt_alleles*,
+    with alleles A,G,T and the genotype codes swapped to match.
+    """
+    genotypes = _SUBSET_GT.copy()
+    site0_alleles = ["A", "T", "G"]
+    if swap_alt_alleles:
+        genotypes[0] = np.array([0, 2, 1])[genotypes[0]]
+        site0_alleles = ["A", "G", "T"]
+    alleles = np.array([site0_alleles] + [["A", "T", ""]] * 5)
+    store = helpers.make_sample_vcz(
+        genotypes=genotypes,
+        positions=_TRI_POSITIONS,
+        alleles=alleles,
+        ancestral_state=np.array(["A"] * 6),
+        sequence_length=_TRI_SEQ_LEN,
+        sample_ids=np.array([f"s{i}" for i in range(8)]),
+    )
+    path = tmp_path / "samples.vcz"
+    zarr.save(path, **{k: store[k][:] for k in store})
+    return path
+
+
+def _subset_config(tmp_path, path):
+    ancestor_vcz = _toml_path(tmp_path / "ancestors.vcz")
+    output_trees = _toml_path(tmp_path / "output.trees")
+    toml_content = f"""\
+[[source]]
+name = "ancestor_samples"
+path = "{_toml_path(path)}"
+samples = "s0,s1,s2,s3"
+
+[[source]]
+name = "other_samples"
+path = "{_toml_path(path)}"
+samples = "s4,s5,s6,s7"
+
+[ancestral_state]
+path = "{_toml_path(path)}"
+field = "variant_ancestral_allele"
+
+[[ancestors]]
+name = "ancestors"
+path = "{ancestor_vcz}"
+sources = ["ancestor_samples"]
+
+[match]
+output = "{output_trees}"
+
+[match.sources.ancestors]
+node_flags = 0
+create_individuals = false
+
+[match.sources.ancestor_samples]
+[match.sources.other_samples]
+"""
+    config_path = _write_toml(tmp_path, toml_content)
+    return config.Config.from_toml(config_path)
+
+
+class TestMultiAllelicSampleSubset:
+    """Ancestors from a subset of the samples in a store; the rest matched in."""
+
+    def test_third_allele_in_matched_samples(self, tmp_path):
+        path = _write_subset_vcz(tmp_path)
+        cfg = _subset_config(tmp_path, path)
+        ts = pipeline.run(cfg)
+        _check_genotypes(path, ts)
+        site0 = ts.site(position=100)
+        assert {m.derived_state for m in site0.mutations} == {"T", "G"}
+
+    def test_ancestor_samples_carry_second_alt_allele(self, tmp_path):
+        # The ancestor samples carry only T, which is listed second (code 2)
+        path = _write_subset_vcz(tmp_path, swap_alt_alleles=True)
+        cfg = _subset_config(tmp_path, path)
+        with pytest.raises(ValueError, match="position 100 "):
+            pipeline.run(cfg)

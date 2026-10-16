@@ -337,8 +337,7 @@ def _process_interval(
         disable=not progress,
     )
     for j, var in enumerate(gt_iter):
-        derived_gt = np.where(var.genotypes > 0, np.int8(1), var.genotypes)
-        ab.add_site(time=float(local_times[j]), genotypes=derived_gt)
+        ab.add_site(time=float(local_times[j]), genotypes=var.genotypes)
 
     ancestor_descriptors = list(ab.ancestor_descriptors())
     ab_mem_mb = ab.mem_size / (1024 * 1024)
@@ -559,19 +558,36 @@ def infer_ancestors(
         total_haplotypes,
     )
 
-    # Prepare the view for all positions (pass 1 needs alleles + genotypes)
-    view.prepare(view.positions)
+    # Sites with an unknown ancestral allele cannot be polarised
+    known_ancestral = view.ancestral_alleles != ""
+    unified_positions = view.positions[known_ancestral]
+    num_unknown = view.num_sites - len(unified_positions)
+    if num_unknown > 0:
+        logger.info("Skipping %d sites with unknown ancestral allele", num_unknown)
 
-    # Build InferenceSites-compatible arrays from the view
-    unified_positions = view.positions
+    # Prepare the view for these positions (pass 1 needs alleles + genotypes)
+    view.prepare(unified_positions)
     unified_alleles = view.alleles
     # ancestral_allele_index is always 0 in canonical encoding
-    unified_anc_indices = np.zeros(view.num_sites, dtype=np.int8)
+    unified_anc_indices = np.zeros(len(unified_positions), dtype=np.int8)
 
     # --- 2. Pass 1: compute site stats ---
     def _pass1_genotype_iter():
-        for var in view.iter_genotypes():
-            yield np.where(var.genotypes > 0, np.int8(1), var.genotypes)
+        for j, var in enumerate(view.iter_genotypes(unified_positions)):
+            if np.any(var.genotypes > 1):
+                site_alleles = [a for a in unified_alleles[j] if a != ""]
+                raise ValueError(
+                    f"Site at position {int(var.position)} has genotypes other "
+                    "than the ancestral allele and one derived allele "
+                    f"(alleles {site_alleles}, ancestral first). Ancestor "
+                    "generation requires every site in the ancestor sources to "
+                    "be biallelic, with the ancestral allele as one of the two "
+                    "alleles: the site may be multiallelic, or its ancestral "
+                    "allele may not be among the alleles in the data. Exclude "
+                    "such sites from the ancestor sources (e.g. using the "
+                    "source's exclude or targets filters)."
+                )
+            yield var.genotypes
 
     unified_inf_sites = InferenceSites(
         positions=unified_positions,
