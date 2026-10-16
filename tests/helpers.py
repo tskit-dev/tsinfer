@@ -287,6 +287,54 @@ def set_contigs(
     return root
 
 
+def combine_contigs(
+    stores: list[zarr.Group],
+    contig_ids: list[str],
+    variants_chunk_size: int,
+) -> zarr.Group:
+    """
+    Concatenate single-contig sample stores (with identical samples) into one
+    multi-contig store, with variants from ``stores[j]`` on ``contig_ids[j]``.
+    ``call_genotype`` is chunked by ``variants_chunk_size`` along the variants
+    dimension, so that contig boundaries can fall within chunks.
+    """
+    max_alleles = max(store["variant_allele"].shape[1] for store in stores)
+    genotypes = []
+    positions = []
+    alleles = []
+    ancestral_state = []
+    variant_contig = []
+    for j, store in enumerate(stores):
+        num_sites = store["variant_position"].shape[0]
+        genotypes.append(store["call_genotype"][:])
+        positions.append(store["variant_position"][:])
+        store_alleles = np.full((num_sites, max_alleles), "", dtype=object)
+        store_alleles[:, : store["variant_allele"].shape[1]] = store["variant_allele"][:]
+        alleles.append(store_alleles)
+        ancestral_state.append(store["variant_ancestral_allele"][:])
+        variant_contig.append(np.full(num_sites, j, dtype=np.int8))
+    genotypes = np.concatenate(genotypes)
+    contig_lengths = [int(store["contig_length"][0]) for store in stores]
+
+    root = _open_memory_group()
+    chunks = (variants_chunk_size,) + genotypes.shape[1:]
+    gt = root.create_array("call_genotype", data=genotypes, chunks=chunks)
+    gt.attrs["_ARRAY_DIMENSIONS"] = ["variants", "samples", "ploidy"]
+    _arr(root, "variant_position", np.concatenate(positions), ["variants"])
+    _arr(root, "variant_contig", np.concatenate(variant_contig), ["variants"])
+    _str_array(root, "variant_allele", np.concatenate(alleles), ["variants", "alleles"])
+    _str_array(
+        root,
+        "variant_ancestral_allele",
+        np.concatenate(ancestral_state),
+        ["variants"],
+    )
+    _str_array(root, "contig_id", np.array(contig_ids), ["contigs"])
+    _arr(root, "contig_length", np.array(contig_lengths, dtype=np.int64), ["contigs"])
+    _str_array(root, "sample_id", stores[0]["sample_id"][:], ["samples"])
+    return root
+
+
 def vcz_to_vcf(root: zarr.Group, *, no_version: bool = True) -> str:
     """
     Convert an in-memory VCZ group to VCF text using vcztools internals.

@@ -9,6 +9,23 @@ A complete annotated example is in
 [example_config.toml](https://github.com/tskit-dev/tsinfer/blob/main/example_config.toml).
 
 
+## Top-level fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `contig` | string | — | Contig to infer (e.g. `"chr20"`). Required when a store holds variants on more than one contig. |
+
+Inference works on one contig at a time. Every store (sources, ancestral state,
+ancestors) is restricted to the variants on `contig`, which must be declared in
+each store's `contig_id` header under the same name. Each store must be sorted
+by contig. If `contig` is not set, the variants in all stores must lie on a
+single contig, which is used.
+
+The sequence length is taken from the contig's `contig_length` in the stores,
+at least one of which must declare it. If stores declare different lengths, a
+warning is issued and the largest is used.
+
+
 ## `[[source]]`
 
 Each `[[source]]` block defines a named view over a VCZ store. The same store

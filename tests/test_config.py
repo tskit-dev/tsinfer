@@ -320,6 +320,17 @@ class TestFromTomlStandard:
         assert cfg.post_process.split_ultimate is True
         assert cfg.post_process.erase_flanks is True
 
+    def test_contig_default(self, tmp_path):
+        cfg = config.Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
+        assert cfg.contig is None
+        assert "contig =" not in cfg.format()
+
+    def test_contig(self, tmp_path):
+        content = 'contig = "chr20"\n' + _STANDARD_TOML
+        cfg = config.Config.from_toml(_write_toml(tmp_path, content))
+        assert cfg.contig == "chr20"
+        assert "contig = chr20" in cfg.format()
+
 
 # ---------------------------------------------------------------------------
 # TOML parsing — path resolution
