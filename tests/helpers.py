@@ -335,6 +335,72 @@ def combine_contigs(
     return root
 
 
+def rechunk_variants(root: zarr.Group, variants_chunk_size: int) -> zarr.Group:
+    """
+    Rewrite every variants-dimensioned array of a store so that it is chunked
+    by ``variants_chunk_size`` along the variants dimension. Returns the store.
+    """
+    for name in list(root.array_keys()):
+        array = root[name]
+        dims = array.attrs["_ARRAY_DIMENSIONS"]
+        if dims[0] != "variants":
+            continue
+        data = array[:]
+        is_str = data.dtype.kind in ("U", "S", "O", "T")
+        chunks = (variants_chunk_size,) + data.shape[1:]
+        del root[name]
+        if is_str:
+            a = root.create_array(name, shape=data.shape, dtype=_VLEN_STR, chunks=chunks)
+            a[:] = data
+        else:
+            a = root.create_array(name, data=data, chunks=chunks)
+        a.attrs["_ARRAY_DIMENSIONS"] = dims
+    return root
+
+
+def add_region_index(root: zarr.Group) -> zarr.Group:
+    """
+    Add the ``variant_length`` and ``region_index`` arrays that vcztools needs
+    for ``regions`` and ``targets`` filtering (as written by bio2zarr), with
+    one region index row per contig within each variant chunk. Returns the
+    store.
+    """
+    positions = root["variant_position"][:]
+    contigs = root["variant_contig"][:]
+    ref_lengths = np.array([len(a) for a in root["variant_allele"][:, 0].tolist()])
+    chunk_size = root["variant_position"].chunks[0]
+    variant_length = root.create_array(
+        "variant_length", data=ref_lengths.astype(np.int32), chunks=(chunk_size,)
+    )
+    variant_length.attrs["_ARRAY_DIMENSIONS"] = ["variants"]
+    ends = positions + ref_lengths - 1
+    rows = []
+    for start in range(0, len(positions), chunk_size):
+        chunk = slice(start, start + chunk_size)
+        for contig in np.unique(contigs[chunk]).tolist():
+            in_contig = contigs[chunk] == contig
+            chunk_positions = positions[chunk][in_contig]
+            chunk_ends = ends[chunk][in_contig]
+            rows.append(
+                [
+                    start // chunk_size,
+                    contig,
+                    chunk_positions[0],
+                    chunk_ends[-1],
+                    np.max(chunk_ends),
+                    len(chunk_positions),
+                ]
+            )
+    region_index = np.array(rows, dtype=np.int32).reshape(-1, 6)
+    _arr(
+        root,
+        "region_index",
+        region_index,
+        ["region_index_values", "region_index_fields"],
+    )
+    return root
+
+
 def vcz_to_vcf(root: zarr.Group, *, no_version: bool = True) -> str:
     """
     Convert an in-memory VCZ group to VCF text using vcztools internals.

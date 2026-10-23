@@ -194,6 +194,74 @@ class TestMatch:
         assert out_ts.num_sites == 2
 
 
+class TestMatchSourceFilters:
+    """Variants excluded by a match source's filters are not matched."""
+
+    def _run(self, **filters):
+        sim_ts = _simulate(num_samples=6, random_seed=11)
+        store_a = helpers.ts_to_sample_vcz(sim_ts)
+        anc_cfg = config.AncestorsConfig(name="ancestors", path=None, sources=["a"])
+        ancestor_store = ancestors.infer_ancestors(
+            config.Source(path=store_a, name="a"), anc_cfg, _anc_state(store_a)
+        )
+        site_position = int(ancestor_store["variant_position"][0])
+        # Source b has an indel at the first inference site, carried by all
+        positions = store_a["variant_position"][:]
+        alleles = store_a["variant_allele"][:].astype(object)
+        genotypes = store_a["call_genotype"][:]
+        row = int(np.flatnonzero(positions == site_position)[0])
+        alleles[row] = [alleles[row, 0], alleles[row, 0] + "TTA"]
+        genotypes[row] = 1
+        num_samples = genotypes.shape[1]
+        store_b = helpers.make_sample_vcz(
+            genotypes=genotypes,
+            positions=positions,
+            alleles=alleles,
+            ancestral_state=store_a["variant_ancestral_allele"][:],
+            sequence_length=int(sim_ts.sequence_length),
+            sample_ids=np.array([f"b{j}" for j in range(num_samples)]),
+        )
+        cfg = config.Config(
+            sources={
+                "a": config.Source(path=store_a, name="a"),
+                "b": config.Source(path=store_b, name="b", **filters),
+                "ancestors": config.Source(
+                    path=ancestor_store, name="ancestors", sample_time="sample_time"
+                ),
+            },
+            ancestors=[
+                config.AncestorsConfig(
+                    name="ancestors", path=ancestor_store, sources=["a"]
+                )
+            ],
+            match=config.MatchConfig(
+                sources={
+                    "ancestors": config.MatchSourceConfig(
+                        node_flags=0, create_individuals=False
+                    ),
+                    "a": config.MatchSourceConfig(),
+                    "b": config.MatchSourceConfig(),
+                },
+                output="output.trees",
+            ),
+            ancestral_state=_anc_state(store_a),
+        )
+        ts = pipeline.match(cfg)
+        site = ts.site(position=site_position)
+        derived_states = {m.derived_state for m in site.mutations}
+        return ts, alleles[row, 1], derived_states
+
+    def test_unfiltered_indel_matched(self):
+        _, indel, derived_states = self._run()
+        assert indel in derived_states
+
+    def test_filtered_indel_not_matched(self):
+        ts, indel, derived_states = self._run(include='TYPE="snp"')
+        assert indel not in derived_states
+        assert indel not in {m.derived_state for m in ts.mutations()}
+        assert indel not in {a for site in ts.sites() for a in site.alleles}
+
+
 class TestMatchContig:
     def _sample_store(self):
         sim_ts = _simulate(num_samples=6, random_seed=7)

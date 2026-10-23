@@ -119,100 +119,6 @@ def _compute_site_stats(genotype_iter, num_sites, num_haplotypes, progress=False
 # ---------------------------------------------------------------------------
 
 
-def compute_inference_sites(
-    store: zarr.Group,
-    ancestral_state: config.AncestralState,
-    *,
-    include: str | None = None,
-    exclude: str | None = None,
-    regions: str | None = None,
-    targets: str | None = None,
-):
-    """
-    Return an InferenceSites dataclass for sites that pass filtering and
-    have a valid ancestral allele.
-
-    Variant filtering (include/exclude/regions/targets) is delegated to
-    vcztools via ``iter_variants``.
-    """
-    # Detect duplicate positions upfront so we can skip them
-    positions = np.asarray(store["variant_position"][:], dtype=np.int32)
-    dup_positions = vcz_mod._find_duplicate_positions(positions)
-
-    # Build ancestral state lookup
-    ann_store = vcz_mod.open_store(ancestral_state.path)
-    ann_positions = np.asarray(ann_store["variant_position"][:])
-    ann_values = np.asarray(ann_store[ancestral_state.field][:])
-    ann_lookup = {
-        int(k): str(v) for k, v in zip(ann_positions.tolist(), ann_values.tolist())
-    }
-
-    # Iterate variants that pass vcztools filters, collecting metadata
-    fields = ["variant_position", "variant_allele"]
-
-    pos_list = []
-    allele_list = []
-    anc_idx_list = []
-    num_filtered = 0
-    num_no_ancestral = 0
-    num_duplicate = 0
-
-    for variant in vcz_mod.iter_variants(
-        store,
-        fields=fields,
-        include=include,
-        exclude=exclude,
-        regions=regions,
-        targets=targets,
-    ):
-        num_filtered += 1
-        pos = int(variant["variant_position"])
-
-        if pos in dup_positions:
-            num_duplicate += 1
-            continue
-
-        site_alleles = variant["variant_allele"]
-
-        anc_str = ann_lookup.get(pos, "")
-
-        # Find ancestral allele index
-        anc_idx = -1
-        for j, a in enumerate(site_alleles.tolist()):
-            if a is not None and a != "" and a == anc_str:
-                anc_idx = j
-                break
-
-        if anc_idx < 0:
-            num_no_ancestral += 1
-            continue
-
-        pos_list.append(pos)
-        allele_list.append(site_alleles)
-        anc_idx_list.append(anc_idx)
-
-    logger.info(
-        "Sites passing variant filters: %d; skipped %d (no ancestral allele match)"
-        ", %d (duplicate positions)",
-        num_filtered,
-        num_no_ancestral,
-        num_duplicate,
-    )
-
-    if not pos_list:
-        return InferenceSites(
-            positions=np.zeros(0, dtype=np.int32),
-            alleles=np.zeros((0, 0), dtype=object),
-            ancestral_allele_index=np.zeros(0, dtype=np.int8),
-        )
-
-    return InferenceSites(
-        positions=np.array(pos_list, dtype=np.int32),
-        alleles=np.stack(allele_list),
-        ancestral_allele_index=np.array(anc_idx_list, dtype=np.int8),
-    )
-
-
 def compute_sequence_intervals(
     positions,
     sequence_length: int,
@@ -573,9 +479,7 @@ def infer_ancestors(
     if num_unknown > 0:
         logger.info("Skipping %d sites with unknown ancestral allele", num_unknown)
 
-    # Prepare the view for these positions (pass 1 needs alleles + genotypes)
-    view.prepare(unified_positions)
-    unified_alleles = view.alleles
+    unified_alleles = view.alleles[known_ancestral]
     # ancestral_allele_index is always 0 in canonical encoding
     unified_anc_indices = np.zeros(len(unified_positions), dtype=np.int8)
 
@@ -589,11 +493,9 @@ def infer_ancestors(
                     "than the ancestral allele and one derived allele "
                     f"(alleles {site_alleles}, ancestral first). Ancestor "
                     "generation requires every site in the ancestor sources to "
-                    "be biallelic, with the ancestral allele as one of the two "
-                    "alleles: the site may be multiallelic, or its ancestral "
-                    "allele may not be among the alleles in the data. Exclude "
-                    "such sites from the ancestor sources (e.g. using the "
-                    "source's exclude or targets filters)."
+                    "be biallelic. Exclude multiallelic sites from the ancestor "
+                    "sources (e.g. using the source's exclude or targets "
+                    "filters)."
                 )
             yield var.genotypes
 
