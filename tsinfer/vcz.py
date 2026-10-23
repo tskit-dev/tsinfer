@@ -2134,6 +2134,7 @@ class HaplotypeReader:
         schedule: list[tuple[str, str, int]] | None = None,
         read_workers: int | None = None,
         num_threads: int = 0,
+        reference_alleles: list[list[str]] | None = None,
     ):
         """
         Parameters
@@ -2159,6 +2160,10 @@ class HaplotypeReader:
         num_threads : int
             Number of matching threads (used to derive ``read_workers``
             default).
+        reference_alleles : list of list of str or None
+            Extra alleles for each reference position (e.g. the alleles
+            already present in a reference tree sequence), which are added
+            to the allele map alongside those of the sources.
         """
         if read_workers is None:
             read_workers = max(1, num_threads // 2)
@@ -2191,6 +2196,8 @@ class HaplotypeReader:
         per_source_alleles = []
         for reader in self._readers.values():
             per_source_alleles.append((reader._src_positions, reader._src_alleles))
+        if reference_alleles is not None:
+            per_source_alleles.append((self._positions, reference_alleles))
 
         self._allele_mapper = build_allele_mapper(
             self._positions, ancestral_alleles, per_source_alleles

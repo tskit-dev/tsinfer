@@ -80,7 +80,7 @@ Controls the HMM matching step.
 |-------|------|---------|-------------|
 | `output` | string | (required) | Output `.trees` file path |
 | `path_compression` | bool | `true` | Enable Viterbi path compression |
-| `reference_ts` | string | — | Reference tree sequence (skip ancestor generation) |
+| `reference_ts` | string | — | Tree sequence to match against instead of inferred ancestors, e.g. the output of matching ancestors only. Haplotypes are matched at its sites, and all of its nodes must be older than the haplotypes being matched. |
 | `workdir` | string | — | Checkpoint directory (enables resume) |
 | `keep_intermediates` | bool | `false` | Keep per-group checkpoint files |
 

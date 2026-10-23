@@ -1058,6 +1058,323 @@ class TestWorkdir:
 
 
 # ---------------------------------------------------------------------------
+# TestReferenceTs
+# ---------------------------------------------------------------------------
+
+
+def _ancestors_only_config(sample_store, ancestor_store, create_individuals=False):
+    """Config that matches the ancestors only, producing a reference ts."""
+    anc_src = config.Source(
+        path=ancestor_store, name="ancestors", sample_time="sample_time"
+    )
+    return config.Config(
+        sources={"ancestors": anc_src},
+        ancestors=[
+            config.AncestorsConfig(
+                name="ancestors", path=ancestor_store, sources=["test"]
+            )
+        ],
+        match=config.MatchConfig(
+            sources={
+                "ancestors": config.MatchSourceConfig(
+                    node_flags=0, create_individuals=create_individuals
+                ),
+            },
+            output="reference.trees",
+        ),
+        ancestral_state=_anc_state(sample_store),
+    )
+
+
+def _reference_config(sample_store, reference_ts_path, **kwargs):
+    """Config that matches the samples against a reference ts."""
+    return config.Config(
+        sources={"test": config.Source(path=sample_store, name="test")},
+        ancestors=[],
+        match=config.MatchConfig(
+            sources={"test": config.MatchSourceConfig()},
+            output="output.trees",
+            reference_ts=reference_ts_path,
+        ),
+        ancestral_state=_anc_state(sample_store),
+        **kwargs,
+    )
+
+
+def _infer_ancestors(sample_store):
+    anc_cfg = config.AncestorsConfig(name="ancestors", path=None, sources=["test"])
+    return ancestors.infer_ancestors(
+        config.Source(path=sample_store, name="test"), anc_cfg, _anc_state(sample_store)
+    )
+
+
+def _edge_set(ts):
+    return set(zip(ts.edges_left, ts.edges_right, ts.edges_parent, ts.edges_child))
+
+
+def _mutation_set(ts):
+    return set(zip(ts.mutations_site, ts.mutations_node, ts.mutations_derived_state))
+
+
+class TestReferenceTs:
+    """Matching samples against a reference tree sequence."""
+
+    def _setup(self, tmp_path, random_seed=1, ploidy=1, create_individuals=False):
+        """
+        Return (sample_store, ancestor_store, reference_ts, reference_ts_path)
+        where reference_ts is the result of matching the ancestors only.
+        """
+        sim_ts = _simulate(num_samples=6, ploidy=ploidy, random_seed=random_seed)
+        sample_store = helpers.ts_to_sample_vcz(sim_ts)
+        ancestor_store = _infer_ancestors(sample_store)
+        anc_cfg = _ancestors_only_config(
+            sample_store, ancestor_store, create_individuals=create_individuals
+        )
+        reference_ts = pipeline.match(anc_cfg)
+        reference_ts_path = tmp_path / "reference.trees"
+        reference_ts.dump(reference_ts_path)
+        return sample_store, ancestor_store, reference_ts, reference_ts_path
+
+    @pytest.mark.parametrize("random_seed", [1, 2, 3])
+    @pytest.mark.parametrize("ploidy", [1, 2])
+    def test_equivalent_to_single_match(self, tmp_path, random_seed, ploidy):
+        """Matching against an ancestors-only reference gives the same
+        result as matching ancestors and samples in one pass."""
+        sample_store, ancestor_store, _, reference_ts_path = self._setup(
+            tmp_path, random_seed=random_seed, ploidy=ploidy
+        )
+        single_ts = pipeline.match(_make_config(sample_store, ancestor_store))
+        cfg = _reference_config(sample_store, reference_ts_path)
+        two_step_ts = pipeline.match(cfg)
+        assert two_step_ts.num_samples > 0
+        two_step_ts.tables.assert_equals(single_ts.tables, ignore_provenance=True)
+
+    def test_does_not_use_root_ts(self, tmp_path):
+        """The output is built on the reference, not on a new root ts."""
+        sample_store, _, reference_ts, reference_ts_path = self._setup(tmp_path)
+        out_ts = pipeline.match(_reference_config(sample_store, reference_ts_path))
+        assert out_ts.num_nodes > reference_ts.num_nodes
+        np.testing.assert_array_equal(
+            out_ts.nodes_time[: reference_ts.num_nodes], reference_ts.nodes_time
+        )
+
+    def test_reference_ts_argument(self, tmp_path):
+        """A reference_ts argument is used in place of the config path."""
+        sample_store, _, reference_ts, reference_ts_path = self._setup(tmp_path)
+        expected = pipeline.match(_reference_config(sample_store, reference_ts_path))
+        cfg = _reference_config(sample_store, tmp_path / "does-not-exist.trees")
+        out_ts = pipeline.match(cfg, reference_ts=reference_ts)
+        out_ts.tables.assert_equals(expected.tables, ignore_provenance=True)
+
+    def test_reference_ts_argument_overrides_config(self, tmp_path):
+        """The argument wins over a different tree sequence in the config."""
+        sample_store, _, reference_ts, reference_ts_path = self._setup(tmp_path)
+        tables = reference_ts.dump_tables()
+        tables.metadata = {**reference_ts.metadata, "marker": "argument"}
+        marked_ts = tables.tree_sequence()
+        cfg = _reference_config(sample_store, reference_ts_path)
+        out_ts = pipeline.match(cfg, reference_ts=marked_ts)
+        assert out_ts.metadata["marker"] == "argument"
+
+    def test_reference_is_kept(self, tmp_path):
+        """Nodes, sites, edges and mutations of the reference are kept."""
+        sample_store, _, reference_ts, reference_ts_path = self._setup(
+            tmp_path, ploidy=2
+        )
+        out_ts = pipeline.match(_reference_config(sample_store, reference_ts_path))
+        num_ref_nodes = reference_ts.num_nodes
+        ref_nodes = reference_ts.tables.nodes
+        out_nodes = out_ts.tables.nodes
+        np.testing.assert_array_equal(out_nodes.time[:num_ref_nodes], ref_nodes.time)
+        np.testing.assert_array_equal(out_nodes.flags[:num_ref_nodes], ref_nodes.flags)
+        reference_ts.tables.sites.assert_equals(out_ts.tables.sites)
+        assert out_ts.metadata == reference_ts.metadata
+        assert _edge_set(reference_ts) <= _edge_set(out_ts)
+        assert _mutation_set(reference_ts) <= _mutation_set(out_ts)
+
+    def test_new_sample_nodes(self, tmp_path):
+        """Each sample haplotype becomes a new sample node with metadata."""
+        sample_store, _, reference_ts, reference_ts_path = self._setup(
+            tmp_path, ploidy=2
+        )
+        out_ts = pipeline.match(_reference_config(sample_store, reference_ts_path))
+        sample_ids = [str(x) for x in sample_store["sample_id"][:]]
+        new_nodes = list(out_ts.nodes())[reference_ts.num_nodes :]
+        assert len(new_nodes) == 2 * len(sample_ids)
+        assert out_ts.num_samples == len(new_nodes)
+        for node in new_nodes:
+            assert node.is_sample()
+            assert node.time == 0
+            assert node.metadata["source"] == "test"
+            assert node.metadata["sample_id"] in sample_ids
+        assert out_ts.num_individuals == len(sample_ids)
+
+    def test_individual_ids_offset(self, tmp_path):
+        """New individuals are appended after those in the reference."""
+        sample_store, _, reference_ts, reference_ts_path = self._setup(
+            tmp_path, ploidy=2, create_individuals=True
+        )
+        num_ref_individuals = reference_ts.num_individuals
+        assert num_ref_individuals > 0
+        out_ts = pipeline.match(_reference_config(sample_store, reference_ts_path))
+
+        reference_ts.tables.individuals.assert_equals(
+            out_ts.tables.individuals[:num_ref_individuals]
+        )
+        sample_ids = [str(x) for x in sample_store["sample_id"][:]]
+        new_individuals = list(out_ts.individuals())[num_ref_individuals:]
+        assert [ind.metadata["sample_id"] for ind in new_individuals] == sample_ids
+        for node in list(out_ts.nodes())[reference_ts.num_nodes :]:
+            assert node.individual >= num_ref_individuals
+            ind = out_ts.individual(node.individual)
+            assert ind.metadata["source"] == "test"
+            assert ind.metadata["sample_id"] == node.metadata["sample_id"]
+        # Reference nodes keep their individuals
+        np.testing.assert_array_equal(
+            out_ts.nodes_individual[: reference_ts.num_nodes],
+            reference_ts.nodes_individual,
+        )
+
+    def test_population_ids_offset(self, tmp_path):
+        """New populations are appended after those in the reference."""
+        sample_store = helpers.make_sample_vcz(
+            genotypes=np.array(
+                [[[0], [1], [1]], [[1], [0], [1]], [[1], [1], [0]]], dtype=np.int8
+            ),
+            positions=np.array([100, 200, 300], dtype=np.int32),
+            alleles=np.array([["A", "T"], ["A", "T"], ["A", "T"]]),
+            ancestral_state=np.array(["A", "A", "A"]),
+            sequence_length=1000,
+            sample_population=np.array(["pop_A", "pop_B", "pop_A"]),
+        )
+        ancestor_store = _infer_ancestors(sample_store)
+        reference_ts = pipeline.match(
+            _ancestors_only_config(sample_store, ancestor_store)
+        )
+        tables = reference_ts.dump_tables()
+        tables.populations.metadata_schema = tskit.MetadataSchema.permissive_json()
+        tables.populations.add_row(metadata={"name": "existing"})
+        reference_ts_path = tmp_path / "reference.trees"
+        tables.tree_sequence().dump(reference_ts_path)
+
+        cfg = _reference_config(
+            sample_store,
+            reference_ts_path,
+            individual_metadata=config.IndividualMetadataConfig(
+                population="sample_population"
+            ),
+        )
+        out_ts = pipeline.match(cfg)
+        pop_names = [pop.metadata["name"] for pop in out_ts.populations()]
+        assert pop_names == ["existing", "pop_A", "pop_B"]
+        sample_ids = [str(x) for x in sample_store["sample_id"][:]]
+        sample_pops = [str(x) for x in sample_store["sample_population"][:]]
+        expected_pop = dict(zip(sample_ids, sample_pops))
+        for node_id in out_ts.samples():
+            node = out_ts.node(node_id)
+            pop = out_ts.population(node.population)
+            assert pop.metadata["name"] == expected_pop[node.metadata["sample_id"]]
+
+    def test_reference_allele_not_in_samples(self, tmp_path):
+        """Reference mutations with alleles that no match source has are
+        encoded, and the samples are still matched exactly."""
+        sample_store, _, reference_ts, _ = self._setup(tmp_path, random_seed=4)
+        assert reference_ts.num_mutations > 0
+        tables = reference_ts.dump_tables()
+        tables.mutations.packset_derived_state(["G"] * tables.mutations.num_rows)
+        reference_ts = tables.tree_sequence()
+        reference_ts_path = tmp_path / "reference_g.trees"
+        reference_ts.dump(reference_ts_path)
+
+        out_ts = pipeline.match(_reference_config(sample_store, reference_ts_path))
+        assert _mutation_set(reference_ts) <= _mutation_set(out_ts)
+        # The sample haplotypes are reproduced exactly at every site
+        sample_positions = sample_store["variant_position"][:]
+        sample_alleles = sample_store["variant_allele"][:]
+        sample_gt = sample_store["call_genotype"][:, :, 0]
+        for var in out_ts.variants():
+            row = int(np.searchsorted(sample_positions, var.site.position))
+            expected = sample_alleles[row][sample_gt[row]]
+            np.testing.assert_array_equal(np.array(var.states()), expected)
+
+    def test_sequence_length_mismatch(self, tmp_path):
+        sample_store, _, reference_ts, _ = self._setup(tmp_path)
+        tables = reference_ts.dump_tables()
+        tables.sequence_length = reference_ts.sequence_length + 1
+        cfg = _reference_config(sample_store, "unused.trees")
+        with pytest.raises(ValueError, match="sequence length"):
+            pipeline.match(cfg, reference_ts=tables.tree_sequence())
+
+    def test_reference_nodes_not_older(self, tmp_path):
+        """A reference that already holds time-0 samples is rejected."""
+        sample_store, ancestor_store, _, _ = self._setup(tmp_path)
+        full_ts = pipeline.match(_make_config(sample_store, ancestor_store))
+        cfg = _reference_config(sample_store, "unused.trees")
+        with pytest.raises(ValueError, match="must be older"):
+            pipeline.match(cfg, reference_ts=full_ts)
+
+    def test_non_integer_positions(self, tmp_path):
+        sample_store, _, reference_ts, _ = self._setup(tmp_path)
+        tables = reference_ts.dump_tables()
+        tables.sites.position = tables.sites.position + 0.5
+        cfg = _reference_config(sample_store, "unused.trees")
+        with pytest.raises(ValueError, match="integers"):
+            pipeline.match(cfg, reference_ts=tables.tree_sequence())
+
+    def test_workdir(self, tmp_path):
+        """Matching against a reference with a workdir gives the same result,
+        and the stored match jobs use the reference sites and offset ids."""
+        sample_store, _, reference_ts, reference_ts_path = self._setup(
+            tmp_path, ploidy=2, create_individuals=True
+        )
+        expected = pipeline.match(_reference_config(sample_store, reference_ts_path))
+        cfg = _reference_config(sample_store, reference_ts_path)
+        workdir = tmp_path / "wd"
+        cfg.match.workdir = str(workdir)
+        out_ts = pipeline.match(cfg)
+        out_ts.tables.assert_equals(expected.tables, ignore_provenance=True)
+
+        jobs = json.loads((workdir / "match-jobs.json").read_text())
+        positions = reference_ts.sites_position
+        for job in jobs:
+            assert job["start_position"] == positions[0]
+            assert job["end_position"] == positions[-1] + 1
+            assert job["individual_id"] >= reference_ts.num_individuals
+
+        # Re-running resumes from the final checkpoint
+        resumed_ts = pipeline.match(cfg)
+        resumed_ts.tables.assert_equals(out_ts.tables)
+
+    def test_compute_groups_json(self, tmp_path):
+        """Groups for a reference-only config use the reference sites."""
+        sample_store, _, reference_ts, reference_ts_path = self._setup(
+            tmp_path, create_individuals=True
+        )
+        cfg = _reference_config(sample_store, reference_ts_path)
+        jobs = json.loads(pipeline.compute_groups_json(cfg))
+        assert len(jobs) == len(sample_store["sample_id"][:])
+        positions = reference_ts.sites_position
+        for job in jobs:
+            assert job["source"] == "test"
+            assert job["start_position"] == positions[0]
+            assert job["end_position"] == positions[-1] + 1
+            assert job["individual_id"] >= reference_ts.num_individuals
+
+    def test_run_without_ancestors(self, tmp_path):
+        """run() with a reference and no [[ancestors]] skips ancestor inference."""
+        sample_store, _, _, reference_ts_path = self._setup(tmp_path)
+        cfg = _reference_config(
+            sample_store,
+            reference_ts_path,
+            post_process=config.PostProcessConfig(),
+        )
+        out_ts = pipeline.run(cfg)
+        expected = pipeline.post_process(pipeline.match(cfg), cfg)
+        out_ts.tables.assert_equals(expected.tables, ignore_provenance=True)
+        assert out_ts.num_samples == len(sample_store["sample_id"][:])
+
+
+# ---------------------------------------------------------------------------
 # TestAugmentSites
 # ---------------------------------------------------------------------------
 

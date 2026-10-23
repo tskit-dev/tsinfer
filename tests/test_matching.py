@@ -219,6 +219,70 @@ class TestMakeRootTs:
         for node in ts.nodes():
             assert node.metadata == {}
 
+    def test_individuals_and_populations(self):
+        positions = np.array([10, 20, 30], dtype=np.int32)
+        intervals = np.array([[10, 31]], dtype=np.int32)
+        ts = matching.make_root_ts(
+            1000.0,
+            positions,
+            intervals,
+            allele_mapper=self._mapper(3),
+            individuals=[{"sample_id": "a"}, {"sample_id": "b"}],
+            populations=[{"name": "p"}],
+        )
+        assert [ind.metadata for ind in ts.individuals()] == [
+            {"sample_id": "a"},
+            {"sample_id": "b"},
+        ]
+        assert [pop.metadata for pop in ts.populations()] == [{"name": "p"}]
+
+
+class TestPrepareReferenceTs:
+    def _reference_ts(self):
+        positions = np.array([10, 20, 30], dtype=np.int32)
+        intervals = np.array([[10, 31]], dtype=np.int32)
+        return matching.make_root_ts(
+            1000.0,
+            positions,
+            intervals,
+            allele_mapper=vcz.AlleleMapper(3, [["A", "T"]] * 3),
+            individuals=[{"sample_id": "existing"}],
+        )
+
+    def test_no_rows_returns_equal_ts(self):
+        ref = self._reference_ts()
+        ts = matching.prepare_reference_ts(ref)
+        ts.tables.assert_equals(ref.tables)
+
+    def test_appends_individuals(self):
+        ref = self._reference_ts()
+        ts = matching.prepare_reference_ts(ref, individuals=[{"sample_id": "new"}])
+        assert [ind.metadata for ind in ts.individuals()] == [
+            {"sample_id": "existing"},
+            {"sample_id": "new"},
+        ]
+        # Everything other than the individuals is unchanged
+        ts.tables.assert_equals(ref.tables, ignore_tables=["individuals"])
+
+    def test_populations_on_empty_table_get_json_schema(self):
+        ref = self._reference_ts()
+        ts = matching.prepare_reference_ts(ref, populations=[{"name": "p"}])
+        assert ts.tables.populations.metadata_schema.schema == {"codec": "json"}
+        assert ts.population(0).metadata == {"name": "p"}
+
+    def test_existing_population_schema_kept(self):
+        tables = self._reference_ts().dump_tables()
+        schema = tskit.MetadataSchema.permissive_json()
+        tables.populations.metadata_schema = schema
+        tables.populations.add_row(metadata={"name": "old"})
+        ref = tables.tree_sequence()
+        ts = matching.prepare_reference_ts(ref, populations=[{"name": "new"}])
+        assert ts.tables.populations.metadata_schema == schema
+        assert [pop.metadata for pop in ts.populations()] == [
+            {"name": "old"},
+            {"name": "new"},
+        ]
+
 
 # ---------------------------------------------------------------------------
 # TestMatcher
