@@ -816,6 +816,27 @@ class TestHaplotypeReader:
         )
         assert isinstance(reader.allele_mapper, vcz.AlleleMapper)
 
+    def test_reference_alleles_added_to_mapper(self):
+        """Alleles given in reference_alleles are added after source alleles."""
+        anc_store, sample_store, source, anc_source, positions, anc_alleles = (
+            _make_ancestor_and_sample_stores()
+        )
+        reference_alleles = [["A", "T", "G"], ["C"], ["A", "C"]]
+        reader = vcz.HaplotypeReader(
+            {"ancestors": anc_source, "test": source},
+            positions,
+            anc_alleles,
+            contig_id="1",
+            reference_alleles=reference_alleles,
+        )
+        mapper = reader.allele_mapper
+        assert mapper.lookup(0, "T") == 1
+        assert mapper.lookup(0, "G") == 2
+        assert mapper.num_alleles(0) == 3
+        assert mapper.num_alleles(1) == 2
+        assert mapper.num_alleles(2) == 2
+        reader.shutdown()
+
     def test_get_num_alleles(self):
         """get_num_alleles returns per-site allele counts."""
         anc_store, sample_store, source, anc_source, positions, anc_alleles = (

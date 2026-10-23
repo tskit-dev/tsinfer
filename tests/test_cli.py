@@ -591,6 +591,87 @@ class TestMatchWorkdirCLI:
             assert len(trees_files) >= 1
 
 
+class TestMatchReferenceTsCLI:
+    def _write(self, tmp_dir, name, content):
+        path = os.path.join(tmp_dir, name)
+        with open(path, "w") as f:
+            f.write(content)
+        return path
+
+    def test_match_with_reference_ts(self):
+        """match with [match].reference_ts matches the samples against the
+        reference, giving the same result as a single match."""
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sample_path = _write_sample_vcz_to_disk(tmp_dir)
+            # Single pass over ancestors and samples
+            config_path = _write_config(tmp_dir, sample_path)
+            result = runner.invoke(cli.main, ["infer-ancestors", config_path])
+            assert result.exit_code == 0, result.output
+            result = runner.invoke(cli.main, ["match", config_path])
+            assert result.exit_code == 0, result.output
+
+            sample = _toml_path(sample_path)
+            ancestors = _toml_path(os.path.join(tmp_dir, "ancestors.vcz"))
+            reference = _toml_path(os.path.join(tmp_dir, "reference.trees"))
+            output = _toml_path(os.path.join(tmp_dir, "ref-out.trees"))
+            ancestral_state = f"""
+[ancestral_state]
+path = "{sample}"
+field = "variant_ancestral_allele"
+"""
+            # Match the ancestors only to make the reference
+            reference_config = self._write(
+                tmp_dir,
+                "reference.toml",
+                f"""\
+[[source]]
+name = "test"
+path = "{sample}"
+
+[[ancestors]]
+name = "ancestors"
+path = "{ancestors}"
+sources = ["test"]
+
+[match]
+output = "{reference}"
+
+[match.sources.ancestors]
+node_flags = 0
+create_individuals = false
+"""
+                + ancestral_state,
+            )
+            result = runner.invoke(cli.main, ["match", reference_config])
+            assert result.exit_code == 0, result.output
+
+            # Match the samples against the reference, with no [[ancestors]]
+            samples_config = self._write(
+                tmp_dir,
+                "samples.toml",
+                f"""\
+[[source]]
+name = "test"
+path = "{sample}"
+
+[match]
+output = "{output}"
+reference_ts = "{reference}"
+
+[match.sources.test]
+"""
+                + ancestral_state,
+            )
+            result = runner.invoke(cli.main, ["match", samples_config])
+            assert result.exit_code == 0, result.output
+
+            expected = tskit.load(os.path.join(tmp_dir, "out.trees"))
+            out_ts = tskit.load(output)
+            assert out_ts.num_samples == 2
+            out_ts.tables.assert_equals(expected.tables, ignore_provenance=True)
+
+
 class TestShortOptions:
     """Short and long option forms parse to the same params (no I/O needed)."""
 

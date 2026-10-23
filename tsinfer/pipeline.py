@@ -42,25 +42,111 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Inference sites and reference tree sequence
+# ---------------------------------------------------------------------------
+
+
+@dataclasses.dataclass
+class MatchSites:
+    """The sites that haplotypes are matched at."""
+
+    positions: np.ndarray  # (num_sites,) int32
+    ancestral_alleles: np.ndarray  # (num_sites,) allele strings
+    # Alleles already present at each site of the reference tree sequence,
+    # or None when matching starts from the ancestors.
+    reference_alleles: list[list[str]] | None
+
+
+def _load_reference_ts(
+    cfg: config.Config, reference_ts: tskit.TreeSequence | None
+) -> tskit.TreeSequence | None:
+    """Return the reference tree sequence given directly or in the config."""
+    if reference_ts is None and cfg.match.reference_ts is not None:
+        logger.info("Loading reference tree sequence %s", cfg.match.reference_ts)
+        reference_ts = tskit.load(str(cfg.match.reference_ts))
+    return reference_ts
+
+
+def _match_sites(
+    cfg: config.Config, reference_ts: tskit.TreeSequence | None
+) -> MatchSites:
+    """
+    Return the match sites: those of the reference tree sequence if given,
+    otherwise those of the first ancestor store.
+    """
+    if reference_ts is None:
+        anc_store = vcz_mod.open_store(cfg.ancestors[0].path)
+        positions = np.asarray(anc_store["variant_position"][:], dtype=np.int32)
+        site_alleles = np.asarray(anc_store["variant_allele"][:])
+        return MatchSites(
+            positions=positions,
+            ancestral_alleles=site_alleles[:, 0],
+            reference_alleles=None,
+        )
+
+    site_positions = reference_ts.sites_position
+    if np.any(site_positions != np.floor(site_positions)):
+        raise ValueError("reference_ts site positions must be integers")
+    ancestral_alleles = reference_ts.sites_ancestral_state
+    reference_alleles = [[str(a)] for a in ancestral_alleles]
+    for site_id, derived_state in zip(
+        reference_ts.mutations_site, reference_ts.mutations_derived_state
+    ):
+        site_alleles = reference_alleles[site_id]
+        if derived_state not in site_alleles:
+            site_alleles.append(str(derived_state))
+    return MatchSites(
+        positions=site_positions.astype(np.int32),
+        ancestral_alleles=ancestral_alleles,
+        reference_alleles=reference_alleles,
+    )
+
+
+def _check_reference_ts(
+    reference_ts: tskit.TreeSequence,
+    jobs: list[config.MatchJob],
+    sequence_length: float,
+) -> None:
+    """Raise a ValueError if haplotypes cannot be matched against reference_ts."""
+    if reference_ts.sequence_length != sequence_length:
+        raise ValueError(
+            f"reference_ts sequence length ({reference_ts.sequence_length}) "
+            f"does not match the contig length ({sequence_length})"
+        )
+    min_node_time = float(np.min(reference_ts.nodes_time))
+    max_job_time = max(job.time for job in jobs)
+    if min_node_time <= max_job_time:
+        raise ValueError(
+            f"All reference_ts nodes must be older than the haplotypes being "
+            f"matched: youngest reference node has time {min_node_time}, but a "
+            f"haplotype has time {max_job_time}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Build jobs with metadata, pre-assign individuals and populations
 # ---------------------------------------------------------------------------
 
 
-def _build_jobs_with_metadata(cfg):
+def _build_jobs_with_metadata(cfg, positions, reference_ts=None):
     """
     Build MatchJobs with pre-assigned individual_id and population_id.
+
+    *positions* are the match site positions, which give the default
+    start/end of each haplotype. If *reference_ts* is given, individual and
+    population ids are offset so that the new rows are appended after
+    those already in it.
 
     Returns (jobs, individual_metadata_rows, population_metadata_rows).
     """
     logger.info("Loading haplotype metadata")
     t0 = time_.monotonic()
 
-    # Reference positions from first ancestor store (for default start/end)
-    if len(cfg.ancestors) > 0:
-        anc_store = vcz_mod.open_store(cfg.ancestors[0].path)
-        positions = np.asarray(anc_store["variant_position"][:], dtype=np.int32)
-    else:
-        positions = np.array([], dtype=np.int32)
+    individual_offset = 0
+    population_offset = 0
+    if reference_ts is not None:
+        individual_offset = reference_ts.num_individuals
+        population_offset = reference_ts.num_populations
 
     # Build MatchJobs directly from VCZ stores, assigning individual IDs
     # in the same pass.
@@ -146,7 +232,7 @@ def _build_jobs_with_metadata(cfg):
                 key = (source.name, sid)
                 if key not in ind_key_to_id:
                     ind_key_to_id[key] = len(ind_key_to_id)
-                individual_id = ind_key_to_id[key]
+                individual_id = ind_key_to_id[key] + individual_offset
             else:
                 individual_id = None
 
@@ -246,7 +332,9 @@ def _build_jobs_with_metadata(cfg):
                 unique_pops.append(v)
 
         if unique_pops:
-            pop_lookup = {name: i for i, name in enumerate(unique_pops)}
+            pop_lookup = {
+                name: i + population_offset for i, name in enumerate(unique_pops)
+            }
             population_metadata_rows = [{"name": name} for name in unique_pops]
 
             # Map individual → population
@@ -257,8 +345,11 @@ def _build_jobs_with_metadata(cfg):
 
             # Map population onto jobs via individual_id
             for job in jobs:
-                if job.individual_id is not None and job.individual_id in ind_to_pop:
-                    job.population_id = ind_to_pop[job.individual_id]
+                if job.individual_id is None:
+                    continue
+                ind_idx = job.individual_id - individual_offset
+                if ind_idx in ind_to_pop:
+                    job.population_id = ind_to_pop[ind_idx]
 
     # Assign groups
     logger.info("Computing groups")
@@ -280,9 +371,9 @@ def compute_groups_json(cfg: config.Config) -> str:
     :class:`MatchJob` — suitable for loading into pandas with
     ``pd.read_json`` or ``pd.DataFrame``.
     """
-    t0 = time_.monotonic()
-    jobs, _, _ = _build_jobs_with_metadata(cfg)
-    elapsed = time_.monotonic() - t0
+    reference_ts = _load_reference_ts(cfg, None)
+    sites = _match_sites(cfg, reference_ts)
+    jobs, _, _ = _build_jobs_with_metadata(cfg, sites.positions, reference_ts)
 
     logger.info("Serialising %d match jobs to JSON", len(jobs))
     t0 = time_.monotonic()
@@ -298,7 +389,7 @@ def _load_match_jobs(path) -> list[config.MatchJob]:
     return [config.MatchJob(**rec) for rec in records]
 
 
-def _setup_workdir(workdir, cfg):
+def _setup_workdir(workdir, cfg, positions, reference_ts):
     """
     Set up workdir: create dir, write or load match-jobs.json.
 
@@ -317,7 +408,7 @@ def _setup_workdir(workdir, cfg):
         population_metadata_rows: list[dict] = []
     else:
         jobs, individual_metadata_rows, population_metadata_rows = (
-            _build_jobs_with_metadata(cfg)
+            _build_jobs_with_metadata(cfg, positions, reference_ts)
         )
         json_str = json.dumps([dataclasses.asdict(j) for j in jobs], indent=2)
         groups_path.write_text(json_str)
@@ -449,6 +540,11 @@ def match(
     Uses the ``make_root_ts → Matcher → extend_ts`` cycle: each group of
     haplotypes is matched against the current tree sequence, then the tree
     sequence is extended with the results.
+
+    If *reference_ts* is given (or ``cfg.match.reference_ts`` is set), the
+    loop starts from that tree sequence instead of a root tree sequence,
+    and haplotypes are matched at its sites. All of its nodes must be
+    older than the haplotypes being matched.
     """
     if num_threads is None:
         num_threads = config.DEFAULT_NUM_THREADS
@@ -461,6 +557,10 @@ def match(
         raise ValueError("group_stop must be non-negative")
     if group_stop is not None and cfg.match.workdir is None:
         logger.warning("group_stop without workdir; partial result cannot be resumed")
+
+    reference_ts = _load_reference_ts(cfg, reference_ts)
+    sites = _match_sites(cfg, reference_ts)
+    positions = sites.positions
 
     # 1. Get ordered MatchJob list (and workdir state if applicable)
     workdir = cfg.match.workdir
@@ -475,24 +575,20 @@ def match(
             population_metadata_rows,
             last_completed_group,
             workdir_starting_ts,
-        ) = _setup_workdir(workdir, cfg)
+        ) = _setup_workdir(workdir, cfg, positions, reference_ts)
     else:
         jobs, individual_metadata_rows, population_metadata_rows = (
-            _build_jobs_with_metadata(cfg)
+            _build_jobs_with_metadata(cfg, positions, reference_ts)
         )
 
-    # 2. Load lightweight ancestor metadata (no genotypes)
-    anc_store = vcz_mod.open_store(cfg.ancestors[0].path)
-    positions = np.asarray(anc_store["variant_position"][:], dtype=np.int32)
-    site_alleles = np.asarray(anc_store["variant_allele"][:])
-    seq_intervals = np.asarray(anc_store["sequence_intervals"][:], dtype=np.int32)
-
-    # All match sources (ancestors included) must agree on the contig
+    # 2. All match sources (ancestors included) must agree on the contig
     match_stores = []
     for source_name in cfg.match.sources:
         match_stores.append(vcz_mod.open_store(cfg.sources[source_name].path))
     contig = vcz_mod.resolve_contig(match_stores, cfg.contig)
     seq_len = float(contig.length)
+    if reference_ts is not None:
+        _check_reference_ts(reference_ts, jobs, seq_len)
 
     # 3. Group jobs and build read schedule
     groups_dict = collections.defaultdict(list)
@@ -510,33 +606,42 @@ def match(
             schedule.append((job.source, job.sample_id, job.ploidy_index))
 
     # 4. Create lazy reader with all match sources
-    ancestral_alleles = site_alleles[:, 0]
     match_sources = {name: cfg.sources[name] for name in cfg.match.sources}
     reader = vcz_mod.HaplotypeReader(
         match_sources,
         positions,
-        ancestral_alleles,
+        sites.ancestral_alleles,
         contig.id,
         cache_size_mb=cache_size,
         schedule=schedule,
         read_workers=read_workers,
         num_threads=num_threads,
+        reference_alleles=sites.reference_alleles,
     )
     allele_mapper = reader.allele_mapper
 
-    # 5. Build initial root TS (or resume from workdir checkpoint)
-    anc_times = np.asarray(anc_store["sample_time"][:], dtype=np.float64)
-    max_anc_time = float(np.max(anc_times)) if len(anc_times) > 0 else 0.0
+    # 5. Build the starting TS: resume from a workdir checkpoint, start
+    # from the reference TS, or build a root TS.
+    individuals = individual_metadata_rows if individual_metadata_rows else None
+    populations = population_metadata_rows if population_metadata_rows else None
     if workdir_starting_ts is not None:
         ts = workdir_starting_ts
+    elif reference_ts is not None:
+        ts = matching.prepare_reference_ts(
+            reference_ts, individuals=individuals, populations=populations
+        )
     else:
+        anc_store = vcz_mod.open_store(cfg.ancestors[0].path)
+        seq_intervals = np.asarray(anc_store["sequence_intervals"][:], dtype=np.int32)
+        anc_times = np.asarray(anc_store["sample_time"][:], dtype=np.float64)
+        max_anc_time = float(np.max(anc_times)) if len(anc_times) > 0 else 0.0
         ts = matching.make_root_ts(
             seq_len,
             positions,
             seq_intervals,
             max_time=max_anc_time,
-            individuals=individual_metadata_rows if individual_metadata_rows else None,
-            populations=population_metadata_rows if population_metadata_rows else None,
+            individuals=individuals,
+            populations=populations,
             allele_mapper=allele_mapper,
         )
 
@@ -842,6 +947,19 @@ def run(
     if genotype_encoding is None:
         genotype_encoding = config.DEFAULT_GENOTYPE_ENCODING
     logger.info("Starting full pipeline")
+    if len(cfg.ancestors) == 0:
+        # Matching starts from cfg.match.reference_ts; no ancestors to infer.
+        ts = match(
+            cfg,
+            progress=progress,
+            num_threads=num_threads,
+            cache_size=cache_size,
+            read_workers=read_workers,
+            match_file=match_file,
+            **kwargs,
+        )
+        return _finish_pipeline(ts, cfg, progress, **kwargs)
+
     anc_cfg = cfg.ancestors[0]
     sources = [cfg.sources[name] for name in anc_cfg.sources]
     ancestor_store = ancestors.infer_ancestors(
@@ -872,12 +990,17 @@ def run(
             match_file=match_file,
             **kwargs,
         )
-        ts = post_process(ts, cfg, **kwargs)
-        if cfg.augment_sites is not None:
-            ts = augment_sites(ts, cfg, progress=progress)
+        ts = _finish_pipeline(ts, cfg, progress, **kwargs)
     finally:
         anc_cfg.path = original_path
+    return ts
 
+
+def _finish_pipeline(ts, cfg, progress, **kwargs):
+    """Run the post-match steps of the pipeline: post_process, augment_sites."""
+    ts = post_process(ts, cfg, **kwargs)
+    if cfg.augment_sites is not None:
+        ts = augment_sites(ts, cfg, progress=progress)
     logger.info(
         "Pipeline complete: %d nodes, %d edges, %d sites",
         ts.num_nodes,

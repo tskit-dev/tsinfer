@@ -113,17 +113,7 @@ def make_root_ts(
 
     tables.nodes.metadata_schema = tskit.MetadataSchema({"codec": "json"})
     tables.individuals.metadata_schema = tskit.MetadataSchema({"codec": "json"})
-
-    # Pre-create populations if provided
-    if populations is not None:
-        tables.populations.metadata_schema = tskit.MetadataSchema({"codec": "json"})
-        for pop_md in populations:
-            tables.populations.add_row(metadata=pop_md)
-
-    # Pre-create individuals if provided
-    if individuals is not None:
-        for ind_md in individuals:
-            tables.individuals.add_row(metadata=ind_md)
+    _add_individuals_and_populations(tables, individuals, populations)
 
     # Node 0: ultimate root
     tables.nodes.add_row(time=ultimate_root_time, flags=0, metadata={})
@@ -140,6 +130,41 @@ def make_root_ts(
 
     tables.sort()
     tables.build_index()
+    return tables.tree_sequence()
+
+
+def _add_individuals_and_populations(
+    tables: tskit.TableCollection,
+    individuals: list[dict] | None,
+    populations: list[dict] | None,
+) -> None:
+    """
+    Append one population row per dict in *populations* and one individual
+    row per dict in *individuals*. A JSON metadata schema is set on the
+    populations table only when it is empty, so an existing schema is kept.
+    """
+    if populations is not None:
+        if tables.populations.num_rows == 0:
+            tables.populations.metadata_schema = tskit.MetadataSchema({"codec": "json"})
+        for pop_md in populations:
+            tables.populations.add_row(metadata=pop_md)
+    if individuals is not None:
+        for ind_md in individuals:
+            tables.individuals.add_row(metadata=ind_md)
+
+
+def prepare_reference_ts(
+    reference_ts: tskit.TreeSequence,
+    individuals: list[dict] | None = None,
+    populations: list[dict] | None = None,
+) -> tskit.TreeSequence:
+    """
+    Return *reference_ts* with the given individuals and populations
+    appended, ready to start the match loop. Match jobs must refer to the
+    new rows by ids offset by the existing number of rows.
+    """
+    tables = reference_ts.dump_tables()
+    _add_individuals_and_populations(tables, individuals, populations)
     return tables.tree_sequence()
 
 
