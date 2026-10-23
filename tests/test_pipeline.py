@@ -1014,6 +1014,62 @@ class TestWorkdir:
         assert final_ts.num_nodes == full_ts.num_nodes
         assert final_ts.num_edges == full_ts.num_edges
 
+    @pytest.mark.parametrize("ploidy", [1, 2])
+    def test_group_stop_zero_and_resume_matches_full_run(self, tmp_path, ploidy):
+        """Stop before any group, so match-jobs.json exists but there is no
+        checkpoint; resuming must still create the individuals."""
+        sim_ts = _simulate(num_samples=4, ploidy=ploidy, random_seed=51)
+        sample_store = helpers.ts_to_sample_vcz(sim_ts)
+        ancestor_store = _infer_ancestors(sample_store)
+        full_ts = pipeline.match(_make_config(sample_store, ancestor_store))
+        assert full_ts.num_individuals > 0
+
+        cfg = _make_config(sample_store, ancestor_store)
+        workdir = tmp_path / "wd"
+        cfg.match.workdir = str(workdir)
+        pipeline.match(cfg, group_stop=0)
+        assert (workdir / "match-jobs.json").exists()
+        assert list(workdir.glob("group_*.trees")) == []
+
+        resumed_ts = pipeline.match(cfg)
+        resumed_ts.tables.assert_equals(full_ts.tables, ignore_provenance=True)
+
+    def test_group_stop_zero_and_resume_with_populations(self, tmp_path):
+        """Populations are also created when resuming without a checkpoint."""
+        sample_store = helpers.make_sample_vcz(
+            genotypes=np.array([[[0], [1]], [[1], [0]]], dtype=np.int8),
+            positions=np.array([100, 200], dtype=np.int32),
+            alleles=np.array([["A", "T"], ["A", "T"]]),
+            ancestral_state=np.array(["A", "A"]),
+            sequence_length=1000,
+            sample_population=np.array(["pop_A", "pop_B"]),
+        )
+        ancestor_store = _infer_ancestors(sample_store)
+        cfg = _make_config(sample_store, ancestor_store)
+        cfg.individual_metadata = config.IndividualMetadataConfig(
+            population="sample_population"
+        )
+        full_ts = pipeline.match(cfg)
+        assert full_ts.num_populations == 2
+
+        cfg.match.workdir = str(tmp_path / "wd")
+        pipeline.match(cfg, group_stop=0)
+        resumed_ts = pipeline.match(cfg)
+        resumed_ts.tables.assert_equals(full_ts.tables, ignore_provenance=True)
+
+    def test_match_jobs_rewritten_without_checkpoint(self, tmp_path):
+        """With no checkpoint, a stale match-jobs.json is replaced."""
+        cfg = self._setup()
+        workdir = tmp_path / "wd"
+        workdir.mkdir()
+        (workdir / "match-jobs.json").write_text("[]")
+        cfg.match.workdir = str(workdir)
+        out_ts = pipeline.match(cfg)
+        jobs = json.loads((workdir / "match-jobs.json").read_text())
+        assert len(jobs) > 0
+        expected = pipeline.match(self._setup())
+        out_ts.tables.assert_equals(expected.tables, ignore_provenance=True)
+
     def test_group_stop_beyond_last_group(self, tmp_path):
         """group_stop=9999 behaves like a normal full run."""
         cfg = self._setup()
@@ -1344,6 +1400,19 @@ class TestReferenceTs:
         # Re-running resumes from the final checkpoint
         resumed_ts = pipeline.match(cfg)
         resumed_ts.tables.assert_equals(out_ts.tables)
+
+    def test_workdir_group_stop_zero_and_resume(self, tmp_path):
+        """Resuming with no checkpoint appends the new individuals to the
+        reference."""
+        sample_store, _, _, reference_ts_path = self._setup(
+            tmp_path, ploidy=2, create_individuals=True
+        )
+        expected = pipeline.match(_reference_config(sample_store, reference_ts_path))
+        cfg = _reference_config(sample_store, reference_ts_path)
+        cfg.match.workdir = str(tmp_path / "wd")
+        pipeline.match(cfg, group_stop=0)
+        resumed_ts = pipeline.match(cfg)
+        resumed_ts.tables.assert_equals(expected.tables, ignore_provenance=True)
 
     def test_compute_groups_json(self, tmp_path):
         """Groups for a reference-only config use the reference sites."""
