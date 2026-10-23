@@ -393,6 +393,11 @@ def _setup_workdir(workdir, cfg, positions, reference_ts):
     """
     Set up workdir: create dir, write or load match-jobs.json.
 
+    When resuming from a checkpoint, the jobs are loaded from
+    match-jobs.json and no metadata rows are returned, since the
+    checkpoint already holds the individuals and populations. Otherwise
+    the jobs and metadata rows are built and match-jobs.json is written.
+
     Returns (jobs, individual_metadata_rows, population_metadata_rows,
              last_completed_group_idx, starting_ts_or_None).
     """
@@ -400,19 +405,6 @@ def _setup_workdir(workdir, cfg, positions, reference_ts):
     workdir = pathlib.Path(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
     groups_path = workdir / "match-jobs.json"
-
-    if groups_path.exists():
-        logger.info("Loading existing groups from %s", groups_path)
-        jobs = _load_match_jobs(groups_path)
-        individual_metadata_rows: list[dict] = []
-        population_metadata_rows: list[dict] = []
-    else:
-        jobs, individual_metadata_rows, population_metadata_rows = (
-            _build_jobs_with_metadata(cfg, positions, reference_ts)
-        )
-        json_str = json.dumps([dataclasses.asdict(j) for j in jobs], indent=2)
-        groups_path.write_text(json_str)
-        logger.info("Wrote groups to %s", groups_path)
 
     max_group_index = -1
     for path in workdir.glob("group_*.trees"):
@@ -424,6 +416,17 @@ def _setup_workdir(workdir, cfg, positions, reference_ts):
         last_path = workdir / f"group_{max_group_index}.trees"
         starting_ts = tskit.load(str(last_path))
         logger.info("Resuming from group %d ", max_group_index)
+        logger.info("Loading existing groups from %s", groups_path)
+        jobs = _load_match_jobs(groups_path)
+        individual_metadata_rows: list[dict] = []
+        population_metadata_rows: list[dict] = []
+    else:
+        jobs, individual_metadata_rows, population_metadata_rows = (
+            _build_jobs_with_metadata(cfg, positions, reference_ts)
+        )
+        json_str = json.dumps([dataclasses.asdict(j) for j in jobs], indent=2)
+        groups_path.write_text(json_str)
+        logger.info("Wrote groups to %s", groups_path)
 
     return (
         jobs,
