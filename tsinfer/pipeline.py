@@ -516,11 +516,11 @@ def match(
         match_sources,
         positions,
         ancestral_alleles,
+        contig.id,
         cache_size_mb=cache_size,
         schedule=schedule,
         read_workers=read_workers,
         num_threads=num_threads,
-        contig_id=contig.id,
     )
     allele_mapper = reader.allele_mapper
 
@@ -737,10 +737,13 @@ def augment_sites(
 
     # --- Build MultiSourceView and resolve positions ---
     source_configs = [cfg.sources[name] for name in aug_cfg.sources]
+    stores = [vcz_mod.open_store(source.path) for source in source_configs]
+    stores.append(vcz_mod.open_store(cfg.ancestral_state.path))
+    contig = vcz_mod.resolve_contig(stores, cfg.contig)
     view = vcz_mod.MultiSourceView(
         source_configs,
         cfg.ancestral_state,
-        cfg.contig,
+        contig.id,
     )
 
     positions = view.positions_in_intervals(intervals)
