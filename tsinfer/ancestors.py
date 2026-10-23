@@ -554,10 +554,12 @@ def infer_ancestors(
         if source.targets is not None:
             logger.info("Targets filter: %s", source.targets)
 
-    view = vcz_mod.MultiSourceView(sources, ancestral_state, contig)
-    total_haplotypes = view.num_haplotypes
-    contig = view.contig
+    stores = [vcz_mod.open_store(source.path) for source in sources]
+    stores.append(vcz_mod.open_store(ancestral_state.path))
+    contig = vcz_mod.resolve_contig(stores, contig)
     logger.info("Contig: %s (length=%d)", contig.id, contig.length)
+    view = vcz_mod.MultiSourceView(sources, ancestral_state, contig.id)
+    total_haplotypes = view.num_haplotypes
     logger.info(
         "Inference sites identified: %d (%d total haplotypes)",
         view.num_sites,
