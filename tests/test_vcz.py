@@ -22,6 +22,7 @@ Tests for tsinfer.vcz: open_store, resolve_field, and convenience accessors.
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 
@@ -77,9 +78,10 @@ def _make_annotation_vcz(positions, field_name, values):
 # ---------------------------------------------------------------------------
 
 
-def _all_rows(store):
-    """All variant rows of a store, for VCZHaplotypeReader."""
-    return slice(0, store["variant_position"].shape[0])
+def _all_variants(store):
+    """All variants of a single-contig store, for VCZHaplotypeReader."""
+    source = config.Source(path=store, name="all")
+    return vcz.select_source_variants(store, source, str(store["contig_id"][0]))
 
 
 class TestOpenStore:
@@ -464,18 +466,18 @@ class TestMultiContigReaders:
     def test_filter_on_other_contig(self, stores):
         # C has the same positions as B, but the filter selects only C
         _, combined = stores
-        _, variants = self._view_output(combined, "B", include='CHROM="C"')
-        assert len(variants) == 2
-        for var in variants:
-            assert np.all(var.genotypes == -1)
+        positions, variants = self._view_output(combined, "B", include='CHROM="C"')
+        assert len(positions) == 0
+        assert len(variants) == 0
 
     def test_filter_on_contig(self, stores):
         singles, combined = stores
-        _, variants = self._view_output(combined, "B", include="POS>=20")
-        _, single_variants = self._view_output(singles[1], "1")
-        np.testing.assert_array_equal(variants[0].genotypes, -1)
+        positions, variants = self._view_output(combined, "B", include="POS>=20")
+        single_positions, single_variants = self._view_output(singles[1], "1")
+        np.testing.assert_array_equal(positions, single_positions[1:])
+        assert len(variants) == 1
         np.testing.assert_array_equal(
-            variants[1].genotypes, single_variants[1].genotypes
+            variants[0].genotypes, single_variants[1].genotypes
         )
 
     def _read_haplotypes(self, store, positions, contig_id):
@@ -891,7 +893,7 @@ class TestVCZHaplotypeReader:
             anc_alleles,
             source_name="anc",
             cache=None,
-            variant_rows=_all_rows(anc_store),
+            variants=_all_variants(anc_store),
         )
         cache = _make_cache_for_reader(reader, ["a0"])
         reader._cache = cache
@@ -909,7 +911,7 @@ class TestVCZHaplotypeReader:
             anc_alleles,
             source_name="test",
             cache=None,
-            variant_rows=_all_rows(sample_store),
+            variants=_all_variants(sample_store),
         )
         cache = _make_cache_for_reader(reader, ["sample_0"])
         reader._cache = cache
@@ -928,7 +930,7 @@ class TestVCZHaplotypeReader:
             anc_alleles,
             source_name="test",
             cache=None,
-            variant_rows=_all_rows(sample_store),
+            variants=_all_variants(sample_store),
         )
         cache = _make_cache_for_reader(reader, ["sample_0", "sample_1"])
         reader._cache = cache
@@ -969,7 +971,7 @@ class TestVCZHaplotypeReader:
             anc_alleles,
             source_name="test",
             cache=None,
-            variant_rows=_all_rows(sample_store),
+            variants=_all_variants(sample_store),
         )
         # Schedule: read one sample from each of the 3 chunks
         cache = _make_cache_for_reader(
@@ -1007,7 +1009,7 @@ class TestVCZHaplotypeReader:
             anc_alleles,
             source_name="test",
             cache=None,
-            variant_rows=_all_rows(sample_store),
+            variants=_all_variants(sample_store),
         )
         cache = _make_cache_for_reader(reader, ["sample_0"])
         reader._cache = cache
@@ -1038,7 +1040,7 @@ class TestVCZHaplotypeReader:
             source_name="test",
             cache=None,
             samples_selection=selection,
-            variant_rows=_all_rows(sample_store),
+            variants=_all_variants(sample_store),
         )
         cache = _make_cache_for_reader(reader, ["sample_1"])
         reader._cache = cache
@@ -1065,7 +1067,7 @@ class TestVCZHaplotypeReader:
             anc_alleles,
             source_name="test",
             cache=None,
-            variant_rows=_all_rows(sample_store),
+            variants=_all_variants(sample_store),
         )
         assert reader._num_selected == 0
         # _precompute_allele_remap should return early
@@ -1106,7 +1108,7 @@ class TestVCZHaplotypeReader:
             anc_alleles,
             source_name="test",
             cache=None,
-            variant_rows=_all_rows(sample_store),
+            variants=_all_variants(sample_store),
         )
         # Only 1 of 3 variant chunks should be in _needed_vc
         assert len(reader._needed_vc) == 1
@@ -1634,7 +1636,7 @@ class TestVariantSelection:
             anc_alleles,
             source_name="test",
             cache=None,
-            variant_rows=_all_rows(store),
+            variants=_all_variants(store),
         )
         cache = _make_cache_for_reader(reader, ["sample_0", "sample_1"])
         reader._cache = cache
@@ -1661,7 +1663,7 @@ class TestVariantSelection:
             np.array(["A"]),
             source_name="test",
             cache=None,
-            variant_rows=_all_rows(store),
+            variants=_all_variants(store),
         )
         # 1 selected * 2 samples * 1 ploidy * 1 byte = 2
         assert reader.chunk_bytes == 2
@@ -1692,7 +1694,7 @@ class TestVariantSelection:
             anc_alleles,
             source_name="test",
             cache=None,
-            variant_rows=_all_rows(store),
+            variants=_all_variants(store),
         )
         cache = _make_cache_for_reader(reader, ["sample_0"])
         reader._cache = cache
@@ -1790,7 +1792,6 @@ class TestMultiSourceView:
         assert view.num_sites == 2
         np.testing.assert_array_equal(view.positions, [100, 200])
         # Allele 0 = ancestral
-        view.prepare(view.positions)
         assert view.alleles[0, 0] == "A"
         assert view.alleles[0, 1] == "T"
         assert view.alleles[1, 0] == "C"
@@ -1987,9 +1988,7 @@ class TestMultiSourceView:
         assert len(rows) == 1
         np.testing.assert_array_equal(rows[0], [0, 1])
 
-    def test_prepare_subset(self):
-        """prepare() with a position subset builds mapper for that subset."""
-
+    def test_iter_genotypes_subset(self):
         store = helpers.make_sample_vcz(
             genotypes=np.array([[[0], [1]], [[1], [0]], [[0], [0]]], dtype=np.int8),
             positions=np.array([100, 200, 300], dtype=np.int32),
@@ -2001,30 +2000,12 @@ class TestMultiSourceView:
         src = config.Source(path=store, name="s1")
         view = vcz.MultiSourceView(src, self._anc_state(store), "1")
 
-        # Prepare with subset
         subset = np.array([100, 300], dtype=np.int32)
-        view.prepare(subset)
-        assert view.alleles.shape[0] == 2
-        rows = [v.genotypes for v in view.iter_genotypes(subset)]
-        assert len(rows) == 2
-        np.testing.assert_array_equal(rows[0], [0, 1])  # site 100
-        np.testing.assert_array_equal(rows[1], [0, 0])  # site 300
-
-    def test_alleles_before_prepare_raises(self):
-        """Accessing alleles before prepare() raises RuntimeError."""
-
-        store = helpers.make_sample_vcz(
-            genotypes=np.array([[[0, 1]]], dtype=np.int8),
-            positions=np.array([100], dtype=np.int32),
-            alleles=np.array([["A", "T"]]),
-            ancestral_state=np.array(["A"]),
-            sequence_length=1000,
-        )
-        src = config.Source(path=store, name="s1")
-        view = vcz.MultiSourceView(src, self._anc_state(store), "1")
-
-        with pytest.raises(RuntimeError, match="prepare"):
-            _ = view.alleles
+        variants = list(view.iter_genotypes(subset))
+        assert [v.position for v in variants] == [100, 300]
+        np.testing.assert_array_equal(variants[0].genotypes, [0, 1])
+        np.testing.assert_array_equal(variants[1].genotypes, [0, 0])
+        assert variants[1].alleles == ("A", "T")
 
     def test_positions_in_intervals(self):
 
@@ -2156,3 +2137,374 @@ class TestMultiSourceView:
         assert len(variants) == 2
         assert variants[0].position == 200.0
         assert variants[1].position == 400.0
+
+
+# ---------------------------------------------------------------------------
+# Source variant selection, ancestral alleles and filtered views
+# ---------------------------------------------------------------------------
+
+
+def _store(positions, alleles, ancestral=None, genotypes=None, **kwargs):
+    """A haploid sample store, by default with 2 samples carrying [0, 1]."""
+    num_sites = len(positions)
+    if genotypes is None:
+        genotypes = [[0, 1]] * num_sites
+    if ancestral is None:
+        ancestral = [a[0] for a in alleles]
+    max_alleles = max(len(a) for a in alleles)
+    padded = [list(a) + [""] * (max_alleles - len(a)) for a in alleles]
+    return helpers.make_sample_vcz(
+        genotypes=np.array(genotypes, dtype=np.int8)[:, :, np.newaxis],
+        positions=np.array(positions, dtype=np.int32),
+        alleles=np.array(padded),
+        ancestral_state=np.array(ancestral),
+        sequence_length=10_000,
+        **kwargs,
+    )
+
+
+def _select(store, contig_id="1", **filters):
+    source = config.Source(path=store, name="src", **filters)
+    return vcz.select_source_variants(store, source, contig_id)
+
+
+def _anc_field(store):
+    return config.AncestralState(path=store, field="variant_ancestral_allele")
+
+
+# A SNP and an indel at position 100, as at chr20:10031011 in 1kGP and SGDP
+_SNP_INDEL_POSITIONS = [100, 100, 200]
+_SNP_INDEL_ALLELES = [["A", "G"], ["ATTAAC", "A"], ["C", "T"]]
+
+
+class TestSelectSourceVariants:
+    def test_no_filters(self):
+        store = _store([100, 200, 300], [["A", "T"]] * 3)
+        variants = _select(store)
+        np.testing.assert_array_equal(variants.rows, [0, 1, 2])
+        np.testing.assert_array_equal(variants.positions, [100, 200, 300])
+        assert variants.alleles.tolist() == [["A", "T"]] * 3
+
+    def test_include(self):
+        store = _store([100, 200, 300], [["A", "T"]] * 3)
+        variants = _select(store, include="POS >= 200")
+        np.testing.assert_array_equal(variants.rows, [1, 2])
+        np.testing.assert_array_equal(variants.positions, [200, 300])
+
+    def test_exclude(self):
+        store = _store([100, 200, 300], [["A", "T"]] * 3)
+        variants = _select(store, exclude="POS == 200")
+        np.testing.assert_array_equal(variants.positions, [100, 300])
+
+    def test_snp_filter_keeps_snp_at_indel_position(self):
+        store = _store(_SNP_INDEL_POSITIONS, _SNP_INDEL_ALLELES)
+        variants = _select(store, include='TYPE="snp"')
+        np.testing.assert_array_equal(variants.rows, [0, 2])
+        np.testing.assert_array_equal(variants.positions, [100, 200])
+        assert variants.alleles[0].tolist() == ["A", "G"]
+
+    def test_unfiltered_duplicates_dropped(self, caplog):
+        store = _store(_SNP_INDEL_POSITIONS, _SNP_INDEL_ALLELES)
+        with caplog.at_level(logging.INFO, logger="tsinfer"):
+            variants = _select(store)
+        np.testing.assert_array_equal(variants.rows, [2])
+        assert "1 duplicate position" in caplog.text
+        assert "2 at duplicate positions" in caplog.text
+
+    def test_duplicates_remaining_after_filter_dropped(self):
+        store = _store(
+            [100, 100, 100, 200], [["A", "G"], ["A", "T"], ["AT", "A"], ["C", "T"]]
+        )
+        variants = _select(store, include='TYPE="snp"')
+        np.testing.assert_array_equal(variants.positions, [200])
+
+    def test_filter_selects_nothing(self):
+        store = _store([100, 200], [["A", "T"]] * 2)
+        variants = _select(store, include="POS > 1000")
+        assert len(variants.rows) == 0
+        assert len(variants.positions) == 0
+        assert variants.alleles.shape == (0, 2)
+
+    def test_regions(self):
+        store = helpers.add_region_index(_store([100, 200, 300], [["A", "T"]] * 3))
+        variants = _select(store, regions="1:150-250")
+        np.testing.assert_array_equal(variants.positions, [200])
+
+    def test_targets_complement(self):
+        store = helpers.add_region_index(_store([100, 200, 300], [["A", "T"]] * 3))
+        variants = _select(store, targets="^1:150-250")
+        np.testing.assert_array_equal(variants.positions, [100, 300])
+
+    def test_regions_and_include_across_chunks(self):
+        positions = list(range(100, 1100, 100))
+        store = _store(positions, [["A", "T"]] * 5 + [["AT", "A"]] * 5)
+        helpers.rechunk_variants(store, 3)
+        helpers.add_region_index(store)
+        variants = _select(store, regions="1:250-950", include='TYPE="snp"')
+        np.testing.assert_array_equal(variants.rows, [2, 3, 4])
+        np.testing.assert_array_equal(variants.positions, [300, 400, 500])
+
+    def test_per_sample_filter(self):
+        store = _store(
+            [100, 200, 300],
+            [["A", "T"]] * 3,
+            call_DP=np.array([[1, 1], [1, 9], [9, 9]], dtype=np.int32),
+        )
+        variants = _select(store, include="FMT/DP > 5")
+        np.testing.assert_array_equal(variants.positions, [200, 300])
+
+    def test_contig_of_multi_contig_store(self):
+        singles = [
+            _store([10, 20], [["A", "T"]] * 2),
+            _store([10, 20, 30], [["C", "G"]] * 3),
+        ]
+        store = helpers.combine_contigs(singles, ["A", "B"], 2)
+        variants = _select(store, contig_id="B", include="POS >= 20")
+        np.testing.assert_array_equal(variants.rows, [3, 4])
+        np.testing.assert_array_equal(variants.positions, [20, 30])
+        assert variants.alleles[:, 0].tolist() == ["C", "C"]
+
+    def test_filter_on_other_contig(self):
+        singles = [_store([10], [["A", "T"]]), _store([10], [["C", "G"]])]
+        store = helpers.combine_contigs(singles, ["A", "B"], 2)
+        variants = _select(store, contig_id="A", include='CHROM="B"')
+        assert len(variants.rows) == 0
+
+
+class TestLookupAncestralAlleles:
+    def _lookup(self, ann, positions, refs, is_reference=False):
+        if is_reference:
+            ancestral_state = config.AncestralState(path=ann, is_reference=True)
+        else:
+            ancestral_state = _anc_field(ann)
+        return vcz.lookup_ancestral_alleles(
+            ancestral_state,
+            "1",
+            np.array(positions, dtype=np.int32),
+            np.array(refs, dtype=object),
+        ).tolist()
+
+    def test_single_rows(self):
+        ann = _store([100, 200], [["A", "T"], ["C", "G"]], ancestral=["T", "."])
+        assert self._lookup(ann, [100, 200], ["A", "C"]) == ["T", "."]
+
+    def test_no_annotation(self):
+        ann = _store([100], [["A", "T"]], ancestral=["A"])
+        assert self._lookup(ann, [50, 100, 150], ["A", "A", "A"]) == ["", "A", ""]
+
+    def test_no_positions(self):
+        ann = _store([100], [["A", "T"]], ancestral=["A"])
+        assert self._lookup(ann, [], []) == []
+
+    def test_duplicates_resolved_by_ref(self):
+        # As in the Ensembl chr20 annotation at 10031018
+        ann = _store(
+            [100, 100, 200],
+            [["CAC", "TAG"], ["C", "G", "T"], ["A", "T"]],
+            ancestral=["TAC", "T", "A"],
+        )
+        assert self._lookup(ann, [100, 200], ["C", "A"]) == ["T", "A"]
+        assert self._lookup(ann, [100], ["CAC"]) == ["TAC"]
+
+    def test_duplicates_agreeing(self):
+        ann = _store([100, 100], [["C", "G"], ["C", "T"]], ancestral=["T", "T"])
+        assert self._lookup(ann, [100], ["C"]) == ["T"]
+
+    def test_duplicates_ambiguous(self, caplog):
+        ann = _store([100, 100], [["C", "G"], ["C", "T"]], ancestral=["G", "T"])
+        with caplog.at_level(logging.INFO, logger="tsinfer"):
+            assert self._lookup(ann, [100], ["C"]) == [""]
+        assert "1 with ambiguous annotations" in caplog.text
+
+    def test_duplicates_without_matching_ref(self):
+        ann = _store([100, 100], [["CA", "C"], ["CAC", "C"]], ancestral=["C", "C"])
+        assert self._lookup(ann, [100], ["G"]) == [""]
+
+    def test_is_reference(self):
+        ann = _store([100, 100, 200], [["CAC", "C"], ["C", "T"], ["G", "A"]])
+        result = self._lookup(ann, [100, 200], ["C", "G"], is_reference=True)
+        assert result == ["C", "G"]
+
+    def test_contig_of_multi_contig_store(self):
+        singles = [
+            _store([10, 20], [["A", "T"]] * 2, ancestral=["T", "T"]),
+            _store([10, 20], [["A", "T"]] * 2, ancestral=["A", "A"]),
+        ]
+        ann = helpers.combine_contigs(singles, ["1", "2"], 1)
+        assert self._lookup(ann, [10, 20], ["A", "A"]) == ["T", "T"]
+
+
+class TestFilteredMultiSourceView:
+    """MultiSourceView presents only the variants that pass source filters."""
+
+    def _view(self, stores, ann=None, **filters):
+        sources = [
+            config.Source(path=store, name=f"s{j}", **filters.get(f"s{j}", {}))
+            for j, store in enumerate(stores)
+        ]
+        if ann is None:
+            ann = stores[0]
+        return vcz.MultiSourceView(sources, _anc_field(ann), "1")
+
+    def test_num_sites_reflects_filters(self):
+        store = _store([100, 200, 300], [["A", "T"]] * 3)
+        view = self._view([store], s0={"include": "POS >= 200"})
+        assert view.num_sites == 2
+        np.testing.assert_array_equal(view.positions, [200, 300])
+        assert view.alleles.shape[0] == 2
+
+    def test_snp_kept_at_indel_position_in_two_sources(self):
+        stores = [
+            _store(_SNP_INDEL_POSITIONS, _SNP_INDEL_ALLELES, sample_ids=["a0", "a1"]),
+            _store(_SNP_INDEL_POSITIONS, _SNP_INDEL_ALLELES, sample_ids=["b0", "b1"]),
+        ]
+        snp = {"include": 'TYPE="snp"'}
+        view = self._view(stores, s0=snp, s1=snp)
+        np.testing.assert_array_equal(view.positions, [100, 200])
+        assert view.ancestral_alleles.tolist() == ["A", "C"]
+        variants = list(view.iter_genotypes())
+        assert variants[0].alleles == ("A", "G")
+        np.testing.assert_array_equal(variants[0].genotypes, [0, 1, 0, 1])
+
+    def test_filtered_alleles_not_in_allele_map(self):
+        store = _store(_SNP_INDEL_POSITIONS, _SNP_INDEL_ALLELES)
+        view = self._view([store], s0={"include": 'TYPE="snp"'})
+        assert "ATTAAC" not in view.alleles.flatten().tolist()
+
+    def test_ref_conflict_dropped(self, caplog):
+        snps = _store([100, 200], [["A", "G"], ["C", "T"]], sample_ids=["a0", "a1"])
+        indel = _store(
+            [100, 200], [["ATTAAC", "A"], ["C", "T"]], sample_ids=["b0", "b1"]
+        )
+        with caplog.at_level(logging.WARNING, logger="tsinfer"):
+            view = self._view([snps, indel])
+        np.testing.assert_array_equal(view.positions, [200])
+        assert "Dropping 1 site(s)" in caplog.text
+        assert "[100]" in caplog.text
+
+    def test_ref_conflict_dropped_when_alleles_overlap(self):
+        # The indel's ALT equals the SNP's REF, but its REF is not a SNP allele
+        snps = _store([100], [["A", "G"]], sample_ids=["a0", "a1"])
+        indel = _store([100], [["AT", "A"]], sample_ids=["b0", "b1"])
+        assert self._view([snps, indel]).num_sites == 0
+
+    def test_swapped_alleles_not_a_conflict(self):
+        store_a = _store([100], [["A", "T"]], sample_ids=["a0", "a1"])
+        store_b = _store([100], [["T", "A"]], ancestral=["A"], sample_ids=["b0", "b1"])
+        view = self._view([store_a, store_b])
+        np.testing.assert_array_equal(view.positions, [100])
+        variants = list(view.iter_genotypes())
+        np.testing.assert_array_equal(variants[0].genotypes, [0, 1, 1, 0])
+
+    def test_sources_filtered_differently(self):
+        store_a = _store([100, 200], [["A", "T"]] * 2, sample_ids=["a0", "a1"])
+        store_b = _store([100, 200], [["A", "T"]] * 2, sample_ids=["b0", "b1"])
+        view = self._view([store_a, store_b], s0={"exclude": "POS == 200"})
+        np.testing.assert_array_equal(view.positions, [100, 200])
+        variants = list(view.iter_genotypes())
+        np.testing.assert_array_equal(variants[0].genotypes, [0, 1, 0, 1])
+        np.testing.assert_array_equal(variants[1].genotypes, [-1, -1, 0, 1])
+
+    @pytest.mark.parametrize("ancestral", [".", "G", "N", ""])
+    def test_ancestral_not_among_alleles_is_unknown(self, ancestral, caplog):
+        store = _store([100, 200], [["A", "T"]] * 2, ancestral=["T", ancestral])
+        with caplog.at_level(logging.INFO, logger="tsinfer"):
+            view = self._view([store])
+        assert view.ancestral_alleles.tolist() == ["T", ""]
+        expected = 0 if ancestral == "" else 1
+        assert f"{expected} site(s) with an ancestral allele that is not" in caplog.text
+        variants = list(view.iter_genotypes())
+        # Site 100 is polarised on T; at site 200 code 0 is unknown
+        np.testing.assert_array_equal(variants[0].genotypes, [1, 0])
+        assert variants[1].alleles == ("", "A", "T")
+        np.testing.assert_array_equal(variants[1].genotypes, [1, 2])
+
+    def test_ancestral_among_alleles_of_other_source(self):
+        store_a = _store([100], [["A", "T"]], sample_ids=["a0", "a1"])
+        store_b = _store([100], [["A", "G"]], sample_ids=["b0", "b1"])
+        ann = _store([100], [["A", "G"]], ancestral=["G"])
+        view = self._view([store_a, store_b], ann=ann)
+        assert view.ancestral_alleles.tolist() == ["G"]
+        variants = list(view.iter_genotypes())
+        assert variants[0].alleles == ("G", "A", "T")
+        np.testing.assert_array_equal(variants[0].genotypes, [1, 2, 1, 0])
+
+    def test_ancestral_from_duplicate_annotation_rows(self):
+        store = _store([100], [["C", "T"]])
+        ann = _store(
+            [100, 100], [["CAC", "TAG"], ["C", "G", "T"]], ancestral=["TAC", "T"]
+        )
+        view = self._view([store], ann=ann)
+        assert view.ancestral_alleles.tolist() == ["T"]
+
+    def test_external_annotation_missing_positions(self):
+        store = _store([10, 20, 30], [["A", "T"]] * 3, ancestral=["", "", ""])
+        ann = _store([10, 30], [["A", "T"]] * 2, ancestral=["A", "A"])
+        view = self._view([store], ann=ann)
+        assert view.ancestral_alleles.tolist() == ["A", "", "A"]
+
+    def test_empty_view(self):
+        store = _store([100, 200], [["A", "T"]] * 2)
+        view = self._view([store], s0={"include": "POS > 1000"})
+        assert view.num_sites == 0
+        assert list(view.iter_genotypes()) == []
+
+    def test_regions_filter(self):
+        store = helpers.add_region_index(_store([100, 200, 300], [["A", "T"]] * 3))
+        view = self._view([store], s0={"regions": "1:150-1000"})
+        np.testing.assert_array_equal(view.positions, [200, 300])
+
+
+class TestFilteredHaplotypeReader:
+    """Matching reads only the variants that pass source filters."""
+
+    def _read(self, sample_store, positions, sample_id="sample_0", **filters):
+        positions = np.array(positions, dtype=np.int32)
+        source = config.Source(path=sample_store, name="test", **filters)
+        reader = vcz.HaplotypeReader(
+            {"test": source},
+            positions,
+            np.array(["A"] * len(positions)),
+            schedule=[("test", sample_id, 0)],
+            contig_id="1",
+        )
+        job = config.MatchJob(
+            haplotype_index=0,
+            source="test",
+            sample_id=sample_id,
+            ploidy_index=0,
+            time=0,
+            start_position=0,
+            end_position=10_000,
+            group=0,
+        )
+        hap = reader.read_haplotype(job)
+        reader.shutdown()
+        return hap, reader
+
+    def test_excluded_rows_missing(self):
+        store = _store([100, 200, 300], [["A", "T"]] * 3, genotypes=[[1, 0]] * 3)
+        hap, _ = self._read(store, [100, 200, 300], exclude="POS == 200")
+        np.testing.assert_array_equal(hap, [1, -1, 1])
+
+    def test_snp_row_used_at_indel_position(self):
+        store = _store(
+            [100, 100, 200],
+            [["A", "G"], ["A", "AT"], ["A", "T"]],
+            genotypes=[[1, 0], [0, 1], [1, 0]],
+        )
+        hap, reader = self._read(store, [100, 200], include='TYPE="snp"')
+        np.testing.assert_array_equal(hap, [1, 1])
+        site_alleles = reader.get_site_alleles()
+        assert "AT" not in site_alleles.flatten().tolist()
+        assert site_alleles[0, :2].tolist() == ["A", "G"]
+
+    def test_unfiltered_duplicate_missing(self):
+        store = _store(
+            [100, 100, 200],
+            [["A", "G"], ["A", "AT"], ["A", "T"]],
+            genotypes=[[1, 0], [0, 1], [1, 0]],
+        )
+        hap, reader = self._read(store, [100, 200])
+        np.testing.assert_array_equal(hap, [-1, 1])
+        assert reader.get_num_alleles().tolist() == [1, 2]

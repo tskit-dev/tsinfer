@@ -47,7 +47,6 @@ from __future__ import annotations
 import dataclasses
 import functools
 import logging
-import math
 import pathlib
 import queue
 import threading
@@ -57,7 +56,7 @@ from typing import Any
 
 import numpy as np
 import zarr
-from vcztools.retrieval import variant_chunk_iter
+from vcztools import retrieval
 from vcztools.samples import parse_samples
 from zarr.core.dtype.npy.string import VariableLengthUTF8
 
@@ -250,7 +249,7 @@ def iter_variants(
     Each yielded dict maps zarr array names to per-variant values
     (variants dimension removed).
     """
-    for chunk_data in variant_chunk_iter(
+    for chunk_data in retrieval.variant_chunk_iter(
         store,
         fields=fields,
         include=include,
@@ -345,10 +344,10 @@ def iter_genotypes(store, positions, ancestral_allele_index, sample_include=None
             i += 1
 
 
-def iter_raw_genotypes(store, positions, sample_include, variant_rows):
+def iter_raw_genotypes(store, rows, sample_include):
     """
-    Yield ``(num_haplotypes,)`` int8 raw allele-index rows for the requested
-    positions, one row per position in the order given.
+    Yield ``(num_haplotypes,)`` int8 raw allele-index rows for the specified
+    variant rows of a store, in the order given.
 
     Unlike ``iter_genotypes``, no ancestral-allele polarisation is applied.
     Values are raw allele indices into ``variant_allele``; -1 means missing.
@@ -356,30 +355,19 @@ def iter_raw_genotypes(store, positions, sample_include, variant_rows):
     Parameters
     ----------
     store : zarr.Group
-        VCZ store containing ``call_genotype`` and ``variant_position``.
-    positions : array-like of int
-        Genomic positions to retrieve (must be non-decreasing and present
-        in ``variant_position`` within ``variant_rows``).
+        VCZ store containing ``call_genotype``.
+    rows : array-like of int
+        Ascending absolute variant row indexes to retrieve.
     sample_include : array-like of bool or None
         Boolean mask (length ``num_samples``) where True means keep this
         sample.  ``None`` keeps all samples.
-    variant_rows : slice
-        The rows of the store (e.g. those on one contig) in which to look
-        up *positions*.
 
     Yields
     ------
     np.ndarray
         ``(num_haplotypes,)`` int8 array of raw allele indices.
     """
-    positions = np.asarray(positions, dtype=np.int32)
-
-    if len(positions) == 0:
-        return
-
-    row_positions = np.asarray(store["variant_position"][variant_rows], dtype=np.int32)
-    local_indices = np.searchsorted(row_positions, positions)
-    site_indices = local_indices.astype(np.int64) + variant_rows.start
+    site_indices = np.asarray(rows, dtype=np.int64)
 
     if sample_include is not None:
         sample_include = np.asarray(sample_include, dtype=bool)
@@ -520,6 +508,157 @@ def resolve_contig(stores, contig_id: str | None) -> Contig:
 def num_contigs(store: zarr.Group) -> int:
     """Return the number of contigs declared in a VCZ store."""
     return int(store["contig_id"].shape[0])
+
+
+# ---------------------------------------------------------------------------
+# Source variant selection and ancestral alleles
+# ---------------------------------------------------------------------------
+
+
+@dataclasses.dataclass
+class SourceVariants:
+    """
+    The variants of a source on one contig that pass the source's filters,
+    excluding those at positions shared by more than one passing variant.
+    """
+
+    rows: np.ndarray  # (num_variants,) absolute store row indexes, ascending
+    positions: np.ndarray  # (num_variants,) int32
+    alleles: np.ndarray  # (num_variants, max_alleles) allele strings
+
+
+def _source_has_filters(source: config.Source) -> bool:
+    return (
+        source.include is not None
+        or source.exclude is not None
+        or source.regions is not None
+        or source.targets is not None
+    )
+
+
+def _filtered_rows(store: zarr.Group, source: config.Source) -> np.ndarray:
+    """
+    Return the ascending row indexes of the variants in a store that pass the
+    source's include/exclude/regions/targets filters. Only the variant chunks
+    that overlap the regions or targets are read.
+    """
+    chunk_size = store["variant_position"].chunks[0]
+    parts = [np.zeros(0, dtype=np.int64)]
+    for chunk_index, mask in retrieval.variant_chunk_index_iter_with_filtering(
+        store,
+        regions=source.regions,
+        targets=source.targets,
+        include=source.include,
+        exclude=source.exclude,
+    ):
+        if mask.ndim == 2:
+            # A per-sample filter: keep variants where any sample passes
+            mask = np.any(mask, axis=1)
+        start = chunk_index * chunk_size
+        parts.append(start + np.flatnonzero(mask).astype(np.int64))
+    return np.concatenate(parts)
+
+
+def select_source_variants(
+    store: zarr.Group, source: config.Source, contig_id: str
+) -> SourceVariants:
+    """
+    Return the variants of the source on the specified contig that pass its
+    filters. Duplicate positions are identified after filtering, so that a
+    filter which removes all but one of the variants at a position (e.g.
+    ``TYPE="snp"`` for a SNP and an indel) keeps the remaining variant.
+    """
+    contig_rows = contig_variant_rows(store, contig_id)
+    num_on_contig = contig_rows.stop - contig_rows.start
+    if _source_has_filters(source):
+        rows = _filtered_rows(store, source)
+        in_contig = (rows >= contig_rows.start) & (rows < contig_rows.stop)
+        rows = rows[in_contig]
+    else:
+        rows = np.arange(contig_rows.start, contig_rows.stop, dtype=np.int64)
+    num_passing = len(rows)
+
+    if num_passing > 0:
+        # Read only the span of rows that passed the filters
+        span = slice(int(rows[0]), int(rows[-1]) + 1)
+        local = rows - span.start
+        positions = np.asarray(store["variant_position"][span], dtype=np.int32)[local]
+        dup_positions = _find_duplicate_positions(positions)
+        keep = ~np.isin(positions, dup_positions)
+        rows = rows[keep]
+        positions = positions[keep]
+        alleles = np.asarray(store["variant_allele"][span])[local[keep]]
+    else:
+        positions = np.zeros(0, dtype=np.int32)
+        alleles = np.zeros((0, store["variant_allele"].shape[1]), dtype=object)
+    alleles = alleles.astype(object)
+
+    logger.info(
+        "Source %s: %d variants on contig %s, %d pass filters, %d at duplicate "
+        "positions, %d used",
+        source.name,
+        num_on_contig,
+        contig_id,
+        num_passing,
+        num_passing - len(rows),
+        len(rows),
+    )
+    return SourceVariants(rows=rows, positions=positions, alleles=alleles)
+
+
+def lookup_ancestral_alleles(
+    ancestral_state: config.AncestralState,
+    contig_id: str,
+    positions: np.ndarray,
+    ref_alleles: np.ndarray,
+) -> np.ndarray:
+    """
+    Return the ancestral allele recorded at each of the specified positions
+    ("" if unknown). Where the annotation store has several variants at a
+    position (e.g. a SNP and an indel), only those whose REF allele equals
+    the corresponding entry of *ref_alleles* are used; if these do not
+    give a single ancestral allele, it is unknown.
+    """
+    ann_store = open_store(ancestral_state.path)
+    ann_rows = contig_variant_rows(ann_store, contig_id)
+    ann_positions = np.asarray(ann_store["variant_position"][ann_rows], dtype=np.int32)
+    lo = np.searchsorted(ann_positions, positions, side="left")
+    hi = np.searchsorted(ann_positions, positions, side="right")
+    counts = hi - lo
+
+    # Read the annotation rows at the requested positions only. The rows for
+    # position j are needed_rows[offsets[j]: offsets[j] + counts[j]].
+    offsets = np.cumsum(counts) - counts
+    within = np.arange(np.sum(counts)) - np.repeat(offsets, counts)
+    needed_rows = np.repeat(lo, counts) + within + ann_rows.start
+    if ancestral_state.is_reference:
+        values = np.asarray(ann_store["variant_allele"].oindex[needed_rows, 0])
+    else:
+        values = np.asarray(ann_store[ancestral_state.field].oindex[needed_rows])
+
+    result = np.full(len(positions), "", dtype=object)
+    single = counts == 1
+    result[single] = values[offsets[single]]
+
+    multi = np.flatnonzero(counts > 1)
+    num_ambiguous = 0
+    if len(multi) > 0:
+        refs = np.asarray(ann_store["variant_allele"].oindex[needed_rows, 0])
+        for j in multi:
+            k = slice(offsets[j], offsets[j] + counts[j])
+            ref_matches = refs[k] == ref_alleles[j]
+            candidates = set(values[k][ref_matches].tolist())
+            if len(candidates) == 1:
+                result[j] = candidates.pop()
+            else:
+                num_ambiguous += 1
+    logger.info(
+        "Ancestral alleles: %d positions with no annotation, %d with ambiguous "
+        "annotations at duplicate positions",
+        int(np.sum(counts == 0)),
+        num_ambiguous,
+    )
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -1660,6 +1799,8 @@ def build_allele_mapper(
     """
     allele_table: list[list[str]] = [[str(a)] for a in ancestral_alleles]
     positions = np.asarray(positions, dtype=np.int32)
+    if len(positions) == 0:
+        return AlleleMapper(0, allele_table)
 
     for src_positions, src_alleles in per_source_alleles:
         src_positions = np.asarray(src_positions, dtype=np.int32)
@@ -1792,9 +1933,10 @@ class VCZHaplotypeReader:
     """
     Reads and polarises haplotypes from a single VCZ store.
 
-    Handles both ancestor and sample stores uniformly: positions are
-    aligned to a reference coordinate system, and genotypes are polarised
-    so that the ancestral allele is always 0.
+    Handles both ancestor and sample stores uniformly: the source's selected
+    variants are aligned to a reference coordinate system, and genotypes are
+    polarised so that the ancestral allele is always 0. Reference positions
+    without a selected variant read as missing.
 
     Uses an external ``ScheduledCache`` shared across all sources to avoid
     repeated zarr reads when successive haplotypes fall in the same chunk.
@@ -1811,11 +1953,11 @@ class VCZHaplotypeReader:
         Name used as the first element of the cache key.
     cache : ScheduledCache
         Shared chunk cache instance.
+    variants : SourceVariants
+        The variants of the store to align to the reference positions
+        (see ``select_source_variants``).
     samples_selection : np.ndarray or None
         Optional subset of sample indices to use.
-    variant_rows : slice
-        The rows of the store (e.g. those on one contig) to align to the
-        reference positions.
     """
 
     def __init__(
@@ -1826,7 +1968,7 @@ class VCZHaplotypeReader:
         *,
         source_name: str,
         cache: ScheduledCache,
-        variant_rows: slice,
+        variants: SourceVariants,
         samples_selection: np.ndarray | None = None,
         _allele_mapper: AlleleMapper | None = None,
     ):
@@ -1853,70 +1995,29 @@ class VCZHaplotypeReader:
         self._ploidy = call_gt.shape[2]
         self._num_store_samples = call_gt.shape[1]
 
-        # Build position alignment map, in indexes local to variant_rows
-        src_positions = np.asarray(
-            self._store["variant_position"][variant_rows], dtype=np.int32
+        # Select the variants at reference positions. Variants are in
+        # ascending row (and position) order, so the selection is too.
+        ref_idx = np.searchsorted(self._ref_positions, variants.positions)
+        clipped = np.minimum(ref_idx, max(self._num_ref_sites - 1, 0))
+        found = ref_idx < self._num_ref_sites
+        if self._num_ref_sites > 0:
+            found &= self._ref_positions[clipped] == variants.positions
+        selected_rows = variants.rows[found]
+        self._selected_to_ref_idx = ref_idx[found].astype(np.int32)
+        self._selected_alleles = variants.alleles[found]
+        self._num_selected = len(selected_rows)
+
+        # Index of each selected variant's ancestral allele (-1 if absent),
+        # used to polarise when no allele mapper is assigned
+        selected_ancestral = np.asarray(ancestral_alleles, dtype=object)[
+            self._selected_to_ref_idx
+        ]
+        is_ancestral = (self._selected_alleles == selected_ancestral[:, None]) & (
+            self._selected_alleles != ""
         )
-        self._src_positions = src_positions
-        src_pos_to_idx = {}
-        for i, p in enumerate(src_positions.tolist()):
-            src_pos_to_idx[p] = i
-
-        anc_idxs = []
-        src_idxs = []
-        for site_idx, pos in enumerate(self._ref_positions.tolist()):
-            if pos in src_pos_to_idx:
-                anc_idxs.append(site_idx)
-                src_idxs.append(src_pos_to_idx[pos])
-        self._position_map = (
-            np.array(list(zip(anc_idxs, src_idxs)), dtype=np.int32).reshape(-1, 2)
-            if anc_idxs
-            else np.empty((0, 2), dtype=np.int32)
-        )
-
-        # Build ancestral allele index for polarisation using the
-        # authoritative ancestral alleles from the ancestor store.
-        num_src_sites = len(src_positions)
-
-        # Map ref-site ancestral alleles to a position-keyed lookup
-        anc_by_pos = {
-            int(p): str(ancestral_alleles[i])
-            for i, p in enumerate(self._ref_positions.tolist())
-        }
-
-        # Source allele strings (for encoding during load)
-        self._src_alleles = np.asarray(self._store["variant_allele"][variant_rows])
-
-        self._ancestral_allele_index = np.full(num_src_sites, -1, dtype=np.int8)
-        for i in range(num_src_sites):
-            pos = int(src_positions[i])
-            anc_str = anc_by_pos.get(pos)
-            if anc_str is None:
-                continue
-            for j, a in enumerate(self._src_alleles[i].tolist()):
-                if a and str(a) == anc_str:
-                    self._ancestral_allele_index[i] = j
-                    break
-
-        # Variant selection: which source variants match a reference position
-        self._variant_select = np.zeros(num_src_sites, dtype=bool)
-        if len(self._position_map) > 0:
-            self._variant_select[self._position_map[:, 1]] = True
-        self._num_selected = int(np.count_nonzero(self._variant_select))
-
-        # Map: source variant index → row in cached chunk (-1 if not selected)
-        self._src_var_to_selected_row = np.full(num_src_sites, -1, dtype=np.int32)
-        self._src_var_to_selected_row[self._variant_select] = np.arange(
-            self._num_selected, dtype=np.int32
-        )
-
-        # Map: selected row index → ref site index
-        # In source-variant order (ascending src_site_idx)
-        if len(self._position_map) > 0:
-            order = np.argsort(self._position_map[:, 1])
-            self._selected_to_ref_idx = self._position_map[order, 0]
-        else:
-            self._selected_to_ref_idx = np.empty(0, dtype=np.int32)
+        self._ancestral_allele_index = np.where(
+            np.any(is_ancestral, axis=1), np.argmax(is_ancestral, axis=1), -1
+        ).astype(np.int8)
 
         # Zarr variant chunk size for chunk-wise iteration
         self._variant_chunk_size = (
@@ -1925,25 +2026,14 @@ class VCZHaplotypeReader:
             else call_gt.shape[0]
         )
 
-        # Precompute which variant chunks contain selected sites. Chunks
-        # are addressed by absolute store row; selections are local to
-        # variant_rows.
+        # Precompute which variant chunks contain selected variants:
+        # [(vc_idx, row indexes within the block, selected indexes), ...]
         vc_size = self._variant_chunk_size
-        rows_start = variant_rows.start
-        rows_stop = variant_rows.stop
-        first_vc = rows_start // vc_size
-        stop_vc = math.ceil(rows_stop / vc_size)
-        self._needed_vc = []  # [(vc_idx, block_indices, out_rows), ...]
-        for vc_idx in range(first_vc, stop_vc):
-            vc_start = vc_idx * vc_size
-            lo = max(vc_start, rows_start)
-            hi = min(vc_start + vc_size, rows_stop)
-            local_select = self._variant_select[lo - rows_start : hi - rows_start]
-            if not np.any(local_select):
-                continue
-            selected = np.where(local_select)[0]
-            block_indices = lo - vc_start + selected
-            out_rows = self._src_var_to_selected_row[lo - rows_start + selected]
+        selected_chunks = selected_rows // vc_size
+        self._needed_vc = []
+        for vc_idx in np.unique(selected_chunks).tolist():
+            out_rows = np.flatnonzero(selected_chunks == vc_idx)
+            block_indices = selected_rows[out_rows] - vc_idx * vc_size
             self._needed_vc.append((vc_idx, block_indices, out_rows))
 
         # Allele remap table — populated by _precompute_allele_remap()
@@ -1970,13 +2060,12 @@ class VCZHaplotypeReader:
         """
         if self._allele_mapper is None or self._num_selected == 0:
             return
-        selected_src = np.where(self._variant_select)[0]
-        max_a = self._src_alleles.shape[1]
+        max_a = self._selected_alleles.shape[1]
         remap = np.full((self._num_selected, max_a), -1, dtype=np.int8)
-        for row, src_idx in enumerate(selected_src):
+        for row in range(self._num_selected):
             ref_idx = int(self._selected_to_ref_idx[row])
             for j in range(max_a):
-                a = str(self._src_alleles[src_idx, j])
+                a = str(self._selected_alleles[row, j])
                 if a:
                     remap[row, j] = self._allele_mapper.lookup(ref_idx, a)
         self._allele_remap = remap
@@ -2098,19 +2187,15 @@ class VCZHaplotypeReader:
                 hap[self._selected_to_ref_idx] = encoded_col
             else:
                 # Fallback: polarise from raw genotypes
-                src_idxs = self._position_map[:, 1]
-                anc_idxs = self._position_map[:, 0]
-                selected_rows = self._src_var_to_selected_row[src_idxs]
-                raw = encoded_col[selected_rows]
-                ai = self._ancestral_allele_index[src_idxs]
+                ai = self._ancestral_allele_index
                 valid = ai >= 0
-                raw_v, ai_v, anc_v = raw[valid], ai[valid], anc_idxs[valid]
+                raw = encoded_col[valid]
                 encoded = np.where(
-                    raw_v < 0,
+                    raw < 0,
                     np.int8(-1),
-                    np.where(raw_v == ai_v, np.int8(0), np.int8(1)),
+                    np.where(raw == ai[valid], np.int8(0), np.int8(1)),
                 )
-                hap[anc_v] = encoded
+                hap[self._selected_to_ref_idx[valid]] = encoded
 
         # Notify the cache that one scheduled read is done
         self._cache.record_read(key)
@@ -2188,14 +2273,15 @@ class HaplotypeReader:
                 source_name=name,
                 cache=None,  # placeholder, set below
                 samples_selection=samples_selection,
-                variant_rows=contig_variant_rows(store, self._contig_id),
+                variants=select_source_variants(store, source, self._contig_id),
             )
             self._readers[name] = reader
 
         # Build fixed allele map from all sources via build_allele_mapper
         per_source_alleles = []
         for reader in self._readers.values():
-            per_source_alleles.append((reader._src_positions, reader._src_alleles))
+            selected_positions = self._positions[reader._selected_to_ref_idx]
+            per_source_alleles.append((selected_positions, reader._selected_alleles))
         if reference_alleles is not None:
             per_source_alleles.append((self._positions, reference_alleles))
 
@@ -2284,7 +2370,7 @@ class HaplotypeReader:
                 source_name=source_name,
                 cache=self._cache,
                 samples_selection=samples_selection,
-                variant_rows=contig_variant_rows(store, self._contig_id),
+                variants=select_source_variants(store, source, self._contig_id),
                 _allele_mapper=self._allele_mapper,
             )
             self._readers[source_name] = reader
@@ -2445,16 +2531,13 @@ class MultiSourceView:
     """
     Unified view over one or more VCZ sample stores for variant iteration.
 
-    Construction is cheap: it opens stores, reads positions/alleles, removes
-    duplicates, checks for duplicate sample IDs across sources, builds the
-    ancestral-state lookup, and computes the unified set of potential sites.
-
-    Heavy work (AlleleMapper construction, remap-table precomputation) is
-    deferred to ``prepare(positions)``, which must be called before
-    ``iter_genotypes``.  If ``iter_genotypes`` is called without a prior
-    ``prepare``, it calls ``prepare`` automatically with all positions.
-
-    Only variants on contig ``contig_id`` are considered.
+    The view's sites are the union of the variants of each source on contig
+    ``contig_id`` that pass the source's filters (see
+    ``select_source_variants``), excluding sites where the sources disagree
+    on the REF allele. Each site's ancestral allele is looked up in the
+    ``ancestral_state`` store, and is unknown ("") if it is not among the
+    site's alleles in the sources. Allele codes are fixed at construction:
+    code 0 is the ancestral allele and codes 1+ are the other alleles.
     """
 
     def __init__(
@@ -2469,21 +2552,14 @@ class MultiSourceView:
         n_sources = len(sources)
         self._sources = sources
         self._stores = [open_store(source.path) for source in sources]
-        self._variant_rows = []
-        self._contig_indexes = []
         self._sample_includes = []
         self._ploidies = []
         self._num_haplotypes_per_source = []
         self._sample_ids_per_source = []
-        self._positions_per_source = []
-        self._alleles_per_source = []
+        self._variants = []
 
         # --- Per-source initialization ---
         for source, store in zip(sources, self._stores):
-            rows = contig_variant_rows(store, contig_id)
-            self._variant_rows.append(rows)
-            self._contig_indexes.append(_contig_index(store, contig_id))
-
             samples_selection = resolve_samples_selection(store, source.samples)
             gt_shape = store["call_genotype"].shape
             num_samples = gt_shape[1]
@@ -2495,150 +2571,104 @@ class MultiSourceView:
             self._sample_includes.append(sample_include)
             self._num_haplotypes_per_source.append(len(samples_selection) * ploidy)
 
-            # Sample IDs (filtered by selection)
             raw_ids = store["sample_id"][:][samples_selection]
             self._sample_ids_per_source.append([str(x) for x in raw_ids.tolist()])
 
-            # Positions and alleles on the contig (bulk reads)
-            src_positions = np.asarray(store["variant_position"][rows], dtype=np.int32)
-            src_alleles = np.asarray(store["variant_allele"][rows])
-            self._positions_per_source.append(src_positions)
-            self._alleles_per_source.append(src_alleles)
+            self._variants.append(select_source_variants(store, source, contig_id))
 
-        # --- Ancestral state ---
-        ann_store = open_store(ancestral_state.path)
-        ann_rows = contig_variant_rows(ann_store, contig_id)
-        ann_positions = np.asarray(
-            ann_store["variant_position"][ann_rows], dtype=np.int32
+        # --- Unified site set ---
+        all_positions = functools.reduce(
+            np.union1d,
+            [variants.positions for variants in self._variants],
+            np.zeros(0, dtype=np.int32),
+        ).astype(np.int32)
+        # source_row[j, k] is the index of site j in source k's variants, or -1
+        source_row = np.full((len(all_positions), n_sources), -1, dtype=np.intp)
+        for src_idx, variants in enumerate(self._variants):
+            site_idx = np.searchsorted(all_positions, variants.positions)
+            source_row[site_idx, src_idx] = np.arange(len(variants.positions))
+
+        # --- Drop sites where the sources describe different variants ---
+        # The first source with a site defines its REF and alleles. Another
+        # source conflicts if its REF is not among these alleles, or the
+        # first source's REF is not among its alleles (e.g. a SNP and an
+        # indel at the same position).
+        first_src = np.argmax(source_row >= 0, axis=1)
+        first_alleles = np.full(
+            (len(all_positions), max(v.alleles.shape[1] for v in self._variants)),
+            "",
+            dtype=object,
         )
-        if ancestral_state.is_reference:
-            ann_values = np.asarray(ann_store["variant_allele"][ann_rows, 0])
-        else:
-            ann_values = np.asarray(ann_store[ancestral_state.field][ann_rows])
-
-        # --- Unified site set (all numpy) ---
-        valid_per_source = []
-        for src_idx in range(n_sources):
-            src_pos = self._positions_per_source[src_idx]
-            dup_arr = _find_duplicate_positions(src_pos)
-            non_dup = ~np.isin(src_pos, dup_arr)
-            in_ann = np.isin(src_pos, ann_positions)
-            valid_per_source.append(np.unique(src_pos[non_dup & in_ann]))
-
-        # Merge
-        if len(valid_per_source) == 1:
-            all_positions = valid_per_source[0]
-        else:
-            all_positions = functools.reduce(np.union1d, valid_per_source)
-        self._positions = all_positions.astype(np.int32)
-
-        # Build source_has_site mask via searchsorted
-        self._source_has_site = np.zeros((len(self._positions), n_sources), dtype=bool)
-        for src_idx in range(n_sources):
-            idx = np.searchsorted(self._positions, valid_per_source[src_idx])
-            self._source_has_site[idx, src_idx] = True
-
-        # --- Ancestral alleles for unified positions via searchsorted ---
-        ann_idx = np.searchsorted(ann_positions, self._positions)
-        self._ancestral_alleles = ann_values[ann_idx]
-
-        # --- Deferred state (built by prepare()) ---
-        self._allele_mapper = None
-        self._remap_tables = None
-        self._prepared_positions = None
-
-        # --- Per-source variant filter caches (lazy) ---
-        self._filtered_positions_cache: list[set[int] | None] = [None] * n_sources
-
-    def _source_has_filters(self, src_idx: int) -> bool:
-        source = self._sources[src_idx]
-        return (
-            source.include is not None
-            or source.exclude is not None
-            or source.regions is not None
-            or source.targets is not None
-        )
-
-    def _resolve_filtered_positions(self, src_idx: int) -> set[int]:
-        """Lazily compute and cache filtered positions for a source."""
-        if self._filtered_positions_cache[src_idx] is not None:
-            return self._filtered_positions_cache[src_idx]
-        source = self._sources[src_idx]
-        filtered = set()
-        contig_index = self._contig_indexes[src_idx]
-        for var in iter_variants(
-            self._stores[src_idx],
-            fields=["variant_position", "variant_contig"],
-            include=source.include,
-            exclude=source.exclude,
-            regions=source.regions,
-            targets=source.targets,
-        ):
-            if var["variant_contig"] == contig_index:
-                filtered.add(int(var["variant_position"]))
-        self._filtered_positions_cache[src_idx] = filtered
-        return filtered
-
-    def prepare(self, positions: np.ndarray) -> None:
-        """
-        Build AlleleMapper and remap tables for the given position subset.
-
-        Must be called before ``iter_genotypes``.  The *positions* array
-        must be a subset of ``self.positions``.
-        """
-        positions = np.asarray(positions, dtype=np.int32)
-        self._prepared_positions = positions
-        n_sources = len(self._sources)
-
-        # Compute source_has_site for prepared positions via searchsorted
-        unified_indices = np.searchsorted(self._positions, positions)
-        prepared_source_has_site = self._source_has_site[unified_indices]
-
-        # Ancestral alleles for prepared positions
-        prepared_anc = self._ancestral_alleles[unified_indices]
-
-        # --- AlleleMapper ---
-        per_source_allele_pairs = []
-        for src_idx in range(n_sources):
-            per_source_allele_pairs.append(
-                (
-                    self._positions_per_source[src_idx],
-                    self._alleles_per_source[src_idx],
-                )
+        for src_idx, variants in enumerate(self._variants):
+            is_first = first_src == src_idx
+            rows = source_row[is_first, src_idx]
+            first_alleles[is_first, : variants.alleles.shape[1]] = variants.alleles[rows]
+        refs = first_alleles[:, 0]
+        conflict = np.zeros(len(all_positions), dtype=bool)
+        for src_idx, variants in enumerate(self._variants):
+            has_site = source_row[:, src_idx] >= 0
+            src_alleles = variants.alleles[source_row[has_site, src_idx]]
+            src_ref = src_alleles[:, 0]
+            ref_known = np.any(first_alleles[has_site] == src_ref[:, None], axis=1)
+            ref_shared = np.any(src_alleles == refs[has_site, None], axis=1)
+            conflict[has_site] |= ~(ref_known & ref_shared)
+        num_conflicts = int(np.sum(conflict))
+        if num_conflicts > 0:
+            logger.warning(
+                "Dropping %d site(s) where sources have inconsistent REF alleles "
+                "(e.g. positions %s)",
+                num_conflicts,
+                all_positions[conflict][:5].tolist(),
             )
+        keep = ~conflict
+        self._positions = all_positions[keep]
+        self._source_row = source_row[keep]
+        refs = refs[keep]
 
-        self._allele_mapper = build_allele_mapper(
-            positions,
-            prepared_anc,
-            per_source_allele_pairs,
+        # --- Ancestral alleles: unknown unless among the site's alleles ---
+        ancestral = lookup_ancestral_alleles(
+            ancestral_state, contig_id, self._positions, refs
         )
+        among_alleles = np.zeros(len(self._positions), dtype=bool)
+        for src_idx, variants in enumerate(self._variants):
+            has_site = self._source_row[:, src_idx] >= 0
+            site_alleles = variants.alleles[self._source_row[has_site, src_idx]]
+            matches = site_alleles == ancestral[has_site, None]
+            among_alleles[has_site] |= np.any(matches, axis=1)
+        known = ancestral != ""
+        not_among = known & ~among_alleles
+        logger.info(
+            "Ancestral alleles: %d site(s) with an ancestral allele that is not "
+            "among the site's alleles, treated as unknown",
+            int(np.sum(not_among)),
+        )
+        ancestral[not_among] = ""
+        self._ancestral_alleles = ancestral
 
-        # --- Precompute per-source allele remap tables ---
+        # --- Allele codes and per-source remap tables ---
+        per_source_allele_pairs = []
+        for variants in self._variants:
+            per_source_allele_pairs.append((variants.positions, variants.alleles))
+        self._allele_mapper = build_allele_mapper(
+            self._positions, self._ancestral_alleles, per_source_allele_pairs
+        )
+        # remap_tables[k][i, a] is the code of allele a of source k's variant i
         self._remap_tables = []
-        for src_idx in range(n_sources):
-            mask = prepared_source_has_site[:, src_idx]
-            src_unified_indices = np.where(mask)[0]
-            src_positions = self._positions_per_source[src_idx]
-            src_alleles = self._alleles_per_source[src_idx]
-            if len(src_unified_indices) == 0:
-                self._remap_tables.append(np.empty((0, 0), dtype=np.int8))
-                continue
-            max_a = src_alleles.shape[1] if src_alleles.ndim > 1 else 1
-            remap = np.full((len(src_unified_indices), max_a), -1, dtype=np.int8)
-            # Vectorized: find source rows for all sites at once
-            site_positions = positions[src_unified_indices]
-            src_rows = np.searchsorted(src_positions, site_positions)
+        for src_idx, variants in enumerate(self._variants):
+            has_site = self._source_row[:, src_idx] >= 0
+            site_idx = np.flatnonzero(has_site)
+            src_rows = self._source_row[has_site, src_idx]
+            max_a = variants.alleles.shape[1]
+            remap = np.full((len(variants.positions), max_a), -1, dtype=np.int8)
             for j in range(max_a):
                 col_alleles = np.array(
-                    [str(x) for x in src_alleles[src_rows, j].tolist()]
+                    [str(x) for x in variants.alleles[src_rows, j].tolist()]
                 )
                 nonempty = col_alleles != ""
-                if np.any(nonempty):
-                    codes = self._allele_mapper.batch_lookup(
-                        src_unified_indices[nonempty],
-                        col_alleles[nonempty],
-                    )
-                    remap[nonempty, j] = codes
+                codes = self._allele_mapper.batch_lookup(
+                    site_idx[nonempty], col_alleles[nonempty]
+                )
+                remap[src_rows[nonempty], j] = codes
             self._remap_tables.append(remap)
 
     @property
@@ -2660,8 +2690,7 @@ class MultiSourceView:
 
     @property
     def alleles(self) -> np.ndarray:
-        if self._allele_mapper is None:
-            raise RuntimeError("prepare() must be called before alleles")
+        """(num_sites, max_alleles) array mapping allele codes to strings."""
         return self._allele_mapper.forward_map()
 
     def source_store(self, src_idx: int):
@@ -2753,11 +2782,8 @@ class MultiSourceView:
         """
         Yield ``Variant`` instances with canonical allele codes
         (0=ancestral, 1+=derived, -1=missing), concatenated across
-        sources. Sources missing a site contribute -1 arrays.
-
-        If ``prepare()`` has not been called, it is called automatically
-        with the requested positions (or all positions if *positions*
-        is None).
+        sources. Sources without a variant at a site (including those whose
+        filters exclude it) contribute -1 arrays.
 
         Parameters
         ----------
@@ -2768,9 +2794,6 @@ class MultiSourceView:
         sample_identifiers : list of (source_name, sample_id, ploidy_index) or None
             Reorder output columns to match; unmatched identifiers get -1.
             When None, columns stay in natural source order.
-
-        Sources with variant filters (include/exclude/regions/targets)
-        contribute -1 for positions that don't pass the filter.
         """
         if positions is None:
             positions = self._positions
@@ -2780,100 +2803,55 @@ class MultiSourceView:
         if len(positions) == 0:
             return
 
-        # Auto-prepare if needed or if positions differ
-        if self._allele_mapper is None or not np.array_equal(
-            positions, self._prepared_positions
-        ):
-            self.prepare(positions)
-
-        # Build permutation for sample reordering
         perm = None
         if sample_identifiers is not None:
             perm = self._build_permutation(sample_identifiers)
 
-        # Compute source_has_site for the requested positions via searchsorted
-        unified_indices = np.searchsorted(self._positions, positions)
-        source_has_site = self._source_has_site[unified_indices].copy()
-
-        # Apply variant filters: sources with filters that exclude
-        # a position contribute -1 (missing) values
-        n_sources = len(self._sources)
-        for src_idx in range(n_sources):
-            if self._source_has_filters(src_idx):
-                filtered = self._resolve_filtered_positions(src_idx)
-                filtered_arr = np.fromiter(filtered, dtype=np.int32)
-                has = source_has_site[:, src_idx]
-                source_has_site[:, src_idx] = has & np.isin(positions, filtered_arr)
-
-        # Build per-source iterators and remap-row arrays
-        source_iters = []
-        source_cumsum = []
-        for src_idx in range(n_sources):
-            mask = source_has_site[:, src_idx]
-            src_positions = positions[mask]
-            if len(src_positions) > 0:
-                it = iter(
-                    iter_raw_genotypes(
-                        self._stores[src_idx],
-                        src_positions,
-                        self._sample_includes[src_idx],
-                        self._variant_rows[src_idx],
-                    )
-                )
-            else:
-                it = iter([])
-            source_iters.append(it)
-
-            # Remap row index: cumulative count of True in
-            # the prepared source_has_site for this source.
-            # The remap table was built from prepared positions
-            # with source_has_site mask. Use cumsum to map
-            # site_idx → remap row directly.
-            prep_shs = self._source_has_site[unified_indices][:, src_idx]
-            source_cumsum.append(np.cumsum(prep_shs))
-
-        # Precompute alleles array for all positions
+        site_indexes = np.searchsorted(self._positions, positions)
+        source_row = self._source_row[site_indexes]
         alleles_array = self._allele_mapper.forward_map()
 
-        for site_idx in range(len(positions)):
+        n_sources = len(self._sources)
+        source_iters = []
+        for src_idx in range(n_sources):
+            has_site = source_row[:, src_idx] >= 0
+            src_rows = self._variants[src_idx].rows[source_row[has_site, src_idx]]
+            source_iters.append(
+                iter_raw_genotypes(
+                    self._stores[src_idx], src_rows, self._sample_includes[src_idx]
+                )
+            )
+
+        for j in range(len(positions)):
             parts = []
             for src_idx in range(n_sources):
-                num_haps = self._num_haplotypes_per_source[src_idx]
-                if source_has_site[site_idx, src_idx]:
-                    raw_row = next(source_iters[src_idx])
-                    remap_row_idx = int(source_cumsum[src_idx][site_idx]) - 1
-                    remap = self._remap_tables[src_idx]
-                    if remap.size > 0:
-                        safe = np.clip(raw_row, 0, remap.shape[1] - 1)
-                        encoded = remap[remap_row_idx][safe]
-                        row = np.where(
-                            raw_row < 0,
-                            np.int8(-1),
-                            encoded,
-                        ).astype(np.int8)
-                    else:
-                        row = raw_row
-                    parts.append(row)
+                row = source_row[j, src_idx]
+                if row >= 0:
+                    raw = next(source_iters[src_idx])
+                    remap = self._remap_tables[src_idx][row]
+                    safe = np.clip(raw, 0, len(remap) - 1)
+                    encoded = np.where(raw < 0, np.int8(-1), remap[safe])
+                    parts.append(encoded.astype(np.int8))
                 else:
+                    num_haps = self._num_haplotypes_per_source[src_idx]
                     parts.append(np.full(num_haps, -1, dtype=np.int8))
 
             genotypes = np.concatenate(parts)
 
-            # Apply sample permutation if requested
             if perm is not None:
                 natural_gt = genotypes
                 genotypes = np.full(len(perm), np.int8(-1), dtype=np.int8)
                 valid = perm >= 0
                 genotypes[valid] = natural_gt[perm[valid]]
 
-            # Build alleles tuple (trimmed of trailing empty)
-            site_alleles = alleles_array[site_idx]
+            # Alleles tuple, trimmed of trailing empty entries
+            site_alleles = alleles_array[site_indexes[j]]
             allele_list = [str(a) if a is not None else "" for a in site_alleles]
             while allele_list and allele_list[-1] == "":
                 allele_list.pop()
 
             yield Variant(
-                position=float(positions[site_idx]),
+                position=float(positions[j]),
                 genotypes=genotypes,
                 alleles=tuple(allele_list),
             )

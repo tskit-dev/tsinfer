@@ -17,7 +17,7 @@
 # along with tsinfer.  If not, see <http://www.gnu.org/licenses/>.
 #
 """
-Tests for tsinfer.ancestors: compute_inference_sites, compute_sequence_intervals,
+Tests for tsinfer.ancestors: compute_sequence_intervals,
 and infer_ancestors.
 """
 
@@ -382,142 +382,6 @@ def _anc_state(store):
 def _anc_genotypes(anc_store):
     """Return call_genotype[:, :, 0] from an ancestor store."""
     return np.asarray(anc_store["call_genotype"][:, :, 0])
-
-
-# ---------------------------------------------------------------------------
-# compute_inference_sites
-# ---------------------------------------------------------------------------
-
-
-class TestComputeInferenceSites:
-    def test_all_sites_pass(self):
-        gt = np.zeros((3, 2, 1), dtype=np.int8)
-        store = helpers.make_sample_vcz(
-            gt,
-            positions=[10, 20, 30],
-            alleles=[["A", "T"]] * 3,
-            ancestral_state=["A", "A", "A"],
-            sequence_length=100,
-        )
-        result = ancestors.compute_inference_sites(store, _anc_state(store))
-        np.testing.assert_array_equal(result.positions, [10, 20, 30])
-        np.testing.assert_array_equal(result.ancestral_allele_index, [0, 0, 0])
-
-    def test_include_excludes_sites(self):
-        gt = np.zeros((3, 2, 1), dtype=np.int8)
-        store = helpers.make_sample_vcz(
-            gt,
-            positions=[10, 20, 30],
-            alleles=[["A", "T"]] * 3,
-            ancestral_state=["A", "A", "A"],
-            sequence_length=100,
-        )
-        result = ancestors.compute_inference_sites(
-            store, _anc_state(store), include="POS >= 20"
-        )
-        np.testing.assert_array_equal(result.positions, [20, 30])
-
-    def test_exclude_excludes_sites(self):
-        gt = np.zeros((3, 2, 1), dtype=np.int8)
-        store = helpers.make_sample_vcz(
-            gt,
-            positions=[10, 20, 30],
-            alleles=[["A", "T"]] * 3,
-            ancestral_state=["A", "A", "A"],
-            sequence_length=100,
-        )
-        result = ancestors.compute_inference_sites(
-            store, _anc_state(store), exclude="POS == 20"
-        )
-        np.testing.assert_array_equal(result.positions, [10, 30])
-
-    def test_missing_ancestral_state_excludes(self):
-        # Site 1 has ancestral state not in alleles → excluded
-        gt = np.zeros((3, 2, 1), dtype=np.int8)
-        store = helpers.make_sample_vcz(
-            gt,
-            positions=[10, 20, 30],
-            alleles=[["A", "T"], ["C", "G"], ["A", "T"]],
-            ancestral_state=["A", "X", "A"],  # X not in alleles[1]
-            sequence_length=100,
-        )
-        result = ancestors.compute_inference_sites(store, _anc_state(store))
-        np.testing.assert_array_equal(result.positions, [10, 30])
-
-    def test_ancestral_allele_index_not_always_zero(self):
-        # Site 0: alleles=['T','A'], ancestral='A' → anc_idx=1
-        gt = np.zeros((1, 2, 1), dtype=np.int8)
-        store = helpers.make_sample_vcz(
-            gt,
-            positions=[10],
-            alleles=[["T", "A"]],
-            ancestral_state=["A"],
-            sequence_length=100,
-        )
-        result = ancestors.compute_inference_sites(store, _anc_state(store))
-        assert result.ancestral_allele_index[0] == 1
-
-    def test_external_ancestral_state(self):
-        # AncestralState annotation from a separate sample VCZ (used as annotation)
-        # The annotation covers positions 10 and 30 (but not 20)
-        ann = helpers.make_sample_vcz(
-            np.zeros((2, 1, 1), dtype=np.int8),
-            positions=[10, 30],
-            alleles=[["A", "T"]] * 2,
-            ancestral_state=["A", "A"],
-            sequence_length=100,
-        )
-
-        gt = np.zeros((3, 2, 1), dtype=np.int8)
-        store = helpers.make_sample_vcz(
-            gt,
-            positions=[10, 20, 30],
-            alleles=[["A", "T"]] * 3,
-            ancestral_state=["", "", ""],  # store has no valid anc state
-            sequence_length=100,
-        )
-        anc_cfg = config.AncestralState(path=ann, field="variant_ancestral_allele")
-        result = ancestors.compute_inference_sites(store, anc_cfg)
-        # Only positions 10 and 30 are annotated
-        np.testing.assert_array_equal(result.positions, [10, 30])
-
-    def test_duplicate_positions_omitted(self):
-        gt = np.zeros((3, 2, 1), dtype=np.int8)
-        store = helpers.make_sample_vcz(
-            gt,
-            positions=[10, 10, 30],
-            alleles=[["A", "T"]] * 3,
-            ancestral_state=["A", "A", "A"],
-            sequence_length=100,
-        )
-        result = ancestors.compute_inference_sites(store, _anc_state(store))
-        # Both sites at position 10 should be omitted
-        np.testing.assert_array_equal(result.positions, [30])
-
-    def test_duplicate_positions_logged(self, caplog):
-        gt = np.zeros((4, 2, 1), dtype=np.int8)
-        store = helpers.make_sample_vcz(
-            gt,
-            positions=[10, 10, 20, 30],
-            alleles=[["A", "T"]] * 4,
-            ancestral_state=["A", "A", "A", "A"],
-            sequence_length=100,
-        )
-        with caplog.at_level(logging.INFO, logger="tsinfer"):
-            ancestors.compute_inference_sites(store, _anc_state(store))
-        assert "1 duplicate position" in caplog.text
-
-    def test_no_duplicates_keeps_all(self):
-        gt = np.zeros((3, 2, 1), dtype=np.int8)
-        store = helpers.make_sample_vcz(
-            gt,
-            positions=[10, 20, 30],
-            alleles=[["A", "T"]] * 3,
-            ancestral_state=["A", "A", "A"],
-            sequence_length=100,
-        )
-        result = ancestors.compute_inference_sites(store, _anc_state(store))
-        np.testing.assert_array_equal(result.positions, [10, 20, 30])
 
 
 # ---------------------------------------------------------------------------
@@ -1478,15 +1342,18 @@ class TestInferAncestorsAlleleCodes:
         with pytest.raises(ValueError, match=r"position 200 .*\['A', 'T', 'G'\]"):
             ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
 
-    def test_ancestral_allele_not_in_alleles_raises(self):
+    @pytest.mark.parametrize("ancestral", ["C", ".", ""])
+    def test_ancestral_allele_not_in_alleles_skipped(self, ancestral, caplog):
         gt = _haploid_store(
             [[0, 1, 0, 1], [0, 1, 1, 0]],
             positions=[100, 200],
             alleles=[["A", "T"], ["A", "T"]],
-            anc_states=["A", "C"],
+            anc_states=["A", ancestral],
         )
-        with pytest.raises(ValueError, match=r"position 200 .*\['C', 'A', 'T'\]"):
-            ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+        with caplog.at_level(logging.INFO, logger="tsinfer"):
+            anc = ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+        np.testing.assert_array_equal(anc["variant_position"][:], [100])
+        assert "Skipping 1 sites with unknown ancestral allele" in caplog.text
 
     def test_only_second_alt_allele_observed_raises(self):
         gt = _haploid_store(
