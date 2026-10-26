@@ -420,8 +420,9 @@ def infer_ancestors(
     """
     Build the ancestor VCZ store from one or more samples VCZ stores.
 
-    Only variants on the specified contig are used; if ``contig`` is None,
-    the variants in all sources must lie on a single contig.
+    Only variants on the specified contig are used, which is named in the
+    output by ``contig``. Sources and the ancestral state may use other
+    names for it (see ``vcz.resolve_contig``).
 
     Two-pass approach:
       Pass 1 — Identify inference sites and compute times (chunk-aware).
@@ -460,11 +461,10 @@ def infer_ancestors(
         if source.targets is not None:
             logger.info("Targets filter: %s", source.targets)
 
-    stores = [vcz_mod.open_store(source.path) for source in sources]
-    stores.append(vcz_mod.open_store(ancestral_state.path))
-    contig = vcz_mod.resolve_contig(stores, contig)
+    resolved = vcz_mod.resolve_sources(sources, ancestral_state, contig)
+    contig = resolved.contig
     logger.info("Contig: %s (length=%d)", contig.id, contig.length)
-    view = vcz_mod.MultiSourceView(sources, ancestral_state, contig.id)
+    view = vcz_mod.MultiSourceView(resolved.sources, resolved.ancestral_state)
     total_haplotypes = view.num_haplotypes
     logger.info(
         "Inference sites identified: %d (%d total haplotypes)",

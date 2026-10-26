@@ -399,15 +399,24 @@ def iter_raw_genotypes(store, rows, sample_include):
 
 @dataclasses.dataclass
 class Contig:
-    """A contig named in a VCZ store's header."""
+    """
+    The contig being inferred. Stores may use different names for it:
+    ``store_ids`` maps each store's label (a source name, or
+    ``"ancestral_state"``) to the name in that store's header.
+    """
 
-    id: str
-    length: int | None  # None if the store has no contig_length array
+    id: str  # the name used in outputs
+    length: int
+    store_ids: dict[str, str]
+
+
+def _header_contig_ids(store: zarr.Group) -> list[str]:
+    return [str(x) for x in store["contig_id"][:].tolist()]
 
 
 def _contig_index(store: zarr.Group, contig_id: str) -> int:
     """Return the index of the specified contig in a VCZ store's header."""
-    header_ids = [str(x) for x in store["contig_id"][:].tolist()]
+    header_ids = _header_contig_ids(store)
     if contig_id not in header_ids:
         raise ValueError(
             f"Contig {contig_id!r} is not declared in the store's contig_id "
@@ -416,33 +425,139 @@ def _contig_index(store: zarr.Group, contig_id: str) -> int:
     return header_ids.index(contig_id)
 
 
-def _variant_contig_id(store: zarr.Group) -> str | None:
+def _store_contig_id(
+    label: str,
+    store: zarr.Group,
+    store_contig_id: str | None,
+    contig_id: str | None,
+) -> str:
     """
-    Return the ID of the contig that the variants in a VCZ store lie on, as
-    indexed by ``variant_contig``, or None if the store has no variants.
-    Raises a ValueError if the variants lie on more than one contig.
+    Return the name of the contig being inferred in the store with the
+    specified label. This is the first of: the store's own contig option
+    (*store_contig_id*); the top-level contig option (*contig_id*), if the
+    store declares it; the single contig the store's variants lie on; and
+    the store's only declared contig.
     """
-    variant_contig = store["variant_contig"][:]
-    contig_indexes = np.unique(variant_contig)
-    if len(contig_indexes) == 0:
-        return None
-    contig_ids = store["contig_id"][:]
+    header_ids = _header_contig_ids(store)
+    if store_contig_id is not None:
+        _contig_index(store, store_contig_id)
+        return store_contig_id
+    if contig_id is not None and contig_id in header_ids:
+        return contig_id
+    contig_indexes = np.unique(store["variant_contig"][:])
+    if len(contig_indexes) == 1:
+        return header_ids[int(contig_indexes[0])]
+    if len(contig_indexes) == 0 and len(header_ids) == 1:
+        return header_ids[0]
     if len(contig_indexes) > 1:
-        names = [str(contig_ids[j]) for j in contig_indexes]
-        raise ValueError(
-            f"Variants lie on multiple contigs {names}; set the top-level "
-            "contig option to choose which contig to infer."
+        names = [header_ids[j] for j in contig_indexes.tolist()]
+        reason = f"has variants on multiple contigs {names}"
+    else:
+        reason = f"has no variants and declares contigs {header_ids}"
+    if contig_id is not None:
+        reason = f"does not declare contig {contig_id!r} and {reason}"
+    raise ValueError(
+        f"Cannot determine the contig for {label}: the store {reason}. Set the "
+        f"contig option for {label} (or the top-level contig option) to choose "
+        "which contig to infer."
+    )
+
+
+def resolve_contig(
+    stores: dict[str, tuple[zarr.Group, str | None]], contig_id: str | None
+) -> Contig:
+    """
+    Return the contig to infer from the specified VCZ stores, given as a
+    mapping from label to (store, the store's own contig option or None).
+    Each store's name for the contig is found by ``_store_contig_id``.
+
+    The contig is named in outputs by *contig_id* (the top-level contig
+    option) if given, with a warning if any store uses a different name;
+    otherwise all stores must use the same name. At least one store must declare
+    the contig length; if the declared lengths differ, a warning is issued and
+    the largest is used.
+    """
+    store_ids = {}
+    lengths = set()
+    for label, (store, store_contig_id) in stores.items():
+        store_id = _store_contig_id(label, store, store_contig_id, contig_id)
+        store_ids[label] = store_id
+        if "contig_length" in store:
+            index = _contig_index(store, store_id)
+            lengths.add(int(store["contig_length"][index]))
+
+    names = sorted(set(store_ids.values()))
+    names_str = ", ".join(f"{name} ({label})" for label, name in store_ids.items())
+    if contig_id is None:
+        if len(names) > 1:
+            raise ValueError(
+                f"Stores use different names for the contig: {names_str}. Set "
+                "the top-level contig option to name the inferred contig."
+            )
+        contig_id = names[0]
+    elif names != [contig_id]:
+        warnings.warn(
+            f"Inferring contig {contig_id} from stores that name it: {names_str}",
+            stacklevel=2,
         )
-    return str(contig_ids[contig_indexes[0]])
+
+    lengths = sorted(lengths)
+    if len(lengths) == 0:
+        raise ValueError(
+            f"No source declares the length of contig {contig_id}: at "
+            "least one source must provide contig_length"
+        )
+    if len(lengths) > 1:
+        warnings.warn(
+            f"Sources declare conflicting lengths for contig {contig_id}: "
+            f"{lengths}; using the largest",
+            stacklevel=2,
+        )
+    return Contig(id=contig_id, length=lengths[-1], store_ids=store_ids)
 
 
-def _header_contig(store: zarr.Group, contig_id: str) -> Contig:
-    """Return the specified contig as declared in a VCZ store's header."""
-    index = _contig_index(store, contig_id)
-    length = None
-    if "contig_length" in store:
-        length = int(store["contig_length"][index])
-    return Contig(id=contig_id, length=length)
+def resolve_sources(
+    sources: list[config.Source],
+    ancestral_state: config.AncestralState | None,
+    contig_id: str | None,
+):
+    """
+    Resolve the contig for the specified sources and (optional) ancestral
+    state. Returns a ``ResolvedContig`` holding the contig and copies of the
+    sources and ancestral state with their ``contig`` set to their store's
+    name for it.
+    """
+    stores = {}
+    for source in sources:
+        stores[source.name] = (open_store(source.path), source.contig)
+    if ancestral_state is not None:
+        stores[_ANCESTRAL_STATE_LABEL] = (
+            open_store(ancestral_state.path),
+            ancestral_state.contig,
+        )
+    contig = resolve_contig(stores, contig_id)
+    resolved_sources = []
+    for source in sources:
+        store_id = contig.store_ids[source.name]
+        resolved_sources.append(dataclasses.replace(source, contig=store_id))
+    if ancestral_state is not None:
+        store_id = contig.store_ids[_ANCESTRAL_STATE_LABEL]
+        ancestral_state = dataclasses.replace(ancestral_state, contig=store_id)
+    return ResolvedContig(
+        contig=contig, sources=resolved_sources, ancestral_state=ancestral_state
+    )
+
+
+_ANCESTRAL_STATE_LABEL = "ancestral_state"
+
+
+@dataclasses.dataclass
+class ResolvedContig:
+    """The result of ``resolve_sources``."""
+
+    contig: Contig
+    sources: list[config.Source]
+    ancestral_state: config.AncestralState | None
 
 
 def contig_variant_rows(store: zarr.Group, contig_id: str) -> slice:
@@ -463,46 +578,6 @@ def contig_variant_rows(store: zarr.Group, contig_id: str) -> slice:
             "must be sorted by contig"
         )
     return slice(start, stop)
-
-
-def resolve_contig(stores, contig_id: str | None) -> Contig:
-    """
-    Return the contig to infer from the specified VCZ stores, each of which
-    must declare it in its header. If ``contig_id`` is None, this is the
-    contig that the variants in all stores lie on. At least one store must
-    declare the contig length; if the declared lengths differ, a warning is
-    issued and the largest is used.
-    """
-    if contig_id is None:
-        variant_contig_ids = set()
-        for store in stores:
-            store_contig_id = _variant_contig_id(store)
-            if store_contig_id is not None:
-                variant_contig_ids.add(store_contig_id)
-        if len(variant_contig_ids) == 0:
-            raise ValueError("No variants found: cannot determine the contig")
-        if len(variant_contig_ids) > 1:
-            raise ValueError(
-                "Sources have variants on different contigs: "
-                f"{sorted(variant_contig_ids)}. All sources must refer to the "
-                "same contig, with the same contig ID."
-            )
-        contig_id = variant_contig_ids.pop()
-
-    contigs = [_header_contig(store, contig_id) for store in stores]
-    lengths = sorted({c.length for c in contigs if c.length is not None})
-    if len(lengths) == 0:
-        raise ValueError(
-            f"No source declares the length of contig {contig_id}: at "
-            "least one source must provide contig_length"
-        )
-    if len(lengths) > 1:
-        warnings.warn(
-            f"Sources declare conflicting lengths for contig {contig_id}: "
-            f"{lengths}; using the largest",
-            stacklevel=2,
-        )
-    return Contig(id=contig_id, length=lengths[-1])
 
 
 def num_contigs(store: zarr.Group) -> int:
@@ -559,15 +634,15 @@ def _filtered_rows(store: zarr.Group, source: config.Source) -> np.ndarray:
     return np.concatenate(parts)
 
 
-def select_source_variants(
-    store: zarr.Group, source: config.Source, contig_id: str
-) -> SourceVariants:
+def select_source_variants(store: zarr.Group, source: config.Source) -> SourceVariants:
     """
-    Return the variants of the source on the specified contig that pass its
-    filters. Duplicate positions are identified after filtering, so that a
-    filter which removes all but one of the variants at a position (e.g.
-    ``TYPE="snp"`` for a SNP and an indel) keeps the remaining variant.
+    Return the variants of the source on its contig (``source.contig``, as
+    set by ``resolve_sources``) that pass its filters. Duplicate positions
+    are identified after filtering, so that a filter which removes all but
+    one of the variants at a position (e.g. ``TYPE="snp"`` for a SNP and an
+    indel) keeps the remaining variant.
     """
+    contig_id = source.contig
     contig_rows = contig_variant_rows(store, contig_id)
     num_on_contig = contig_rows.stop - contig_rows.start
     if _source_has_filters(source):
@@ -608,19 +683,19 @@ def select_source_variants(
 
 def lookup_ancestral_alleles(
     ancestral_state: config.AncestralState,
-    contig_id: str,
     positions: np.ndarray,
     ref_alleles: np.ndarray,
 ) -> np.ndarray:
     """
     Return the ancestral allele recorded at each of the specified positions
+    on the ancestral state store's contig (``ancestral_state.contig``)
     ("" if unknown). Where the annotation store has several variants at a
     position (e.g. a SNP and an indel), only those whose REF allele equals
     the corresponding entry of *ref_alleles* are used; if these do not
     give a single ancestral allele, it is unknown.
     """
     ann_store = open_store(ancestral_state.path)
-    ann_rows = contig_variant_rows(ann_store, contig_id)
+    ann_rows = contig_variant_rows(ann_store, ancestral_state.contig)
     ann_positions = np.asarray(ann_store["variant_position"][ann_rows], dtype=np.int32)
     lo = np.searchsorted(ann_positions, positions, side="left")
     hi = np.searchsorted(ann_positions, positions, side="right")
@@ -2214,7 +2289,6 @@ class HaplotypeReader:
         sources: dict,
         positions: np.ndarray,
         ancestral_alleles: np.ndarray,
-        contig_id: str,
         cache_size_mb: int | None = None,
         schedule: list[tuple[str, str, int]] | None = None,
         read_workers: int | None = None,
@@ -2225,14 +2299,13 @@ class HaplotypeReader:
         Parameters
         ----------
         sources : dict[str, config.Source]
-            All sources to read from (including ancestor sources).
+            All sources to read from (including ancestor sources), each
+            with its ``contig`` set (see ``resolve_sources``).
         positions : np.ndarray
             Reference variant positions (the coordinate system).
         ancestral_alleles : np.ndarray
             (num_sites,) array of ancestral allele strings, one per
             reference position.  Authoritative source for polarisation.
-        contig_id : str
-            Contig whose variants are read from each source.
         cache_size_mb : int
             Cache memory limit in MiB.
         schedule : list of (source_name, sample_id, ploidy_index)
@@ -2257,7 +2330,6 @@ class HaplotypeReader:
         self._positions = np.asarray(positions, dtype=np.int32)
         self._ancestral_alleles = ancestral_alleles
         self._sources = sources
-        self._contig_id = contig_id
         max_bytes = cache_size_mb * 1024 * 1024
 
         # Eagerly create all source readers so we can validate sizes
@@ -2273,7 +2345,7 @@ class HaplotypeReader:
                 source_name=name,
                 cache=None,  # placeholder, set below
                 samples_selection=samples_selection,
-                variants=select_source_variants(store, source, self._contig_id),
+                variants=select_source_variants(store, source),
             )
             self._readers[name] = reader
 
@@ -2370,7 +2442,7 @@ class HaplotypeReader:
                 source_name=source_name,
                 cache=self._cache,
                 samples_selection=samples_selection,
-                variants=select_source_variants(store, source, self._contig_id),
+                variants=select_source_variants(store, source),
                 _allele_mapper=self._allele_mapper,
             )
             self._readers[source_name] = reader
@@ -2531,21 +2603,19 @@ class MultiSourceView:
     """
     Unified view over one or more VCZ sample stores for variant iteration.
 
-    The view's sites are the union of the variants of each source on contig
-    ``contig_id`` that pass the source's filters (see
-    ``select_source_variants``), excluding sites where the sources disagree
-    on the REF allele. Each site's ancestral allele is looked up in the
-    ``ancestral_state`` store, and is unknown ("") if it is not among the
-    site's alleles in the sources. Allele codes are fixed at construction:
-    code 0 is the ancestral allele and codes 1+ are the other alleles.
+    The view's sites are the union of the variants of each source on its
+    contig that pass the source's filters (see ``select_source_variants``),
+    excluding sites where the sources have inconsistent REF alleles. Each
+    site's ancestral allele is looked up in the ``ancestral_state`` store,
+    and is unknown ("") if it is not among the site's alleles in the
+    sources. Allele codes are fixed at construction: code 0 is the
+    ancestral allele and codes 1+ are the other alleles.
+
+    Each source and the ancestral state must have their ``contig`` set to
+    their store's name for the contig (see ``resolve_sources``).
     """
 
-    def __init__(
-        self,
-        sources,
-        ancestral_state,
-        contig_id: str,
-    ):
+    def __init__(self, sources, ancestral_state):
         if isinstance(sources, config.Source):
             sources = [sources]
 
@@ -2574,7 +2644,7 @@ class MultiSourceView:
             raw_ids = store["sample_id"][:][samples_selection]
             self._sample_ids_per_source.append([str(x) for x in raw_ids.tolist()])
 
-            self._variants.append(select_source_variants(store, source, contig_id))
+            self._variants.append(select_source_variants(store, source))
 
         # --- Unified site set ---
         all_positions = functools.reduce(
@@ -2626,9 +2696,7 @@ class MultiSourceView:
         refs = refs[keep]
 
         # --- Ancestral alleles: unknown unless among the site's alleles ---
-        ancestral = lookup_ancestral_alleles(
-            ancestral_state, contig_id, self._positions, refs
-        )
+        ancestral = lookup_ancestral_alleles(ancestral_state, self._positions, refs)
         among_alleles = np.zeros(len(self._positions), dtype=bool)
         for src_idx, variants in enumerate(self._variants):
             has_site = self._source_row[:, src_idx] >= 0

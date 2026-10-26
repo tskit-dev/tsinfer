@@ -94,6 +94,11 @@ class Source:
       samples:          e.g. ``"sample_0,sample_1"`` or ``"^sample_2"``
       regions/targets:  e.g. ``"chr20:1000-50000"``
 
+    Contig names in regions/targets are those used by this store.
+
+    contig names the contig in this store's header; if None, it is resolved
+    from the top-level contig or the store itself (see ``vcz.resolve_contig``).
+
     sample_time is metadata (not filtering) and uses a FieldSpec.
     """
 
@@ -105,6 +110,7 @@ class Source:
     regions: str | None = None
     targets: str | None = None
     sample_time: FieldSpec = None
+    contig: str | None = None
 
     def __post_init__(self):
         if not self.name:
@@ -120,11 +126,15 @@ class AncestralState:
     If *is_reference* is ``True``, the REF allele (``variant_allele[:, 0]``)
     from the store at *path* is used as the ancestral allele.  Otherwise
     *field* names the array to read.
+
+    *contig* names the contig in this store's header; if None, it is resolved
+    from the top-level contig or the store itself (see ``vcz.resolve_contig``).
     """
 
     path: str | pathlib.Path
     field: str | None = None
     is_reference: bool | None = None
+    contig: str | None = None
 
     def __post_init__(self):
         if self.is_reference is None and self.field is None:
@@ -225,7 +235,9 @@ class Config:
     Full pipeline configuration. Constructed directly or via Config.from_toml().
 
     sources: mapping from source name → Source
-    contig: the contig to infer; required when stores hold several contigs
+    contig: the name of the contig to infer, used in outputs and by default
+        in each store that declares it. Required when the stores hold several
+        contigs, or use different names for the contig.
     """
 
     sources: dict[str, Source]
@@ -270,11 +282,15 @@ class Config:
                 lines.append(f"  targets = {src.targets}")
             if src.sample_time is not None:
                 lines.append(f"  sample_time = {src.sample_time}")
+            if src.contig is not None:
+                lines.append(f"  contig = {src.contig}")
             lines.append("")
 
         lines.append("[ancestral_state]")
         lines.append(f"  path = {self.ancestral_state.path}")
         lines.append(f"  field = {self.ancestral_state.field}")
+        if self.ancestral_state.contig is not None:
+            lines.append(f"  contig = {self.ancestral_state.contig}")
         lines.append("")
 
         for anc in self.ancestors:
@@ -398,9 +414,10 @@ _KNOWN_SOURCE_KEYS = {
     "regions",
     "targets",
     "sample_time",
+    "contig",
 }
 
-_KNOWN_ANCESTRAL_STATE_KEYS = {"path", "field", "is_reference"}
+_KNOWN_ANCESTRAL_STATE_KEYS = {"path", "field", "is_reference", "contig"}
 
 _KNOWN_ANCESTORS_KEYS = {
     "name",
@@ -466,6 +483,7 @@ def _parse_sources(raw: dict) -> dict[str, Source]:
             regions=entry.get("regions"),
             targets=entry.get("targets"),
             sample_time=_resolve_field_spec(entry.get("sample_time")),
+            contig=entry.get("contig"),
         )
         if name in sources:
             raise ValueError(f"Duplicate source name: '{name}'")
@@ -484,6 +502,7 @@ def _parse_ancestral_state(raw: dict) -> AncestralState:
         path=_resolve_path(entry["path"]),
         field=entry.get("field"),
         is_reference=entry.get("is_reference"),
+        contig=entry.get("contig"),
     )
 
 
