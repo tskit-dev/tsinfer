@@ -43,5 +43,5 @@ jobs:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     strategy:
       matrix:
-        python: [ 3.11, 3.13 ]
+        python: [ 3.12, 3.13 ]
         os:  [ macos-latest, ubuntu-24.04, windows-latest ]
