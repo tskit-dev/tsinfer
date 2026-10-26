@@ -2361,6 +2361,51 @@ class TestSelectSourceVariants:
         variants = _select(store, contig_id="A", include='CHROM="B"')
         assert len(variants.rows) == 0
 
+    def _two_contig_store(self):
+        singles = [
+            _store([10, 20], [["A", "T"]] * 2),
+            _store([10, 20, 30], [["C", "G"]] * 3),
+        ]
+        store = helpers.combine_contigs(singles, ["A", "B"], 2)
+        return helpers.add_region_index(store)
+
+    def test_regions_on_contig(self):
+        store = self._two_contig_store()
+        variants = _select(store, contig_id="B", regions="B:15-30")
+        np.testing.assert_array_equal(variants.rows, [3, 4])
+
+    def test_regions_on_other_contig(self):
+        store = self._two_contig_store()
+        variants = _select(store, contig_id="B", regions="A:1-30")
+        assert len(variants.rows) == 0
+
+    def test_targets_complement_on_contig(self):
+        store = self._two_contig_store()
+        variants = _select(store, contig_id="B", targets="^B:20")
+        np.testing.assert_array_equal(variants.positions, [10, 30])
+
+
+class TestResolveSamplesSelection:
+    @pytest.fixture
+    def store(self):
+        return _store([100], [["A", "T"]], genotypes=[[0, 1, 0, 1]])
+
+    def test_none(self, store):
+        selection = vcz.resolve_samples_selection(store, None)
+        np.testing.assert_array_equal(selection, [0, 1, 2, 3])
+
+    def test_order_given(self, store):
+        selection = vcz.resolve_samples_selection(store, "sample_2,sample_0")
+        np.testing.assert_array_equal(selection, [2, 0])
+
+    def test_complement(self, store):
+        selection = vcz.resolve_samples_selection(store, "^sample_2,sample_0")
+        np.testing.assert_array_equal(selection, [1, 3])
+
+    def test_unknown_sample(self, store):
+        with pytest.raises(ValueError, match="not_a_sample"):
+            vcz.resolve_samples_selection(store, "sample_0,not_a_sample")
+
 
 class TestLookupAncestralAlleles:
     def _lookup(self, ann, positions, refs, is_reference=False):

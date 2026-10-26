@@ -55,9 +55,9 @@ import warnings
 from typing import Any
 
 import numpy as np
+import vcztools
+import vcztools.regions
 import zarr
-from vcztools import retrieval
-from vcztools.samples import parse_samples
 from zarr.core.dtype.npy.string import VariableLengthUTF8
 
 from . import config
@@ -218,50 +218,25 @@ def resolve_samples_selection(
     samples: str | None,
 ) -> np.ndarray:
     """
-    Convert a bcftools-style samples string to a selection index array.
+    Convert a bcftools-style samples string (e.g. ``"s1,s0"`` or ``"^s2"``)
+    to an array of sample indexes, in the order given (or in store order
+    for a ``^`` complement).
 
     Returns the full index array if samples is None (keep all samples).
     """
     if samples is None:
         num_samples = store["sample_id"].shape[0]
         return np.arange(num_samples)
-    _, selection = parse_samples(samples, store["sample_id"][:])
-    return selection
-
-
-def iter_variants(
-    store: zarr.Group,
-    *,
-    fields: list[str] | None = None,
-    include: str | None = None,
-    exclude: str | None = None,
-    samples_selection: np.ndarray | None = None,
-    regions: str | None = None,
-    targets: str | None = None,
-):
-    """
-    Yield per-variant dicts from a VCZ store, with optional filtering.
-
-    Delegates to ``vcztools.retrieval.variant_chunk_iter`` for chunked
-    reading with bcftools-style include/exclude expressions, sample
-    selection, and region/target filtering.
-
-    Each yielded dict maps zarr array names to per-variant values
-    (variants dimension removed).
-    """
-    for chunk_data in retrieval.variant_chunk_iter(
-        store,
-        fields=fields,
-        include=include,
-        exclude=exclude,
-        samples_selection=samples_selection,
-        regions=regions,
-        targets=targets,
-    ):
-        first_field = next(iter(chunk_data.values()))
-        num_variants = len(first_field)
-        for i in range(num_variants):
-            yield {name: chunk_data[name][i] for name in chunk_data}
+    complement = samples.startswith("^")
+    if complement:
+        samples = samples[1:]
+    names = samples.split(",")
+    with vcztools.VczReader(store) as reader:
+        reader.set_samples(names, complement=complement)
+        raw_ids = reader.raw_sample_ids.tolist()
+        selected_ids = reader.sample_ids.tolist()
+    raw_index = {sample_id: j for j, sample_id in enumerate(raw_ids)}
+    return np.array([raw_index[sample_id] for sample_id in selected_ids], dtype=np.int64)
 
 
 def iter_genotypes(store, positions, ancestral_allele_index, sample_include=None):
@@ -611,26 +586,57 @@ def _source_has_filters(source: config.Source) -> bool:
     )
 
 
-def _filtered_rows(store: zarr.Group, source: config.Source) -> np.ndarray:
+def _region_chunk_plan(reader: vcztools.VczReader, source: config.Source) -> list:
+    """
+    Return the vcztools chunk plan selecting the variants that pass the
+    source's regions and targets filters. Only the variant chunks that
+    overlap the regions are read.
+
+    This is the only use of vcztools internals: vcztools has no public API
+    for regions and targets.
+    """
+    regions = None
+    if source.regions is not None:
+        regions = source.regions.split(",")
+    targets = None
+    targets_complement = False
+    if source.targets is not None:
+        targets_str = source.targets
+        targets_complement = targets_str.startswith("^")
+        if targets_complement:
+            targets_str = targets_str[1:]
+        targets = targets_str.split(",")
+    return vcztools.regions.build_chunk_plan(
+        reader,
+        regions=regions,
+        targets=targets,
+        targets_complement=targets_complement,
+    )
+
+
+def _filtered_rows(
+    store: zarr.Group, source: config.Source, contig_rows: slice
+) -> np.ndarray:
     """
     Return the ascending row indexes of the variants in a store that pass the
-    source's include/exclude/regions/targets filters. Only the variant chunks
-    that overlap the regions or targets are read.
+    source's include/exclude/regions/targets filters. Without regions or
+    targets, only the variants in *contig_rows* are considered. Filters are
+    evaluated over all samples; a per-sample filter keeps a variant if any
+    sample passes.
     """
-    chunk_size = store["variant_position"].chunks[0]
     parts = [np.zeros(0, dtype=np.int64)]
-    for chunk_index, mask in retrieval.variant_chunk_index_iter_with_filtering(
-        store,
-        regions=source.regions,
-        targets=source.targets,
-        include=source.include,
-        exclude=source.exclude,
-    ):
-        if mask.ndim == 2:
-            # A per-sample filter: keep variants where any sample passes
-            mask = np.any(mask, axis=1)
-        start = chunk_index * chunk_size
-        parts.append(start + np.flatnonzero(mask).astype(np.int64))
+    with vcztools.VczReader(store) as reader:
+        if source.regions is not None or source.targets is not None:
+            reader.set_variants(_region_chunk_plan(reader, source))
+        else:
+            reader.set_variants(np.arange(contig_rows.start, contig_rows.stop))
+        if source.include is not None or source.exclude is not None:
+            variant_filter = vcztools.BcftoolsFilter(
+                reader, include=source.include, exclude=source.exclude
+            )
+            reader.set_variant_filter(variant_filter)
+        for chunk in reader.variant_chunks(fields=["variant_index"]):
+            parts.append(chunk["variant_index"])
     return np.concatenate(parts)
 
 
@@ -646,7 +652,7 @@ def select_source_variants(store: zarr.Group, source: config.Source) -> SourceVa
     contig_rows = contig_variant_rows(store, contig_id)
     num_on_contig = contig_rows.stop - contig_rows.start
     if _source_has_filters(source):
-        rows = _filtered_rows(store, source)
+        rows = _filtered_rows(store, source, contig_rows)
         in_contig = (rows >= contig_rows.start) & (rows < contig_rows.stop)
         rows = rows[in_contig]
     else:
@@ -1518,10 +1524,14 @@ def finalize_ancestor_zarr(root, focal_positions_acc, compressor=None):
         ckw["compressor"] = compressor
 
     ids = np.array([f"a{i}" for i in range(num_anc)])
+    # vcztools takes the samples chunk size from sample_id, so chunk it
+    # like call_genotype
+    samples_chunk_size = root["call_genotype"].chunks[1]
     id_arr = root.create_array(
         "sample_id",
         shape=ids.shape,
         dtype=_VLEN_STR,
+        chunks=(samples_chunk_size,),
         **ckw,
     )
     id_arr[:] = ids

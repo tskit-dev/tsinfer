@@ -50,7 +50,7 @@ def _write_sample_vcz_to_disk(tmp_dir: str) -> str:
         sequence_length=1000,
     )
     vcz_path = os.path.join(tmp_dir, "samples.vcz")
-    zarr.save(vcz_path, **{k: store[k][:] for k in store})
+    helpers.save_vcz(store, vcz_path)
     # Re-open to verify it's a valid zarr store
     zarr.open(vcz_path, mode="r")
     return vcz_path
@@ -406,7 +406,7 @@ class TestAugmentSites:
                 sequence_length=1000,
             )
             vcz_path = os.path.join(tmp_dir, "samples.vcz")
-            zarr.save(vcz_path, **{k: store[k][:] for k in store})
+            helpers.save_vcz(store, vcz_path)
 
             # Write config with augment_sites pointing at the same source
             output_path = _toml_path(os.path.join(tmp_dir, "out.trees"))
