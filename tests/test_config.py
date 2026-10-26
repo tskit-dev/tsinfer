@@ -294,6 +294,21 @@ class TestFromTomlStandard:
         assert cfg.ancestral_state is not None
         assert cfg.ancestral_state.field == "variant_ancestral_allele"
 
+    def test_ancestral_state_filters(self, tmp_path):
+        toml = _STANDARD_TOML.replace(
+            'field = "variant_ancestral_allele"\n',
+            'field = "variant_ancestral_allele"\n'
+            "include = 'TYPE=\"snp\"'\n"
+            'exclude = "POS == 5"\n'
+            'regions = "20:1-1000"\n'
+            'targets = "^20:7"\n',
+        )
+        cfg = config.Config.from_toml(_write_toml(tmp_path, toml))
+        assert cfg.ancestral_state.include == 'TYPE="snp"'
+        assert cfg.ancestral_state.exclude == "POS == 5"
+        assert cfg.ancestral_state.regions == "20:1-1000"
+        assert cfg.ancestral_state.targets == "^20:7"
+
     def test_ancestors(self, tmp_path):
         cfg = config.Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
         assert len(cfg.ancestors) == 1
@@ -804,6 +819,16 @@ class TestConfigFormat:
         assert "[ancestral_state]" in text
         assert "ann.vcz" in text
         assert "anc_allele" in text
+
+    def test_ancestral_state_filters(self):
+        cfg = _minimal_config(
+            ancestral_state=config.AncestralState(
+                path="ann.vcz", field="anc_allele", include='TYPE="snp"'
+            ),
+        )
+        text = cfg.format()
+        assert 'include = TYPE="snp"' in text
+        assert "exclude" not in text.split("[ancestral_state]")[1].split("[")[0]
 
     def test_includes_post_process(self):
         cfg = _minimal_config(post_process=config.PostProcessConfig())

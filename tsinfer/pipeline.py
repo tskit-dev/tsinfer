@@ -812,7 +812,7 @@ def augment_sites(
     excluded (same behaviour as ``infer_ancestors``).  The ancestral allele
     is read from the ``[ancestral_state]`` config section and passed to
     ``map_mutations`` so that the output always uses the specified ancestral
-    state.
+    state. Sites with an unknown ancestral allele are skipped.
     """
     aug_cfg = cfg.augment_sites
     if aug_cfg is None or len(aug_cfg.sources) == 0:
@@ -846,6 +846,17 @@ def augment_sites(
 
     positions = view.positions_in_intervals(intervals)
     positions = view.filter_positions(ts.sites_position, positions)
+    # Sites with an unknown ancestral allele cannot be polarised
+    unknown = view.ancestral_alleles == ""
+    unknown_positions = view.positions[unknown]
+    is_unknown = np.isin(positions, unknown_positions)
+    num_unknown = int(np.sum(is_unknown))
+    if num_unknown > 0:
+        logger.info(
+            "augment_sites: skipping %d sites with unknown ancestral allele",
+            num_unknown,
+        )
+    positions = positions[~is_unknown]
     n_sites = len(positions)
 
     if n_sites == 0:
@@ -876,24 +887,10 @@ def augment_sites(
             continue
 
         # Canonical code 0 = ancestral allele
-        anc_allele = alleles[0] if alleles else ""
         tree.seek(var.position)
-        if anc_allele and anc_allele != "":
-            ancestral_state, mutations = tree.map_mutations(
-                genotypes, alleles, ancestral_state=anc_allele
-            )
-        else:
-            # No ancestral allele known; let parsimony choose
-            real_alleles = [a for a in alleles if a != ""]
-            code_to_real = {}
-            for c, a in enumerate(alleles):
-                if a != "":
-                    code_to_real[c] = real_alleles.index(a)
-            remapped = np.full_like(genotypes, tskit.MISSING_DATA)
-            for i in range(len(genotypes)):
-                if genotypes[i] >= 0 and genotypes[i] in code_to_real:
-                    remapped[i] = code_to_real[genotypes[i]]
-            ancestral_state, mutations = tree.map_mutations(remapped, real_alleles)
+        ancestral_state, mutations = tree.map_mutations(
+            genotypes, alleles, ancestral_state=alleles[0]
+        )
         site_id = tables.sites.add_row(
             position=var.position, ancestral_state=ancestral_state
         )

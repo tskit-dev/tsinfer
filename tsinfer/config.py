@@ -129,12 +129,20 @@ class AncestralState:
 
     *contig* names the contig in this store's header; if None, it is resolved
     from the top-level contig or the store itself (see ``vcz.resolve_contig``).
+
+    *include*, *exclude*, *regions* and *targets* select the annotation
+    variants to use, as for a ``Source``. After filtering, at most one variant
+    may remain at each position used for inference.
     """
 
     path: str | pathlib.Path
     field: str | None = None
     is_reference: bool | None = None
     contig: str | None = None
+    include: str | None = None
+    exclude: str | None = None
+    regions: str | None = None
+    targets: str | None = None
 
     def __post_init__(self):
         if self.is_reference is None and self.field is None:
@@ -289,8 +297,10 @@ class Config:
         lines.append("[ancestral_state]")
         lines.append(f"  path = {self.ancestral_state.path}")
         lines.append(f"  field = {self.ancestral_state.field}")
-        if self.ancestral_state.contig is not None:
-            lines.append(f"  contig = {self.ancestral_state.contig}")
+        for key in ["contig", "include", "exclude", "regions", "targets"]:
+            value = getattr(self.ancestral_state, key)
+            if value is not None:
+                lines.append(f"  {key} = {value}")
         lines.append("")
 
         for anc in self.ancestors:
@@ -417,7 +427,16 @@ _KNOWN_SOURCE_KEYS = {
     "contig",
 }
 
-_KNOWN_ANCESTRAL_STATE_KEYS = {"path", "field", "is_reference", "contig"}
+_KNOWN_ANCESTRAL_STATE_KEYS = {
+    "path",
+    "field",
+    "is_reference",
+    "contig",
+    "include",
+    "exclude",
+    "regions",
+    "targets",
+}
 
 _KNOWN_ANCESTORS_KEYS = {
     "name",
@@ -503,6 +522,10 @@ def _parse_ancestral_state(raw: dict) -> AncestralState:
         field=entry.get("field"),
         is_reference=entry.get("is_reference"),
         contig=entry.get("contig"),
+        include=entry.get("include"),
+        exclude=entry.get("exclude"),
+        regions=entry.get("regions"),
+        targets=entry.get("targets"),
     )
 
 

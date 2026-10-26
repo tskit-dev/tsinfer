@@ -52,6 +52,22 @@ Specifies where to read the ancestral allele for each variant position.
 | `path` | string | (required) | Path to VCZ containing ancestral alleles |
 | `field` | string | — | Array name in the store (e.g. `"variant_AA"`). Required unless `is_reference` is set. |
 | `is_reference` | bool | `false` | Use the REF allele (`variant_allele[:, 0]`) as the ancestral state. Useful for simulations. `field` must not be set when this is `true`. |
+| `contig` | string | — | Name of the contig in this store's header (see the top-level `contig` option) |
+| `include` | string | — | bcftools-style filter expression selecting annotation variants (e.g. `'TYPE="snp"'`) |
+| `exclude` | string | — | bcftools-style filter expression excluding annotation variants |
+| `regions` | string | — | Genomic region, half-open (e.g. `"chr20:1000-50000"`) |
+| `targets` | string | — | Exact target positions |
+
+The annotation is joined to the sources by position. After filtering, there
+must be at most one annotation variant at each site, and its REF allele must
+equal the site's REF allele in the sources; otherwise an error is raised. All
+sources with a variant at a site must also have the same REF allele there,
+although their ALT alleles may differ. If
+the annotation contains, for example, both a SNP and an indel at the same
+position, use `include = 'TYPE="snp"'` to keep only the SNP. An ancestral
+state of `.`, `N` or the empty string means the ancestral allele is unknown,
+as does one that is not among the site's alleles; such sites are excluded from
+inference and from `augment_sites`.
 
 
 ## `[[ancestors]]`

@@ -2408,61 +2408,94 @@ class TestResolveSamplesSelection:
 
 
 class TestLookupAncestralAlleles:
-    def _lookup(self, ann, positions, refs, is_reference=False):
+    def _lookup(self, ann, positions, is_reference=False, **filters):
         if is_reference:
             ancestral_state = config.AncestralState(
-                path=ann, is_reference=True, contig="1"
+                path=ann, is_reference=True, contig="1", **filters
             )
         else:
             ancestral_state = config.AncestralState(
-                path=ann, field="variant_ancestral_allele", contig="1"
+                path=ann, field="variant_ancestral_allele", contig="1", **filters
             )
         return vcz.lookup_ancestral_alleles(
-            ancestral_state,
-            np.array(positions, dtype=np.int32),
-            np.array(refs, dtype=object),
-        ).tolist()
+            ancestral_state, np.array(positions, dtype=np.int32)
+        )
 
     def test_single_rows(self):
-        ann = _store([100, 200], [["A", "T"], ["C", "G"]], ancestral=["T", "."])
-        assert self._lookup(ann, [100, 200], ["A", "C"]) == ["T", "."]
+        ann = _store([100, 200], [["A", "T"], ["C", "G"]], ancestral=["T", "G"])
+        result = self._lookup(ann, [100, 200])
+        assert result.alleles.tolist() == ["T", "G"]
+        assert result.refs.tolist() == ["A", "C"]
 
     def test_no_annotation(self):
         ann = _store([100], [["A", "T"]], ancestral=["A"])
-        assert self._lookup(ann, [50, 100, 150], ["A", "A", "A"]) == ["", "A", ""]
+        result = self._lookup(ann, [50, 100, 150])
+        assert result.alleles.tolist() == ["", "A", ""]
+        assert result.refs.tolist() == ["", "A", ""]
 
     def test_no_positions(self):
         ann = _store([100], [["A", "T"]], ancestral=["A"])
-        assert self._lookup(ann, [], []) == []
+        result = self._lookup(ann, [])
+        assert result.alleles.tolist() == []
+        assert result.refs.tolist() == []
 
-    def test_duplicates_resolved_by_ref(self):
-        # As in the Ensembl chr20 annotation at 10031018
+    def test_missing_values_unknown(self, caplog):
+        ann = _store(
+            [100, 200, 300, 400], [["A", "T"]] * 4, ancestral=[".", "N", "", "T"]
+        )
+        with caplog.at_level(logging.INFO, logger="tsinfer"):
+            result = self._lookup(ann, [100, 200, 300, 400])
+        assert result.alleles.tolist() == ["", "", "", "T"]
+        assert result.refs.tolist() == ["A", "A", "A", "A"]
+        assert "3 with a missing ancestral state" in caplog.text
+
+    def test_duplicates_raise(self):
+        ann = _store([100, 100], [["C", "G"], ["C", "T"]], ancestral=["G", "T"])
+        with pytest.raises(ValueError, match="more than one variant at 1 position"):
+            self._lookup(ann, [100])
+
+    def test_duplicates_at_unused_position_ignored(self):
         ann = _store(
             [100, 100, 200],
-            [["CAC", "TAG"], ["C", "G", "T"], ["A", "T"]],
-            ancestral=["TAC", "T", "A"],
+            [["C", "G"], ["C", "T"], ["A", "T"]],
+            ancestral=["G", "T", "A"],
         )
-        assert self._lookup(ann, [100, 200], ["C", "A"]) == ["T", "A"]
-        assert self._lookup(ann, [100], ["CAC"]) == ["TAC"]
+        assert self._lookup(ann, [200]).alleles.tolist() == ["A"]
 
-    def test_duplicates_agreeing(self):
-        ann = _store([100, 100], [["C", "G"], ["C", "T"]], ancestral=["T", "T"])
-        assert self._lookup(ann, [100], ["C"]) == ["T"]
+    def test_snp_filter_removes_duplicate(self):
+        # As in the Ensembl annotation at GRCh37 20:10002611
+        ann = _store(
+            [100, 100, 200],
+            [["ATTA", "A"], ["A", "G"], ["C", "T"]],
+            ancestral=["ATTA", "A", "C"],
+        )
+        result = self._lookup(ann, [100, 200], include='TYPE="snp"')
+        assert result.alleles.tolist() == ["A", "C"]
+        assert result.refs.tolist() == ["A", "C"]
 
-    def test_duplicates_ambiguous(self, caplog):
-        ann = _store([100, 100], [["C", "G"], ["C", "T"]], ancestral=["G", "T"])
-        with caplog.at_level(logging.INFO, logger="tsinfer"):
-            assert self._lookup(ann, [100], ["C"]) == [""]
-        assert "1 with ambiguous annotations" in caplog.text
+    def test_exclude_filter(self):
+        ann = _store([100, 200], [["A", "T"]] * 2, ancestral=["T", "T"])
+        result = self._lookup(ann, [100, 200], exclude="POS == 200")
+        assert result.alleles.tolist() == ["T", ""]
 
-    def test_duplicates_without_matching_ref(self):
-        ann = _store([100, 100], [["CA", "C"], ["CAC", "C"]], ancestral=["C", "C"])
-        assert self._lookup(ann, [100], ["G"]) == [""]
+    def test_regions_filter(self):
+        ann = helpers.add_region_index(
+            _store([100, 200, 300], [["A", "T"]] * 3, ancestral=["T"] * 3)
+        )
+        result = self._lookup(ann, [100, 200, 300], regions="1:150-250")
+        assert result.alleles.tolist() == ["", "T", ""]
+
+    def test_targets_filter(self):
+        ann = helpers.add_region_index(
+            _store([100, 200, 300], [["A", "T"]] * 3, ancestral=["T"] * 3)
+        )
+        result = self._lookup(ann, [100, 200, 300], targets="^1:200")
+        assert result.alleles.tolist() == ["T", "", "T"]
 
     def test_is_reference(self):
         ann = _store([100, 100, 200], [["CAC", "C"], ["C", "T"], ["G", "A"]])
-        result = self._lookup(ann, [100, 200], ["C", "G"], is_reference=True)
-        assert result == ["C", "G"]
+        result = self._lookup(ann, [100, 200], is_reference=True, include='TYPE="snp"')
+        assert result.alleles.tolist() == ["C", "G"]
 
     def test_contig_of_multi_contig_store(self):
         singles = [
@@ -2470,20 +2503,25 @@ class TestLookupAncestralAlleles:
             _store([10, 20], [["A", "T"]] * 2, ancestral=["A", "A"]),
         ]
         ann = helpers.combine_contigs(singles, ["1", "2"], 1)
-        assert self._lookup(ann, [10, 20], ["A", "A"]) == ["T", "T"]
+        assert self._lookup(ann, [10, 20]).alleles.tolist() == ["T", "T"]
 
 
 class TestFilteredMultiSourceView:
     """MultiSourceView presents only the variants that pass source filters."""
 
-    def _view(self, stores, ann=None, **filters):
+    def _view(self, stores, ann=None, ann_filters=None, **filters):
         sources = [
             config.Source(path=store, name=f"s{j}", **filters.get(f"s{j}", {}))
             for j, store in enumerate(stores)
         ]
         if ann is None:
             ann = stores[0]
-        return _view(sources, _anc_field(ann), "1")
+        if ann_filters is None:
+            ann_filters = {}
+        ancestral_state = config.AncestralState(
+            path=ann, field="variant_ancestral_allele", **ann_filters
+        )
+        return _view(sources, ancestral_state, "1")
 
     def test_num_sites_reflects_filters(self):
         store = _store([100, 200, 300], [["A", "T"]] * 3)
@@ -2498,7 +2536,7 @@ class TestFilteredMultiSourceView:
             _store(_SNP_INDEL_POSITIONS, _SNP_INDEL_ALLELES, sample_ids=["b0", "b1"]),
         ]
         snp = {"include": 'TYPE="snp"'}
-        view = self._view(stores, s0=snp, s1=snp)
+        view = self._view(stores, ann_filters=snp, s0=snp, s1=snp)
         np.testing.assert_array_equal(view.positions, [100, 200])
         assert view.ancestral_alleles.tolist() == ["A", "C"]
         variants = list(view.iter_genotypes())
@@ -2507,33 +2545,84 @@ class TestFilteredMultiSourceView:
 
     def test_filtered_alleles_not_in_allele_map(self):
         store = _store(_SNP_INDEL_POSITIONS, _SNP_INDEL_ALLELES)
-        view = self._view([store], s0={"include": 'TYPE="snp"'})
+        snp = {"include": 'TYPE="snp"'}
+        view = self._view([store], ann_filters=snp, s0=snp)
         assert "ATTAAC" not in view.alleles.flatten().tolist()
 
-    def test_ref_conflict_dropped(self, caplog):
+    def test_unfiltered_duplicate_annotation_raises(self):
+        store = _store(_SNP_INDEL_POSITIONS, _SNP_INDEL_ALLELES)
+        with pytest.raises(ValueError, match="more than one variant"):
+            self._view([store], s0={"include": 'TYPE="snp"'})
+
+    def test_snp_given_snp_annotation_not_deletion(self):
+        # GRCh37 20:10002611: sources have the SNP only; the Ensembl
+        # annotation has a deletion and the SNP at the same position
+        store = _store([100], [["A", "G"]])
+        ann = _store([100, 100], [["ATTA", "A"], ["A", "G"]], ancestral=["ATTA", "A"])
+        view = self._view([store], ann=ann, ann_filters={"include": 'TYPE="snp"'})
+        assert view.ancestral_alleles.tolist() == ["A"]
+
+    def test_ref_mismatch_with_annotation_raises(self):
+        store = _store([100, 200], [["A", "G"], ["C", "T"]], sample_ids=["a0", "a1"])
+        ann = _store([100, 200], [["A", "G"], ["G", "T"]], ancestral=["A", "T"])
+        with pytest.raises(ValueError, match="REF allele mismatch at 1 site") as info:
+            self._view([store], ann=ann)
+        message = str(info.value)
+        assert "position 200" in message
+        assert "source 's0'" in message
+        assert "'C'" in message
+        assert "'G'" in message
+
+    def test_ref_mismatch_names_first_source_with_site(self):
+        store_a = _store([100], [["A", "G"]], sample_ids=["a0", "a1"])
+        store_b = _store([100, 200], [["A", "G"], ["C", "T"]], sample_ids=["b0", "b1"])
+        ann = _store([100, 200], [["A", "G"], ["T", "C"]], ancestral=["A", "T"])
+        with pytest.raises(ValueError, match="source 's1' has REF 'C'"):
+            self._view([store_a, store_b], ann=ann)
+
+    def test_snp_and_indel_in_different_sources_raises(self):
         snps = _store([100, 200], [["A", "G"], ["C", "T"]], sample_ids=["a0", "a1"])
         indel = _store(
             [100, 200], [["ATTAAC", "A"], ["C", "T"]], sample_ids=["b0", "b1"]
         )
-        with caplog.at_level(logging.WARNING, logger="tsinfer"):
-            view = self._view([snps, indel])
-        np.testing.assert_array_equal(view.positions, [200])
-        assert "Dropping 1 site(s)" in caplog.text
-        assert "[100]" in caplog.text
+        with pytest.raises(ValueError, match="REF allele mismatch at 1 site") as info:
+            self._view([snps, indel], ann=snps)
+        message = str(info.value)
+        assert "position 100" in message
+        assert "source 's0' has REF 'A'" in message
+        assert "source 's1' has REF 'ATTAAC'" in message
 
-    def test_ref_conflict_dropped_when_alleles_overlap(self):
-        # The indel's ALT equals the SNP's REF, but its REF is not a SNP allele
+    def test_ref_mismatch_when_alleles_overlap_raises(self):
+        # The indel's ALT equals the SNP's REF
         snps = _store([100], [["A", "G"]], sample_ids=["a0", "a1"])
         indel = _store([100], [["AT", "A"]], sample_ids=["b0", "b1"])
-        assert self._view([snps, indel]).num_sites == 0
+        with pytest.raises(ValueError, match="source 's1' has REF 'AT'"):
+            self._view([snps, indel])
 
-    def test_swapped_alleles_not_a_conflict(self):
+    def test_swapped_ref_and_alt_raises(self):
         store_a = _store([100], [["A", "T"]], sample_ids=["a0", "a1"])
         store_b = _store([100], [["T", "A"]], ancestral=["A"], sample_ids=["b0", "b1"])
+        with pytest.raises(ValueError, match="source 's1' has REF 'T'"):
+            self._view([store_a, store_b])
+
+    def test_different_alt_alleles(self):
+        store_a = _store([100], [["A", "T"]], sample_ids=["a0", "a1"])
+        store_b = _store([100], [["A", "G"]], sample_ids=["b0", "b1"])
         view = self._view([store_a, store_b])
         np.testing.assert_array_equal(view.positions, [100])
         variants = list(view.iter_genotypes())
-        np.testing.assert_array_equal(variants[0].genotypes, [0, 1, 1, 0])
+        assert variants[0].alleles == ("A", "T", "G")
+        np.testing.assert_array_equal(variants[0].genotypes, [0, 1, 0, 2])
+
+    def test_different_numbers_of_alt_alleles(self):
+        store_a = _store([100], [["A", "T"]], sample_ids=["a0", "a1"])
+        store_b = _store(
+            [100], [["A", "G", "C"]], genotypes=[[2, 1]], sample_ids=["b0", "b1"]
+        )
+        view = self._view([store_a, store_b])
+        variants = list(view.iter_genotypes())
+        assert variants[0].alleles == ("A", "T", "G", "C")
+        np.testing.assert_array_equal(variants[0].genotypes, [0, 1, 3, 2])
 
     def test_sources_filtered_differently(self):
         store_a = _store([100, 200], [["A", "T"]] * 2, sample_ids=["a0", "a1"])
@@ -2550,7 +2639,8 @@ class TestFilteredMultiSourceView:
         with caplog.at_level(logging.INFO, logger="tsinfer"):
             view = self._view([store])
         assert view.ancestral_alleles.tolist() == ["T", ""]
-        expected = 0 if ancestral == "" else 1
+        # Missing values are unknown before the among-alleles check
+        expected = 1 if ancestral == "G" else 0
         assert f"{expected} site(s) with an ancestral allele that is not" in caplog.text
         variants = list(view.iter_genotypes())
         # Site 100 is polarised on T; at site 200 code 0 is unknown
@@ -2568,12 +2658,12 @@ class TestFilteredMultiSourceView:
         assert variants[0].alleles == ("G", "A", "T")
         np.testing.assert_array_equal(variants[0].genotypes, [1, 2, 1, 0])
 
-    def test_ancestral_from_duplicate_annotation_rows(self):
+    def test_ancestral_from_filtered_annotation_rows(self):
         store = _store([100], [["C", "T"]])
         ann = _store(
             [100, 100], [["CAC", "TAG"], ["C", "G", "T"]], ancestral=["TAC", "T"]
         )
-        view = self._view([store], ann=ann)
+        view = self._view([store], ann=ann, ann_filters={"include": 'TYPE="snp"'})
         assert view.ancestral_alleles.tolist() == ["T"]
 
     def test_external_annotation_missing_positions(self):
