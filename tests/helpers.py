@@ -25,7 +25,7 @@ the convention used by bio2zarr.
 
 Array dimension names (``_ARRAY_DIMENSIONS`` attrs) are set on every array so
 that vcztools can interpret the stores as valid VCZ. ``vcz_to_vcf`` converts an
-in-memory group to VCF text by calling vcztools internals directly.
+in-memory group to VCF text with vcztools.write_vcf.
 
 Sample VCZ format
 -----------------
@@ -62,12 +62,10 @@ Follows the format defined in design.md:
 from __future__ import annotations
 
 import io
+import pathlib
 
 import numpy as np
-import vcztools.retrieval
-import vcztools.samples
-import vcztools.utils
-import vcztools.vcf_writer
+import vcztools
 import zarr
 from zarr.core.dtype.npy.string import VariableLengthUTF8
 
@@ -295,8 +293,8 @@ def combine_contigs(
     """
     Concatenate single-contig sample stores (with identical samples) into one
     multi-contig store, with variants from ``stores[j]`` on ``contig_ids[j]``.
-    ``call_genotype`` is chunked by ``variants_chunk_size`` along the variants
-    dimension, so that contig boundaries can fall within chunks.
+    Variants-dimensioned arrays are chunked by ``variants_chunk_size``, so
+    that contig boundaries can fall within chunks.
     """
     max_alleles = max(store["variant_allele"].shape[1] for store in stores)
     genotypes = []
@@ -317,9 +315,7 @@ def combine_contigs(
     contig_lengths = [int(store["contig_length"][0]) for store in stores]
 
     root = _open_memory_group()
-    chunks = (variants_chunk_size,) + genotypes.shape[1:]
-    gt = root.create_array("call_genotype", data=genotypes, chunks=chunks)
-    gt.attrs["_ARRAY_DIMENSIONS"] = ["variants", "samples", "ploidy"]
+    _arr(root, "call_genotype", genotypes, ["variants", "samples", "ploidy"])
     _arr(root, "variant_position", np.concatenate(positions), ["variants"])
     _arr(root, "variant_contig", np.concatenate(variant_contig), ["variants"])
     _str_array(root, "variant_allele", np.concatenate(alleles), ["variants", "alleles"])
@@ -332,7 +328,30 @@ def combine_contigs(
     _str_array(root, "contig_id", np.array(contig_ids), ["contigs"])
     _arr(root, "contig_length", np.array(contig_lengths, dtype=np.int64), ["contigs"])
     _str_array(root, "sample_id", stores[0]["sample_id"][:], ["samples"])
-    return root
+    return rechunk_variants(root, variants_chunk_size)
+
+
+def save_vcz(root: zarr.Group, path) -> pathlib.Path:
+    """
+    Write an in-memory VCZ group to a directory store at *path*, keeping
+    each array's chunks and attributes (e.g. ``_ARRAY_DIMENSIONS``, which
+    vcztools needs). Returns the path.
+    """
+    path = pathlib.Path(path)
+    out = zarr.open_group(path, mode="w", zarr_format=_ZARR_FORMAT)
+    out.attrs.update(root.attrs.asdict())
+    for name in root.array_keys():
+        array = root[name]
+        data = array[:]
+        if data.dtype.kind in ("U", "S", "O", "T"):
+            a = out.create_array(
+                name, shape=data.shape, dtype=_VLEN_STR, chunks=array.chunks
+            )
+            a[:] = data
+        else:
+            a = out.create_array(name, data=data, chunks=array.chunks)
+        a.attrs.update(array.attrs.asdict())
+    return path
 
 
 def rechunk_variants(root: zarr.Group, variants_chunk_size: int) -> zarr.Group:
@@ -403,36 +422,15 @@ def add_region_index(root: zarr.Group) -> zarr.Group:
 
 def vcz_to_vcf(root: zarr.Group, *, no_version: bool = True) -> str:
     """
-    Convert an in-memory VCZ group to VCF text using vcztools internals.
+    Convert an in-memory VCZ group to VCF text using ``vcztools.write_vcf``.
 
-    Returns the full VCF as a string. ``no_version`` suppresses the
-    ``##bcftools_view`` header line for deterministic output in tests.
+    Returns the full VCF as a string. ``no_version`` suppresses the vcztools
+    version and command line in the header for deterministic output in tests.
     """
-    all_samples = root["sample_id"][:]
-    sample_ids, samples_selection = vcztools.samples.parse_samples(None, all_samples)
-
-    header = vcztools.vcf_writer._generate_header(
-        root, sample_ids, no_version=no_version
-    )
-
-    contigs = vcztools.utils._as_fixed_length_string(root["contig_id"][:])
-    filters = vcztools.vcf_writer.get_filter_ids(root)
-
-    body = io.StringIO()
-    for chunk_data in vcztools.retrieval.variant_chunk_iter(
-        root, samples_selection=samples_selection
-    ):
-        vcztools.vcf_writer.c_chunk_to_vcf(
-            chunk_data,
-            samples_selection,
-            contigs,
-            filters,
-            body,
-            drop_genotypes=False,
-            no_update=None,
-        )
-
-    return header + body.getvalue()
+    output = io.StringIO()
+    with vcztools.VczReader(root) as reader:
+        vcztools.write_vcf(reader, output, no_version=no_version)
+    return output.getvalue()
 
 
 def ts_to_sample_vcz(

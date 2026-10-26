@@ -80,7 +80,7 @@ def _write_vcz_to_disk(tmp_path):
         sample_ids=_SAMPLE_IDS,
     )
     vcz_path = tmp_path / "samples.vcz"
-    zarr.save(vcz_path, **{k: store[k][:] for k in store})
+    helpers.save_vcz(store, vcz_path)
     return vcz_path
 
 
@@ -371,7 +371,7 @@ def _write_mixed_ploidy_vcz(tmp_path):
         sample_ids=_HAPLOID_SAMPLE_IDS,
     )
     haploid_path = tmp_path / "haploid.vcz"
-    zarr.save(haploid_path, **{k: haploid_store[k][:] for k in haploid_store})
+    helpers.save_vcz(haploid_store, haploid_path)
 
     diploid_store = helpers.make_sample_vcz(
         genotypes=_DIPLOID_GENOTYPES,
@@ -382,7 +382,7 @@ def _write_mixed_ploidy_vcz(tmp_path):
         sample_ids=_DIPLOID_SAMPLE_IDS,
     )
     diploid_path = tmp_path / "diploid.vcz"
-    zarr.save(diploid_path, **{k: diploid_store[k][:] for k in diploid_store})
+    helpers.save_vcz(diploid_store, diploid_path)
 
     return haploid_path, diploid_path
 
@@ -561,7 +561,7 @@ def _write_triallelic_vcz(tmp_path):
         sample_ids=_TRI_SAMPLE_IDS_A,
     )
     path_a = tmp_path / "source_a.vcz"
-    zarr.save(path_a, **{k: store_a[k][:] for k in store_a})
+    helpers.save_vcz(store_a, path_a)
 
     store_b = helpers.make_sample_vcz(
         genotypes=_TRI_GT_B,
@@ -572,7 +572,7 @@ def _write_triallelic_vcz(tmp_path):
         sample_ids=_TRI_SAMPLE_IDS_B,
     )
     path_b = tmp_path / "source_b.vcz"
-    zarr.save(path_b, **{k: store_b[k][:] for k in store_b})
+    helpers.save_vcz(store_b, path_b)
 
     return path_a, path_b
 
@@ -673,7 +673,7 @@ create_individuals = false
             sample_ids=_TRI_SAMPLE_IDS_A,
         )
         path_a = tmp_path / "source_a.vcz"
-        zarr.save(path_a, **{k: store_a[k][:] for k in store_a})
+        helpers.save_vcz(store_a, path_a)
 
         store_b = helpers.make_sample_vcz(
             genotypes=_TRI_GT_B,
@@ -684,7 +684,7 @@ create_individuals = false
             sample_ids=_TRI_SAMPLE_IDS_B,
         )
         path_b = tmp_path / "source_b_same.vcz"
-        zarr.save(path_b, **{k: store_b[k][:] for k in store_b})
+        helpers.save_vcz(store_b, path_b)
 
         ancestor_vcz = _toml_path(tmp_path / "ancestors.vcz")
         output_trees = _toml_path(tmp_path / "output.trees")
@@ -759,7 +759,7 @@ def _write_subset_vcz(tmp_path, *, swap_alt_alleles=False):
         sample_ids=np.array([f"s{i}" for i in range(8)]),
     )
     path = tmp_path / "samples.vcz"
-    zarr.save(path, **{k: store[k][:] for k in store})
+    helpers.save_vcz(store, path)
     return path
 
 
