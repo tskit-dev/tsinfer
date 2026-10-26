@@ -584,12 +584,10 @@ def match(
             _build_jobs_with_metadata(cfg, positions, reference_ts)
         )
 
-    # 2. All match sources (ancestors included) must agree on the contig
-    match_stores = []
-    for source_name in cfg.match.sources:
-        match_stores.append(vcz_mod.open_store(cfg.sources[source_name].path))
-    contig = vcz_mod.resolve_contig(match_stores, cfg.contig)
-    seq_len = float(contig.length)
+    # 2. Resolve the contig in all match sources (ancestors included)
+    match_sources = [cfg.sources[name] for name in cfg.match.sources]
+    resolved = vcz_mod.resolve_sources(match_sources, None, cfg.contig)
+    seq_len = float(resolved.contig.length)
     if reference_ts is not None:
         _check_reference_ts(reference_ts, jobs, seq_len)
 
@@ -609,12 +607,10 @@ def match(
             schedule.append((job.source, job.sample_id, job.ploidy_index))
 
     # 4. Create lazy reader with all match sources
-    match_sources = {name: cfg.sources[name] for name in cfg.match.sources}
     reader = vcz_mod.HaplotypeReader(
-        match_sources,
+        {source.name: source for source in resolved.sources},
         positions,
         sites.ancestral_alleles,
-        contig.id,
         cache_size_mb=cache_size,
         schedule=schedule,
         read_workers=read_workers,
@@ -845,14 +841,8 @@ def augment_sites(
 
     # --- Build MultiSourceView and resolve positions ---
     source_configs = [cfg.sources[name] for name in aug_cfg.sources]
-    stores = [vcz_mod.open_store(source.path) for source in source_configs]
-    stores.append(vcz_mod.open_store(cfg.ancestral_state.path))
-    contig = vcz_mod.resolve_contig(stores, cfg.contig)
-    view = vcz_mod.MultiSourceView(
-        source_configs,
-        cfg.ancestral_state,
-        contig.id,
-    )
+    resolved = vcz_mod.resolve_sources(source_configs, cfg.ancestral_state, cfg.contig)
+    view = vcz_mod.MultiSourceView(resolved.sources, resolved.ancestral_state)
 
     positions = view.positions_in_intervals(intervals)
     positions = view.filter_positions(ts.sites_position, positions)

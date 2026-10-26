@@ -331,6 +331,25 @@ class TestFromTomlStandard:
         assert cfg.contig == "chr20"
         assert "contig = chr20" in cfg.format()
 
+    def test_store_contig_default(self, tmp_path):
+        cfg = config.Config.from_toml(_write_toml(tmp_path, _STANDARD_TOML))
+        assert cfg.sources["cohort"].contig is None
+        assert cfg.sources["ancestors"].contig is None
+        assert cfg.ancestral_state.contig is None
+
+    def test_store_contigs(self, tmp_path):
+        content = _STANDARD_TOML.replace(
+            'field = "variant_ancestral_allele"\n',
+            'field = "variant_ancestral_allele"\ncontig = "20"\n',
+        ).replace('include = "QUAL > 20"\n', 'include = "QUAL > 20"\ncontig = "chr20"\n')
+        cfg = config.Config.from_toml(_write_toml(tmp_path, content))
+        assert cfg.sources["cohort"].contig == "chr20"
+        assert cfg.ancestral_state.contig == "20"
+        formatted = cfg.format()
+        assert "[source.cohort]\n  path = samples.vcz\n" in formatted
+        assert "  contig = chr20\n" in formatted
+        assert "  contig = 20\n" in formatted
+
 
 # ---------------------------------------------------------------------------
 # TOML parsing — path resolution

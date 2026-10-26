@@ -339,8 +339,62 @@ class TestMultiContig:
 
     def test_unknown_contig(self, stores):
         _, combined = stores
-        with pytest.raises(ValueError, match="not declared"):
+        with pytest.raises(ValueError, match="does not declare contig .D."):
             self._run(combined, "D")
+
+
+class TestContigNames:
+    """Stores may use different names for the contig being inferred."""
+
+    @pytest.fixture(scope="class")
+    def stores(self):
+        ts = _simulate(num_samples=6, sequence_length=100_000, random_seed=13)
+        sample_store = helpers.ts_to_sample_vcz(ts, contig_id="chr20")
+        # Ensembl-style ancestral state: contig "20", no contig_length
+        ann_store = helpers.ts_to_sample_vcz(ts, contig_id="20")
+        helpers.set_contigs(ann_store, ["20"], None, 0)
+        return sample_store, ann_store
+
+    def _cfg(self, sample_store, ann_store, contig):
+        cfg = _make_config_for_run(sample_store)
+        cfg.ancestral_state = _anc_state(ann_store)
+        cfg.contig = contig
+        cfg.augment_sites = config.AugmentSitesConfig(sources=["test"])
+        return cfg
+
+    def test_matches_same_names(self, stores):
+        sample_store, ann_store = stores
+        cfg = self._cfg(sample_store, ann_store, "chr20")
+        with pytest.warns(UserWarning, match=r"chr20 \(test\), 20 \(ancestral_state\)"):
+            ts = pipeline.run(cfg)
+        same_names_ts = pipeline.run(self._cfg(sample_store, sample_store, None))
+        assert ts.num_sites > 0
+        ts.tables.assert_equals(same_names_ts.tables, ignore_provenance=True)
+
+    def test_ancestors_use_top_level_name(self, stores):
+        sample_store, ann_store = stores
+        anc_cfg = config.AncestorsConfig(name="ancestors", path=None, sources=["test"])
+        source = config.Source(path=sample_store, name="test")
+        with pytest.warns(UserWarning, match="Inferring contig chr20"):
+            anc = ancestors.infer_ancestors(
+                source, anc_cfg, _anc_state(ann_store), contig="chr20"
+            )
+        assert anc["contig_id"][:].tolist() == ["chr20"]
+        assert anc["contig_length"][:].tolist() == [100_000]
+
+    def test_store_contig_option(self, stores):
+        sample_store, ann_store = stores
+        cfg = self._cfg(sample_store, ann_store, "chr20")
+        cfg.ancestral_state.contig = "20"
+        with pytest.warns(UserWarning, match="Inferring contig chr20"):
+            ts = pipeline.run(cfg)
+        assert ts.num_sites > 0
+
+    def test_different_names_without_top_level_contig(self, stores):
+        sample_store, ann_store = stores
+        cfg = self._cfg(sample_store, ann_store, None)
+        with pytest.raises(ValueError, match="different names for the contig"):
+            pipeline.run(cfg)
 
 
 # ---------------------------------------------------------------------------

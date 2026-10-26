@@ -80,8 +80,23 @@ def _make_annotation_vcz(positions, field_name, values):
 
 def _all_variants(store):
     """All variants of a single-contig store, for VCZHaplotypeReader."""
-    source = config.Source(path=store, name="all")
-    return vcz.select_source_variants(store, source, str(store["contig_id"][0]))
+    source = config.Source(path=store, name="all", contig=str(store["contig_id"][0]))
+    return vcz.select_source_variants(store, source)
+
+
+def _view(sources, ancestral_state, contig_id=None):
+    """A MultiSourceView, with the contig resolved as the pipeline does."""
+    if isinstance(sources, config.Source):
+        sources = [sources]
+    resolved = vcz.resolve_sources(sources, ancestral_state, contig_id)
+    return vcz.MultiSourceView(resolved.sources, resolved.ancestral_state)
+
+
+def _haplotype_reader(sources, positions, ancestral_alleles, contig_id=None, **kwargs):
+    """A HaplotypeReader, with the contig resolved as the pipeline does."""
+    resolved = vcz.resolve_sources(list(sources.values()), None, contig_id)
+    resolved_sources = dict(zip(sources.keys(), resolved.sources))
+    return vcz.HaplotypeReader(resolved_sources, positions, ancestral_alleles, **kwargs)
 
 
 class TestOpenStore:
@@ -304,92 +319,168 @@ def _contig_store(contig_ids, contig_lengths, contig_index, num_sites=2):
     return helpers.set_contigs(store, contig_ids, contig_lengths, contig_index)
 
 
+def _resolve(stores, contig_id=None, store_contig_ids=None):
+    """resolve_contig over stores labelled s0, s1, ..."""
+    if store_contig_ids is None:
+        store_contig_ids = [None] * len(stores)
+    labelled = {
+        f"s{j}": (store, store_contig_id)
+        for j, (store, store_contig_id) in enumerate(zip(stores, store_contig_ids))
+    }
+    return vcz.resolve_contig(labelled, contig_id)
+
+
 class TestResolveContig:
     def test_single_contig(self, sample_store):
-        contig = vcz.resolve_contig([sample_store], None)
-        assert contig == vcz.Contig(id="1", length=1000)
+        contig = _resolve([sample_store])
+        assert contig == vcz.Contig(id="1", length=1000, store_ids={"s0": "1"})
 
     def test_custom_length(self):
         gt = np.zeros((1, 1, 1), dtype=np.int8)
         store = helpers.make_sample_vcz(
             gt, [10], [["A", "T"]], ["A"], sequence_length=999_999
         )
-        assert vcz.resolve_contig([store], None).length == 999_999
+        assert _resolve([store]).length == 999_999
 
     @pytest.mark.parametrize("contig_index", [0, 1, 2])
     def test_multi_contig_header(self, contig_index):
         store = _contig_store(["chr1", "chr2", "chr3"], [3000, 2000, 1000], contig_index)
-        contig = vcz.resolve_contig([store], None)
+        contig = _resolve([store])
         assert contig.id == ["chr1", "chr2", "chr3"][contig_index]
         assert contig.length == [3000, 2000, 1000][contig_index]
 
     def test_variants_on_multiple_contigs(self):
         store = _contig_store(["chr1", "chr2"], [3000, 2000], 0)
         store["variant_contig"][1] = 1
-        with pytest.raises(ValueError, match="contig option"):
-            vcz.resolve_contig([store], None)
+        with pytest.raises(ValueError, match=r"multiple contigs \['chr1', 'chr2'\]"):
+            _resolve([store])
 
     def test_agreeing_stores(self):
         store1 = _contig_store(["chr1", "chr2"], [3000, 2000], 1)
         store2 = _contig_store(["chr2"], [2000], 0)
-        contig = vcz.resolve_contig([store1, store2], None)
-        assert contig == vcz.Contig(id="chr2", length=2000)
+        contig = _resolve([store1, store2])
+        assert contig == vcz.Contig(
+            id="chr2", length=2000, store_ids={"s0": "chr2", "s1": "chr2"}
+        )
 
     @pytest.mark.parametrize("order", [1, -1])
     def test_length_from_one_store(self, order):
         store1 = _contig_store(["chr1", "chr2"], None, 1)
         store2 = _contig_store(["chr1", "chr2"], [3000, 2000], 1)
         stores = [store1, store2][::order]
-        contig = vcz.resolve_contig(stores, None)
-        assert contig == vcz.Contig(id="chr2", length=2000)
-
-    def test_empty_store_ignored(self):
-        store1 = _contig_store(["chr1", "chr2"], [3000, 2000], 0, num_sites=0)
-        store2 = _contig_store(["chr1", "chr2"], [3000, 2000], 1)
-        contig = vcz.resolve_contig([store1, store2], None)
-        assert contig == vcz.Contig(id="chr2", length=2000)
+        assert _resolve(stores).length == 2000
 
     def test_conflicting_lengths(self):
         store1 = _contig_store(["chr2"], [2000], 0)
         store2 = _contig_store(["chr2"], [2001], 0)
         with pytest.warns(UserWarning, match="conflicting lengths"):
-            contig = vcz.resolve_contig([store1, store2], None)
-        assert contig == vcz.Contig(id="chr2", length=2001)
-
-    def test_conflicting_ids(self):
-        store1 = _contig_store(["chr20"], [2000], 0)
-        store2 = _contig_store(["20"], [2000], 0)
-        with pytest.raises(ValueError, match="different contigs"):
-            vcz.resolve_contig([store1, store2], None)
+            contig = _resolve([store1, store2])
+        assert contig.length == 2001
 
     def test_no_lengths(self):
         store1 = _contig_store(["chr2"], None, 0)
         store2 = _contig_store(["chr2"], None, 0)
         with pytest.raises(ValueError, match="must provide contig_length"):
-            vcz.resolve_contig([store1, store2], None)
+            _resolve([store1, store2])
 
-    def test_no_variants(self):
+    def test_no_variants_single_declared_contig(self):
         store = _contig_store(["chr1"], [3000], 0, num_sites=0)
-        with pytest.raises(ValueError, match="No variants"):
-            vcz.resolve_contig([store], None)
+        assert _resolve([store]).id == "chr1"
 
-    def test_explicit_id(self):
+    def test_no_variants_several_declared_contigs(self):
+        store1 = _contig_store(["chr1", "chr2"], [3000, 2000], 0, num_sites=0)
+        store2 = _contig_store(["chr1", "chr2"], [3000, 2000], 1)
+        with pytest.raises(ValueError, match="s0: the store has no variants"):
+            _resolve([store1, store2])
+
+    def test_no_variants_with_top_level_contig(self):
+        store1 = _contig_store(["chr1", "chr2"], [3000, 2000], 0, num_sites=0)
+        store2 = _contig_store(["chr1", "chr2"], [3000, 2000], 1)
+        assert _resolve([store1, store2], "chr2").store_ids == {
+            "s0": "chr2",
+            "s1": "chr2",
+        }
+
+    def test_top_level_contig(self):
         store = _contig_store(["chr1", "chr2", "chr3"], [3000, 2000, 1000], 2)
         store["variant_contig"][0] = 0
-        contig = vcz.resolve_contig([store], "chr2")
-        assert contig == vcz.Contig(id="chr2", length=2000)
+        contig = _resolve([store], "chr2")
+        assert contig == vcz.Contig(id="chr2", length=2000, store_ids={"s0": "chr2"})
 
-    def test_explicit_id_without_variants(self):
+    def test_top_level_contig_without_variants(self):
         store1 = _contig_store(["chr1", "chr2"], [3000, 2000], 1)
         store2 = _contig_store(["chr1"], None, 0)
-        contig = vcz.resolve_contig([store1, store2], "chr1")
-        assert contig == vcz.Contig(id="chr1", length=3000)
+        contig = _resolve([store1, store2], "chr1")
+        assert contig.store_ids == {"s0": "chr1", "s1": "chr1"}
+        assert contig.length == 3000
 
-    def test_explicit_id_not_declared(self):
-        store1 = _contig_store(["chr1", "chr2"], [3000, 2000], 1)
-        store2 = _contig_store(["chr2"], [2000], 0)
+    def test_top_level_contig_not_declared(self):
+        store = _contig_store(["chr1", "chr2"], [3000, 2000], 0)
+        store["variant_contig"][1] = 1
+        with pytest.raises(ValueError, match="does not declare contig 'chr3'"):
+            _resolve([store], "chr3")
+
+    def test_different_names_without_top_level_contig(self):
+        store1 = _contig_store(["chr20"], [2000], 0)
+        store2 = _contig_store(["20"], None, 0)
+        with pytest.raises(ValueError, match=r"chr20 \(s0\), 20 \(s1\)"):
+            _resolve([store1, store2])
+
+    def test_different_names_with_top_level_contig(self):
+        store1 = _contig_store(["chr1", "chr20"], [1000, 2000], 1)
+        store2 = _contig_store(["20"], None, 0)
+        with pytest.warns(UserWarning, match=r"chr20 \(s0\), 20 \(s1\)"):
+            contig = _resolve([store1, store2], "chr20")
+        assert contig == vcz.Contig(
+            id="chr20", length=2000, store_ids={"s0": "chr20", "s1": "20"}
+        )
+
+    def test_top_level_name_differs_from_all_stores(self):
+        store = _contig_store(["chr2"], [2000], 0)
+        with pytest.warns(UserWarning, match=r"Inferring contig chr20 .*chr2 \(s0\)"):
+            contig = _resolve([store], "chr20")
+        assert contig.id == "chr20"
+
+    def test_store_contig(self):
+        store1 = _contig_store(["chr1", "chr20"], [1000, 2000], 1)
+        store2 = _contig_store(["19", "20"], [1000, 2000], 0)
+        store2["variant_contig"][1] = 1
+        with pytest.warns(UserWarning, match="Inferring contig chr20"):
+            contig = _resolve([store1, store2], "chr20", [None, "20"])
+        assert contig.store_ids == {"s0": "chr20", "s1": "20"}
+
+    def test_store_contig_overrides_top_level(self):
+        store = _contig_store(["chr1", "chr2"], [3000, 2000], 0)
+        contig = _resolve([store], None, ["chr2"])
+        assert contig == vcz.Contig(id="chr2", length=2000, store_ids={"s0": "chr2"})
+
+    def test_store_contig_not_declared(self):
+        store = _contig_store(["chr1"], [3000], 0)
         with pytest.raises(ValueError, match="not declared"):
-            vcz.resolve_contig([store1, store2], "chr1")
+            _resolve([store], None, ["chr2"])
+
+
+class TestResolveSources:
+    def test_contig_set_on_copies(self):
+        store_a = _contig_store(["chr20"], [2000], 0)
+        store_b = _contig_store(["20"], None, 0)
+        source = config.Source(path=store_a, name="a")
+        ancestral_state = config.AncestralState(path=store_b, field="x")
+        with pytest.warns(UserWarning, match=r"chr20 \(a\), 20 \(ancestral_state\)"):
+            resolved = vcz.resolve_sources([source], ancestral_state, "chr20")
+        assert resolved.contig.id == "chr20"
+        assert resolved.sources[0].contig == "chr20"
+        assert resolved.ancestral_state.contig == "20"
+        # The originals are unchanged
+        assert source.contig is None
+        assert ancestral_state.contig is None
+
+    def test_explicit_contigs_used(self):
+        store = _contig_store(["chr1", "chr2"], [3000, 2000], 0)
+        source = config.Source(path=store, name="a", contig="chr2")
+        resolved = vcz.resolve_sources([source], None, None)
+        assert resolved.ancestral_state is None
+        assert resolved.sources[0].contig == "chr2"
 
 
 def _small_contig_stores():
@@ -446,7 +537,7 @@ class TestMultiContigReaders:
     def _view_output(self, store, contig_id, **source_kwargs):
         source = config.Source(path=store, name="test", **source_kwargs)
         anc_state = config.AncestralState(path=store, field="variant_ancestral_allele")
-        view = vcz.MultiSourceView(source, anc_state, contig_id)
+        view = _view(source, anc_state, contig_id)
         variants = list(view.iter_genotypes())
         return view.positions, variants
 
@@ -484,7 +575,7 @@ class TestMultiContigReaders:
         source = config.Source(path=store, name="test")
         ancestral_alleles = np.array(["A"] * len(positions))
         schedule = [("test", "sample_0", 0), ("test", "sample_1", 0)]
-        reader = vcz.HaplotypeReader(
+        reader = _haplotype_reader(
             {"test": source},
             positions,
             ancestral_alleles,
@@ -552,7 +643,7 @@ class TestHaplotypeReader:
             _make_ancestor_and_sample_stores()
         )
         schedule = [("ancestors", "a0", 0)]
-        reader = vcz.HaplotypeReader(
+        reader = _haplotype_reader(
             {"ancestors": anc_source, "test": source},
             positions,
             anc_alleles,
@@ -578,7 +669,7 @@ class TestHaplotypeReader:
             _make_ancestor_and_sample_stores()
         )
         schedule = [("ancestors", "a1", 0)]
-        reader = vcz.HaplotypeReader(
+        reader = _haplotype_reader(
             {"ancestors": anc_source, "test": source},
             positions,
             anc_alleles,
@@ -604,7 +695,7 @@ class TestHaplotypeReader:
             _make_ancestor_and_sample_stores()
         )
         schedule = [("test", "sample_0", 0)]
-        reader = vcz.HaplotypeReader(
+        reader = _haplotype_reader(
             {"ancestors": anc_source, "test": source},
             positions,
             anc_alleles,
@@ -630,7 +721,7 @@ class TestHaplotypeReader:
             _make_ancestor_and_sample_stores()
         )
         schedule = [("test", "sample_1", 0)]
-        reader = vcz.HaplotypeReader(
+        reader = _haplotype_reader(
             {"ancestors": anc_source, "test": source},
             positions,
             anc_alleles,
@@ -678,7 +769,7 @@ class TestHaplotypeReader:
         )
         anc_alleles = np.asarray(anc_store["variant_allele"][:])[:, 0]
         schedule = [("test", "sample_0", 0)]
-        reader = vcz.HaplotypeReader(
+        reader = _haplotype_reader(
             {"ancestors": anc_source, "test": source},
             positions,
             anc_alleles,
@@ -735,7 +826,7 @@ class TestHaplotypeReader:
         }
         anc_alleles = np.asarray(anc_store["variant_allele"][:])[:, 0]
         schedule = [("src_a", "sample_0", 0), ("src_b", "sample_0", 0)]
-        reader = vcz.HaplotypeReader(
+        reader = _haplotype_reader(
             sources, positions, anc_alleles, "1", schedule=schedule
         )
 
@@ -770,7 +861,7 @@ class TestHaplotypeReader:
             _make_ancestor_and_sample_stores()
         )
         with pytest.raises(ValueError, match="cannot fit a single chunk"):
-            vcz.HaplotypeReader(
+            _haplotype_reader(
                 {"ancestors": anc_source, "test": source},
                 positions,
                 anc_alleles,
@@ -783,7 +874,7 @@ class TestHaplotypeReader:
         anc_store, sample_store, source, anc_source, positions, anc_alleles = (
             _make_ancestor_and_sample_stores()
         )
-        reader = vcz.HaplotypeReader(
+        reader = _haplotype_reader(
             {"ancestors": anc_source, "test": source},
             positions,
             anc_alleles,
@@ -797,7 +888,7 @@ class TestHaplotypeReader:
         anc_store, sample_store, source, anc_source, positions, anc_alleles = (
             _make_ancestor_and_sample_stores()
         )
-        reader = vcz.HaplotypeReader(
+        reader = _haplotype_reader(
             {"ancestors": anc_source, "test": source},
             positions,
             anc_alleles,
@@ -810,7 +901,7 @@ class TestHaplotypeReader:
         anc_store, sample_store, source, anc_source, positions, anc_alleles = (
             _make_ancestor_and_sample_stores()
         )
-        reader = vcz.HaplotypeReader(
+        reader = _haplotype_reader(
             {"ancestors": anc_source, "test": source},
             positions,
             anc_alleles,
@@ -824,7 +915,7 @@ class TestHaplotypeReader:
             _make_ancestor_and_sample_stores()
         )
         reference_alleles = [["A", "T", "G"], ["C"], ["A", "C"]]
-        reader = vcz.HaplotypeReader(
+        reader = _haplotype_reader(
             {"ancestors": anc_source, "test": source},
             positions,
             anc_alleles,
@@ -844,7 +935,7 @@ class TestHaplotypeReader:
         anc_store, sample_store, source, anc_source, positions, anc_alleles = (
             _make_ancestor_and_sample_stores()
         )
-        reader = vcz.HaplotypeReader(
+        reader = _haplotype_reader(
             {"ancestors": anc_source, "test": source},
             positions,
             anc_alleles,
@@ -1729,7 +1820,7 @@ class TestGetSiteAlleles:
         }
         anc_alleles = np.array(["A", "A"])
         schedule = [("src_a", "sample_0", 0), ("src_b", "sample_0", 0)]
-        reader = vcz.HaplotypeReader(
+        reader = _haplotype_reader(
             sources, positions, anc_alleles, "1", schedule=schedule
         )
 
@@ -1787,7 +1878,7 @@ class TestMultiSourceView:
             sequence_length=1000,
         )
         src = config.Source(path=store, name="s1")
-        view = vcz.MultiSourceView(src, self._anc_state(store), "1")
+        view = _view(src, self._anc_state(store), "1")
 
         assert view.num_sites == 2
         np.testing.assert_array_equal(view.positions, [100, 200])
@@ -1827,7 +1918,7 @@ class TestMultiSourceView:
         )
 
         anc = config.AncestralState(path=ann_store, field="variant_ancestral_allele")
-        view = vcz.MultiSourceView(
+        view = _view(
             [
                 config.Source(path=store_a, name="a"),
                 config.Source(path=store_b, name="b"),
@@ -1859,7 +1950,7 @@ class TestMultiSourceView:
             sequence_length=1000,
         )
         src = config.Source(path=store, name="s1")
-        view = vcz.MultiSourceView(src, self._anc_state(store), "1")
+        view = _view(src, self._anc_state(store), "1")
 
         assert view.num_sites == 1
         np.testing.assert_array_equal(view.positions, [200])
@@ -1875,7 +1966,7 @@ class TestMultiSourceView:
             sample_ids=np.array(["s0", "s1"]),
         )
         src = config.Source(path=store, name="s1")
-        view = vcz.MultiSourceView(src, self._anc_state(store), "1")
+        view = _view(src, self._anc_state(store), "1")
 
         haps = view.haplotypes()
         assert len(haps) == 4  # 2 samples * 2 ploidy
@@ -1897,7 +1988,7 @@ class TestMultiSourceView:
             sample_ids=np.array(["s0", "s1"]),
         )
         src = config.Source(path=store, name="s1")
-        view = vcz.MultiSourceView(src, self._anc_state(store), "1")
+        view = _view(src, self._anc_state(store), "1")
 
         rows = [v.genotypes for v in view.iter_genotypes()]
         assert len(rows) == 2
@@ -1917,7 +2008,7 @@ class TestMultiSourceView:
             sample_ids=np.array(["s0", "s1"]),
         )
         src = config.Source(path=store, name="s1")
-        view = vcz.MultiSourceView(src, self._anc_state(store), "1")
+        view = _view(src, self._anc_state(store), "1")
 
         # Only request positions 100 and 300
         subset = np.array([100, 300], dtype=np.int32)
@@ -1953,7 +2044,7 @@ class TestMultiSourceView:
             sequence_length=1000,
         )
         anc = config.AncestralState(path=ann_store, field="variant_ancestral_allele")
-        view = vcz.MultiSourceView(
+        view = _view(
             [
                 config.Source(path=store_a, name="a"),
                 config.Source(path=store_b, name="b"),
@@ -1981,7 +2072,7 @@ class TestMultiSourceView:
         )
         # Select only s0 and s2
         src = config.Source(path=store, name="s1", samples="s0,s2")
-        view = vcz.MultiSourceView(src, self._anc_state(store), "1")
+        view = _view(src, self._anc_state(store), "1")
 
         assert view.num_haplotypes == 2
         rows = [v.genotypes for v in view.iter_genotypes()]
@@ -1998,7 +2089,7 @@ class TestMultiSourceView:
             sample_ids=np.array(["s0", "s1"]),
         )
         src = config.Source(path=store, name="s1")
-        view = vcz.MultiSourceView(src, self._anc_state(store), "1")
+        view = _view(src, self._anc_state(store), "1")
 
         subset = np.array([100, 300], dtype=np.int32)
         variants = list(view.iter_genotypes(subset))
@@ -2018,7 +2109,7 @@ class TestMultiSourceView:
             sample_ids=np.array(["s0", "s1"]),
         )
         src = config.Source(path=store, name="s1")
-        view = vcz.MultiSourceView(src, self._anc_state(store), "1")
+        view = _view(src, self._anc_state(store), "1")
 
         # Only positions in [150, 350)
         pos = view.positions_in_intervals([[150, 350]])
@@ -2041,7 +2132,7 @@ class TestMultiSourceView:
             sample_ids=np.array(["s0", "s1"]),
         )
         src = config.Source(path=store, name="s1")
-        view = vcz.MultiSourceView(src, self._anc_state(store), "1")
+        view = _view(src, self._anc_state(store), "1")
 
         # Exclude position 200
         pos = view.filter_positions(np.array([200]))
@@ -2063,7 +2154,7 @@ class TestMultiSourceView:
         )
         ann_store = store_a
         anc = config.AncestralState(path=ann_store, field="variant_ancestral_allele")
-        view = vcz.MultiSourceView(
+        view = _view(
             [config.Source(path=store_a, name="src_a")],
             anc,
             "1",
@@ -2088,7 +2179,7 @@ class TestMultiSourceView:
             sample_ids=np.array(["s0", "s1"]),
         )
         src = config.Source(path=store, name="s1")
-        view = vcz.MultiSourceView(src, self._anc_state(store), "1")
+        view = _view(src, self._anc_state(store), "1")
 
         # Request s0 and a nonexistent sample
         identifiers = [("s1", "s0", 0), ("s1", "nonexistent", 0)]
@@ -2108,7 +2199,7 @@ class TestMultiSourceView:
             sample_ids=np.array(["s0", "s1"]),
         )
         src = config.Source(path=store, name="s1")
-        view = vcz.MultiSourceView(src, self._anc_state(store), "1")
+        view = _view(src, self._anc_state(store), "1")
 
         variants = list(view.iter_genotypes())
         assert len(variants) == 1
@@ -2127,7 +2218,7 @@ class TestMultiSourceView:
             sample_ids=np.array(["s0"]),
         )
         src = config.Source(path=store, name="s1")
-        view = vcz.MultiSourceView(src, self._anc_state(store), "1")
+        view = _view(src, self._anc_state(store), "1")
 
         # Interval [150, 450), then exclude 300
         pos = view.positions_in_intervals([[150, 450]])
@@ -2164,8 +2255,8 @@ def _store(positions, alleles, ancestral=None, genotypes=None, **kwargs):
 
 
 def _select(store, contig_id="1", **filters):
-    source = config.Source(path=store, name="src", **filters)
-    return vcz.select_source_variants(store, source, contig_id)
+    source = config.Source(path=store, name="src", contig=contig_id, **filters)
+    return vcz.select_source_variants(store, source)
 
 
 def _anc_field(store):
@@ -2274,12 +2365,15 @@ class TestSelectSourceVariants:
 class TestLookupAncestralAlleles:
     def _lookup(self, ann, positions, refs, is_reference=False):
         if is_reference:
-            ancestral_state = config.AncestralState(path=ann, is_reference=True)
+            ancestral_state = config.AncestralState(
+                path=ann, is_reference=True, contig="1"
+            )
         else:
-            ancestral_state = _anc_field(ann)
+            ancestral_state = config.AncestralState(
+                path=ann, field="variant_ancestral_allele", contig="1"
+            )
         return vcz.lookup_ancestral_alleles(
             ancestral_state,
-            "1",
             np.array(positions, dtype=np.int32),
             np.array(refs, dtype=object),
         ).tolist()
@@ -2344,7 +2438,7 @@ class TestFilteredMultiSourceView:
         ]
         if ann is None:
             ann = stores[0]
-        return vcz.MultiSourceView(sources, _anc_field(ann), "1")
+        return _view(sources, _anc_field(ann), "1")
 
     def test_num_sites_reflects_filters(self):
         store = _store([100, 200, 300], [["A", "T"]] * 3)
@@ -2461,7 +2555,7 @@ class TestFilteredHaplotypeReader:
     def _read(self, sample_store, positions, sample_id="sample_0", **filters):
         positions = np.array(positions, dtype=np.int32)
         source = config.Source(path=sample_store, name="test", **filters)
-        reader = vcz.HaplotypeReader(
+        reader = _haplotype_reader(
             {"test": source},
             positions,
             np.array(["A"] * len(positions)),
