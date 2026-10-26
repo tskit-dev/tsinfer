@@ -10,6 +10,13 @@ In development
 
 - Require Python >= 3.12 and vcztools >= 0.2
 
+- The `[ancestral_state]` annotation is joined to the sources strictly: it
+  accepts `include`, `exclude`, `regions` and `targets` filters; more than one
+  annotation variant at a site is an error, as is any difference in REF allele
+  at a site between the sources, or between the sources and the annotation
+  (sources may have different ALT alleles); and sites with a missing ancestral state
+  (`.`, `N` or empty) are excluded from both inference and `augment_sites`.
+
 ## [0.5.1] - 2026-03-05
 
 - Require tskit >= 1.0

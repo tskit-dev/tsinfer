@@ -1409,18 +1409,18 @@ class TestInferAncestorsAlleleCodes:
         with pytest.raises(ValueError, match="position 100 "):
             ancestors.infer_ancestors(sources, _cfg(), _anc_state(store_a))
 
-    def test_two_sources_same_alleles(self):
+    def _two_sources(self, alleles_a, alleles_b):
         store_a = _haploid_store(
             [[0, 1, 0, 1]],
             positions=[100],
-            alleles=[["A", "T"]],
+            alleles=[alleles_a],
             anc_states=["A"],
             sample_ids=np.array(["a0", "a1", "a2", "a3"]),
         )
         store_b = _haploid_store(
             [[0, 1, 1, 0]],
             positions=[100],
-            alleles=[["T", "A"]],
+            alleles=[alleles_b],
             anc_states=["A"],
             sample_ids=np.array(["b0", "b1", "b2", "b3"]),
         )
@@ -1428,8 +1428,17 @@ class TestInferAncestorsAlleleCodes:
             config.Source(path=store_a, name="a"),
             config.Source(path=store_b, name="b"),
         ]
-        anc = ancestors.infer_ancestors(sources, _cfg(), _anc_state(store_a))
+        return sources, store_a
+
+    def test_two_sources_same_alleles(self):
+        sources, ann = self._two_sources(["A", "T"], ["A", "T"])
+        anc = ancestors.infer_ancestors(sources, _cfg(), _anc_state(ann))
         np.testing.assert_array_equal(anc["variant_position"][:], [100])
+
+    def test_two_sources_swapped_ref_raises(self):
+        sources, ann = self._two_sources(["A", "T"], ["T", "A"])
+        with pytest.raises(ValueError, match="source 'b' has REF 'T'"):
+            ancestors.infer_ancestors(sources, _cfg(), _anc_state(ann))
 
     def test_unknown_ancestral_allele_skipped(self, caplog):
         gt = _haploid_store(

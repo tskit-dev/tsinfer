@@ -1704,6 +1704,37 @@ class TestAugmentSites:
         aug_positions = set(aug_ts.sites_position)
         assert 200.0 in aug_positions
 
+    @pytest.mark.parametrize("ancestral", [".", "N", "", "C"])
+    def test_skips_unknown_ancestral(self, ancestral, caplog):
+        """Sites with a missing ancestral state, or one not among the site's
+        alleles, are not added."""
+        main_store, sing_store, _ = self._make_hand_constructed_stores()
+        ts, _ = _run_pipeline_no_augment(main_store)
+        ann_store = helpers.make_sample_vcz(
+            genotypes=np.zeros((3, 1, 1), dtype=np.int8),
+            positions=np.array([100, 200, 300], dtype=np.int32),
+            alleles=np.array([["A", "T"], ["A", "G"], ["C", "G"]]),
+            ancestral_state=np.array(["A", ancestral, "C"]),
+            sequence_length=1000,
+        )
+        cfg = config.Config(
+            sources={
+                "test": config.Source(path=main_store, name="test"),
+                "singletons": config.Source(path=sing_store, name="singletons"),
+            },
+            ancestors=[],
+            match=config.MatchConfig(
+                sources={}, output="output.trees", reference_ts="ref.trees"
+            ),
+            augment_sites=config.AugmentSitesConfig(sources=["singletons"]),
+            ancestral_state=_anc_state(ann_store),
+        )
+        with caplog.at_level(logging.INFO, logger="tsinfer"):
+            aug_ts = pipeline.augment_sites(ts, cfg)
+        assert aug_ts.num_sites == ts.num_sites
+        assert "skipping 1 sites with unknown ancestral allele" in caplog.text
+        assert "no new sites to add" in caplog.text
+
     def test_skips_existing_sites(self):
         """Sites already in the TS are not duplicated."""
         main_store, sing_store, ann_store = self._make_hand_constructed_stores()

@@ -577,7 +577,7 @@ class SourceVariants:
     alleles: np.ndarray  # (num_variants, max_alleles) allele strings
 
 
-def _source_has_filters(source: config.Source) -> bool:
+def _source_has_filters(source: config.Source | config.AncestralState) -> bool:
     return (
         source.include is not None
         or source.exclude is not None
@@ -586,7 +586,9 @@ def _source_has_filters(source: config.Source) -> bool:
     )
 
 
-def _region_chunk_plan(reader: vcztools.VczReader, source: config.Source) -> list:
+def _region_chunk_plan(
+    reader: vcztools.VczReader, source: config.Source | config.AncestralState
+) -> list:
     """
     Return the vcztools chunk plan selecting the variants that pass the
     source's regions and targets filters. Only the variant chunks that
@@ -615,7 +617,9 @@ def _region_chunk_plan(reader: vcztools.VczReader, source: config.Source) -> lis
 
 
 def _filtered_rows(
-    store: zarr.Group, source: config.Source, contig_rows: slice
+    store: zarr.Group,
+    source: config.Source | config.AncestralState,
+    contig_rows: slice,
 ) -> np.ndarray:
     """
     Return the ascending row indexes of the variants in a store that pass the
@@ -640,6 +644,22 @@ def _filtered_rows(
     return np.concatenate(parts)
 
 
+def _selected_rows(
+    store: zarr.Group,
+    source: config.Source | config.AncestralState,
+    contig_rows: slice,
+) -> np.ndarray:
+    """
+    Return the ascending row indexes of the variants in *contig_rows* that
+    pass the source's filters.
+    """
+    if not _source_has_filters(source):
+        return np.arange(contig_rows.start, contig_rows.stop, dtype=np.int64)
+    rows = _filtered_rows(store, source, contig_rows)
+    in_contig = (rows >= contig_rows.start) & (rows < contig_rows.stop)
+    return rows[in_contig]
+
+
 def select_source_variants(store: zarr.Group, source: config.Source) -> SourceVariants:
     """
     Return the variants of the source on its contig (``source.contig``, as
@@ -651,12 +671,7 @@ def select_source_variants(store: zarr.Group, source: config.Source) -> SourceVa
     contig_id = source.contig
     contig_rows = contig_variant_rows(store, contig_id)
     num_on_contig = contig_rows.stop - contig_rows.start
-    if _source_has_filters(source):
-        rows = _filtered_rows(store, source, contig_rows)
-        in_contig = (rows >= contig_rows.start) & (rows < contig_rows.stop)
-        rows = rows[in_contig]
-    else:
-        rows = np.arange(contig_rows.start, contig_rows.stop, dtype=np.int64)
+    rows = _selected_rows(store, source, contig_rows)
     num_passing = len(rows)
 
     if num_passing > 0:
@@ -687,59 +702,76 @@ def select_source_variants(store: zarr.Group, source: config.Source) -> SourceVa
     return SourceVariants(rows=rows, positions=positions, alleles=alleles)
 
 
+# Ancestral state values meaning that the ancestral allele is unknown
+MISSING_ANCESTRAL_STATES = {".", "N", ""}
+
+
+@dataclasses.dataclass
+class AncestralAnnotation:
+    """The result of ``lookup_ancestral_alleles``."""
+
+    alleles: np.ndarray  # (num_positions,) ancestral allele, "" if unknown
+    refs: np.ndarray  # (num_positions,) annotation REF, "" if no annotation
+
+
 def lookup_ancestral_alleles(
-    ancestral_state: config.AncestralState,
-    positions: np.ndarray,
-    ref_alleles: np.ndarray,
-) -> np.ndarray:
+    ancestral_state: config.AncestralState, positions: np.ndarray
+) -> AncestralAnnotation:
     """
-    Return the ancestral allele recorded at each of the specified positions
-    on the ancestral state store's contig (``ancestral_state.contig``)
-    ("" if unknown). Where the annotation store has several variants at a
-    position (e.g. a SNP and an indel), only those whose REF allele equals
-    the corresponding entry of *ref_alleles* are used; if these do not
-    give a single ancestral allele, it is unknown.
+    Return the ancestral allele and REF allele of the annotation variant at
+    each of the specified positions on the ancestral state store's contig
+    (``ancestral_state.contig``), using only the variants that pass the
+    ancestral state's filters. Raises a ValueError if more than one variant
+    remains at any of the positions. Ancestral alleles in
+    ``MISSING_ANCESTRAL_STATES`` are returned as "" (unknown).
     """
     ann_store = open_store(ancestral_state.path)
-    ann_rows = contig_variant_rows(ann_store, ancestral_state.contig)
-    ann_positions = np.asarray(ann_store["variant_position"][ann_rows], dtype=np.int32)
+    contig_rows = contig_variant_rows(ann_store, ancestral_state.contig)
+    rows = _selected_rows(ann_store, ancestral_state, contig_rows)
+    all_positions = np.asarray(
+        ann_store["variant_position"][contig_rows], dtype=np.int32
+    )
+    ann_positions = all_positions[rows - contig_rows.start]
     lo = np.searchsorted(ann_positions, positions, side="left")
     hi = np.searchsorted(ann_positions, positions, side="right")
     counts = hi - lo
 
-    # Read the annotation rows at the requested positions only. The rows for
-    # position j are needed_rows[offsets[j]: offsets[j] + counts[j]].
-    offsets = np.cumsum(counts) - counts
-    within = np.arange(np.sum(counts)) - np.repeat(offsets, counts)
-    needed_rows = np.repeat(lo, counts) + within + ann_rows.start
+    duplicated = counts > 1
+    num_duplicated = int(np.sum(duplicated))
+    if num_duplicated > 0:
+        first = np.flatnonzero(duplicated)[0]
+        first_rows = rows[lo[first] : hi[first]]
+        first_alleles = ann_store["variant_allele"].oindex[first_rows, :2]
+        raise ValueError(
+            f"The ancestral state store {ancestral_state.path} has more than one "
+            f"variant at {num_duplicated} position(s) used for inference (e.g. "
+            f"positions {positions[duplicated][:5].tolist()}; alleles at "
+            f"{int(positions[first])}: {first_alleles.tolist()}). Use the "
+            "include, exclude, regions or targets options of [ancestral_state] "
+            "to select one variant per position, e.g. include = 'TYPE=\"snp\"'."
+        )
+
+    found = counts == 1
+    needed_rows = rows[lo[found]]
     if ancestral_state.is_reference:
         values = np.asarray(ann_store["variant_allele"].oindex[needed_rows, 0])
     else:
         values = np.asarray(ann_store[ancestral_state.field].oindex[needed_rows])
+    ann_refs = np.asarray(ann_store["variant_allele"].oindex[needed_rows, 0])
 
-    result = np.full(len(positions), "", dtype=object)
-    single = counts == 1
-    result[single] = values[offsets[single]]
-
-    multi = np.flatnonzero(counts > 1)
-    num_ambiguous = 0
-    if len(multi) > 0:
-        refs = np.asarray(ann_store["variant_allele"].oindex[needed_rows, 0])
-        for j in multi:
-            k = slice(offsets[j], offsets[j] + counts[j])
-            ref_matches = refs[k] == ref_alleles[j]
-            candidates = set(values[k][ref_matches].tolist())
-            if len(candidates) == 1:
-                result[j] = candidates.pop()
-            else:
-                num_ambiguous += 1
+    alleles = np.full(len(positions), "", dtype=object)
+    alleles[found] = values
+    refs = np.full(len(positions), "", dtype=object)
+    refs[found] = ann_refs
+    missing = np.isin(alleles, list(MISSING_ANCESTRAL_STATES))
+    alleles[missing] = ""
     logger.info(
-        "Ancestral alleles: %d positions with no annotation, %d with ambiguous "
-        "annotations at duplicate positions",
-        int(np.sum(counts == 0)),
-        num_ambiguous,
+        "Ancestral alleles: %d positions with no annotation, %d with a missing "
+        "ancestral state",
+        int(np.sum(~found)),
+        int(np.sum(missing & found)),
     )
-    return result
+    return AncestralAnnotation(alleles=alleles, refs=refs)
 
 
 # ---------------------------------------------------------------------------
@@ -2614,11 +2646,13 @@ class MultiSourceView:
     Unified view over one or more VCZ sample stores for variant iteration.
 
     The view's sites are the union of the variants of each source on its
-    contig that pass the source's filters (see ``select_source_variants``),
-    excluding sites where the sources have inconsistent REF alleles. Each
-    site's ancestral allele is looked up in the ``ancestral_state`` store,
-    and is unknown ("") if it is not among the site's alleles in the
-    sources. Allele codes are fixed at construction: code 0 is the
+    contig that pass the source's filters (see ``select_source_variants``).
+    Each site's ancestral allele is looked up in the ``ancestral_state``
+    store (see ``lookup_ancestral_alleles``). A ValueError is raised if the
+    sources, or the sources and the annotation, have different REF alleles
+    at any site; sources may have different ALT alleles. The ancestral
+    allele is unknown ("") if it is missing or not among the site's alleles
+    in the sources. Allele codes are fixed at construction: code 0 is the
     ancestral allele and codes 1+ are the other alleles.
 
     Each source and the ancestral state must have their ``contig`` set to
@@ -2668,45 +2702,47 @@ class MultiSourceView:
             site_idx = np.searchsorted(all_positions, variants.positions)
             source_row[site_idx, src_idx] = np.arange(len(variants.positions))
 
-        # --- Drop sites where the sources describe different variants ---
-        # The first source with a site defines its REF and alleles. Another
-        # source conflicts if its REF is not among these alleles, or the
-        # first source's REF is not among its alleles (e.g. a SNP and an
-        # indel at the same position).
+        self._positions = all_positions
+        self._source_row = source_row
+
+        # --- REF alleles must agree across the sources ---
+        # The first source with a site defines its REF allele
         first_src = np.argmax(source_row >= 0, axis=1)
-        first_alleles = np.full(
-            (len(all_positions), max(v.alleles.shape[1] for v in self._variants)),
-            "",
-            dtype=object,
-        )
+        refs = np.full(len(all_positions), "", dtype=object)
         for src_idx, variants in enumerate(self._variants):
             is_first = first_src == src_idx
             rows = source_row[is_first, src_idx]
-            first_alleles[is_first, : variants.alleles.shape[1]] = variants.alleles[rows]
-        refs = first_alleles[:, 0]
-        conflict = np.zeros(len(all_positions), dtype=bool)
+            refs[is_first] = variants.alleles[rows, 0]
         for src_idx, variants in enumerate(self._variants):
             has_site = source_row[:, src_idx] >= 0
-            src_alleles = variants.alleles[source_row[has_site, src_idx]]
-            src_ref = src_alleles[:, 0]
-            ref_known = np.any(first_alleles[has_site] == src_ref[:, None], axis=1)
-            ref_shared = np.any(src_alleles == refs[has_site, None], axis=1)
-            conflict[has_site] |= ~(ref_known & ref_shared)
-        num_conflicts = int(np.sum(conflict))
-        if num_conflicts > 0:
-            logger.warning(
-                "Dropping %d site(s) where sources have inconsistent REF alleles "
-                "(e.g. positions %s)",
-                num_conflicts,
-                all_positions[conflict][:5].tolist(),
+            src_refs = variants.alleles[source_row[has_site, src_idx], 0]
+            mismatch = np.flatnonzero(src_refs != refs[has_site])
+            if len(mismatch) > 0:
+                site = np.flatnonzero(has_site)[mismatch[0]]
+                first_name = sources[first_src[site]].name
+                raise ValueError(
+                    f"REF allele mismatch at {len(mismatch)} site(s), e.g. "
+                    f"position {int(all_positions[site])}: source {first_name!r} "
+                    f"has REF {refs[site]!r} but source {sources[src_idx].name!r} "
+                    f"has REF {src_refs[mismatch[0]]!r}"
+                )
+
+        # --- REF alleles must agree with the ancestral state annotation ---
+        annotation = lookup_ancestral_alleles(ancestral_state, all_positions)
+        annotated = annotation.refs != ""
+        mismatch = np.flatnonzero(annotated & (annotation.refs != refs))
+        if len(mismatch) > 0:
+            site = mismatch[0]
+            source_name = sources[first_src[site]].name
+            raise ValueError(
+                f"REF allele mismatch at {len(mismatch)} site(s), e.g. position "
+                f"{int(all_positions[site])}: source {source_name!r} has REF "
+                f"{refs[site]!r} but the ancestral state store "
+                f"{ancestral_state.path} has REF {annotation.refs[site]!r}"
             )
-        keep = ~conflict
-        self._positions = all_positions[keep]
-        self._source_row = source_row[keep]
-        refs = refs[keep]
 
         # --- Ancestral alleles: unknown unless among the site's alleles ---
-        ancestral = lookup_ancestral_alleles(ancestral_state, self._positions, refs)
+        ancestral = annotation.alleles
         among_alleles = np.zeros(len(self._positions), dtype=bool)
         for src_idx, variants in enumerate(self._variants):
             has_site = self._source_row[:, src_idx] >= 0
