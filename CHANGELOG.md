@@ -8,6 +8,8 @@ In development
   contig in the header, and the top-level `contig` config option selects one
   contig from multi-contig VCZ stores.
 
+- Require Python >= 3.12 and vcztools >= 0.2
+
 ## [0.5.1] - 2026-03-05
 
 - Require tskit >= 1.0
