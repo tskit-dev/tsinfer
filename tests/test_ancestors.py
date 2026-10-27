@@ -1328,19 +1328,27 @@ class TestInferAncestorsScenarios:
 
 class TestInferAncestorsAlleleCodes:
     """
-    Ancestor generation requires the genotypes at every site to be the
-    ancestral allele (0), one derived allele (1) or missing.
+    Ancestor generation uses only sites where every genotype is the ancestral
+    allele (0), the first derived allele (1) or missing. Other sites are
+    skipped.
     """
 
-    def test_triallelic_site_raises(self):
+    _SKIP_MESSAGE = (
+        "Skipping 1 sites with genotypes other than the ancestral allele "
+        "and one derived allele"
+    )
+
+    def test_triallelic_site_skipped(self, caplog):
         gt = _haploid_store(
             [[0, 1, 0, 1], [0, 1, 2, 1]],
             positions=[100, 200],
             alleles=[["A", "T", ""], ["A", "T", "G"]],
             anc_states=["A", "A"],
         )
-        with pytest.raises(ValueError, match=r"position 200 .*\['A', 'T', 'G'\]"):
-            ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+        with caplog.at_level(logging.INFO, logger="tsinfer.ancestors"):
+            anc = ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+        np.testing.assert_array_equal(anc["variant_position"][:], [100])
+        assert self._SKIP_MESSAGE in caplog.text
 
     @pytest.mark.parametrize("ancestral", ["C", ".", ""])
     def test_ancestral_allele_not_in_alleles_skipped(self, ancestral, caplog):
@@ -1355,15 +1363,17 @@ class TestInferAncestorsAlleleCodes:
         np.testing.assert_array_equal(anc["variant_position"][:], [100])
         assert "Skipping 1 sites with unknown ancestral allele" in caplog.text
 
-    def test_only_second_alt_allele_observed_raises(self):
+    def test_only_second_alt_allele_observed_skipped(self, caplog):
         gt = _haploid_store(
-            [[0, 2, 0, 2]],
-            positions=[100],
-            alleles=[["A", "T", "G"]],
-            anc_states=["A"],
+            [[0, 2, 0, 2], [0, 1, 1, 0]],
+            positions=[100, 200],
+            alleles=[["A", "T", "G"], ["A", "T", ""]],
+            anc_states=["A", "A"],
         )
-        with pytest.raises(ValueError, match="position 100 "):
-            ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+        with caplog.at_level(logging.INFO, logger="tsinfer.ancestors"):
+            anc = ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+        np.testing.assert_array_equal(anc["variant_position"][:], [200])
+        assert self._SKIP_MESSAGE in caplog.text
 
     def test_only_first_alt_allele_observed(self):
         gt = _haploid_store(
@@ -1377,37 +1387,42 @@ class TestInferAncestorsAlleleCodes:
         assert list(anc["variant_allele"][0][:2]) == ["A", "T"]
         np.testing.assert_array_equal(_anc_genotypes(anc), [[1]])
 
-    def test_missing_data_with_triallelic_site_raises(self):
+    def test_missing_data_with_triallelic_site_skipped(self, caplog):
         gt = _haploid_store(
-            [[-1, 1, 0, 2]],
-            positions=[100],
-            alleles=[["A", "T", "G"]],
-            anc_states=["A"],
+            [[-1, 1, 0, 2], [0, 1, 1, 0]],
+            positions=[100, 200],
+            alleles=[["A", "T", "G"], ["A", "T", ""]],
+            anc_states=["A", "A"],
         )
-        with pytest.raises(ValueError, match="position 100 "):
-            ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+        with caplog.at_level(logging.INFO, logger="tsinfer.ancestors"):
+            anc = ancestors.infer_ancestors(_src(gt), _cfg(), _anc_state(gt))
+        np.testing.assert_array_equal(anc["variant_position"][:], [200])
+        assert self._SKIP_MESSAGE in caplog.text
 
-    def test_two_sources_combined_triallelic_raises(self):
+    def test_two_sources_combined_triallelic_skipped(self, caplog):
+        # Each source is biallelic at 100, but with a different derived allele
         store_a = _haploid_store(
-            [[0, 1, 0, 1]],
-            positions=[100],
-            alleles=[["A", "T"]],
-            anc_states=["A"],
+            [[0, 1, 0, 1], [0, 1, 1, 0]],
+            positions=[100, 200],
+            alleles=[["A", "T"], ["A", "T"]],
+            anc_states=["A", "A"],
             sample_ids=np.array(["a0", "a1", "a2", "a3"]),
         )
         store_b = _haploid_store(
-            [[0, 1, 1, 0]],
-            positions=[100],
-            alleles=[["A", "G"]],
-            anc_states=["A"],
+            [[0, 1, 1, 0], [1, 0, 0, 1]],
+            positions=[100, 200],
+            alleles=[["A", "G"], ["A", "T"]],
+            anc_states=["A", "A"],
             sample_ids=np.array(["b0", "b1", "b2", "b3"]),
         )
         sources = [
             config.Source(path=store_a, name="a"),
             config.Source(path=store_b, name="b"),
         ]
-        with pytest.raises(ValueError, match="position 100 "):
-            ancestors.infer_ancestors(sources, _cfg(), _anc_state(store_a))
+        with caplog.at_level(logging.INFO, logger="tsinfer.ancestors"):
+            anc = ancestors.infer_ancestors(sources, _cfg(), _anc_state(store_a))
+        np.testing.assert_array_equal(anc["variant_position"][:], [200])
+        assert self._SKIP_MESSAGE in caplog.text
 
     def _two_sources(self, alleles_a, alleles_b):
         store_a = _haploid_store(
