@@ -277,19 +277,34 @@ def match_cmd(
     "input_ts",
     required=True,
     type=click.Path(exists=True),
-    help="Input tree sequence file.",
+    help="Input tree sequence file (output of match).",
+)
+@click.option(
+    "--output",
+    "output_path",
+    required=True,
+    type=click.Path(),
+    help="Output tree sequence file.",
 )
 @_add_options(_runtime_options)
-def post_process_cmd(config_path, input_ts, threads, force, progress, verbose, log_file):
+def post_process_cmd(
+    config_path,
+    input_ts,
+    output_path,
+    threads,
+    force,
+    progress,
+    verbose,
+    log_file,
+):
     """Post-process a matched tree sequence."""
     _setup_logging(verbose, log_file=log_file)
     cfg = config.Config.from_toml(config_path)
+    _check_output(output_path, force)
     ts = tskit.load(input_ts)
     logger.info("Post-processing %s (%d nodes)", input_ts, ts.num_nodes)
     ts = pipeline.post_process(ts, cfg)
-    output = str(cfg.match.output)
-    _check_output(output, force)
-    ts.dump(output)
+    ts.dump(str(output_path))
     logger.info("Post-process complete: %d nodes", ts.num_nodes)
 
 

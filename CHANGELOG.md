@@ -17,6 +17,9 @@ In development
   (sources may have different ALT alleles); and sites with a missing ancestral state
   (`.`, `N` or empty) are excluded from both inference and `augment_sites`.
 
+- `tsinfer post-process` requires an `--output` path, rather than overwriting
+  the `[match]` output it reads.
+
 ## [0.5.1] - 2026-03-05
 
 - Require tskit >= 1.0

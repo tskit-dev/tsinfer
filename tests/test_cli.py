@@ -29,6 +29,7 @@ import tempfile
 
 import helpers
 import numpy as np
+import pytest
 import tskit
 import zarr
 from click.testing import CliRunner
@@ -371,10 +372,71 @@ class TestMatch:
 
 
 class TestPostProcess:
+    @pytest.fixture
+    def matched(self, tmp_path):
+        """Run infer-ancestors and match, returning (config, match output) paths."""
+        runner = CliRunner()
+        sample_path = _write_sample_vcz_to_disk(str(tmp_path))
+        config_path = _write_config(str(tmp_path), sample_path)
+        result = runner.invoke(cli.main, ["infer-ancestors", config_path])
+        assert result.exit_code == 0, result.output
+        result = runner.invoke(cli.main, ["match", config_path])
+        assert result.exit_code == 0, result.output
+        return config_path, tmp_path / "out.trees"
+
     def test_help(self):
         runner = CliRunner()
         result = runner.invoke(cli.main, ["post-process", "--help"])
         assert result.exit_code == 0
+        assert "--input" in result.output
+        assert "--output" in result.output
+
+    def test_output_required(self, matched):
+        config_path, match_path = matched
+        runner = CliRunner()
+        args = ["post-process", config_path, "--input", str(match_path)]
+        result = runner.invoke(cli.main, args)
+        assert result.exit_code != 0
+        assert "--output" in result.output
+
+    def test_writes_output_and_keeps_input(self, matched, tmp_path):
+        config_path, match_path = matched
+        match_bytes = match_path.read_bytes()
+        output_path = tmp_path / "post.trees"
+        runner = CliRunner()
+        args = [
+            "post-process",
+            config_path,
+            "--input",
+            str(match_path),
+            "--output",
+            str(output_path),
+        ]
+        result = runner.invoke(cli.main, args)
+        assert result.exit_code == 0, result.output
+        ts = tskit.load(output_path)
+        assert ts.num_samples == tskit.load(match_path).num_samples
+        assert match_path.read_bytes() == match_bytes
+
+    def test_force(self, matched, tmp_path):
+        config_path, match_path = matched
+        output_path = tmp_path / "post.trees"
+        runner = CliRunner()
+        args = [
+            "post-process",
+            config_path,
+            "--input",
+            str(match_path),
+            "--output",
+            str(output_path),
+        ]
+        result = runner.invoke(cli.main, args)
+        assert result.exit_code == 0, result.output
+        result = runner.invoke(cli.main, args)
+        assert result.exit_code != 0
+        assert "already exists" in result.output
+        result = runner.invoke(cli.main, args + ["--force"])
+        assert result.exit_code == 0, result.output
 
 
 # ---------------------------------------------------------------------------
