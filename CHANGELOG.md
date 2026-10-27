@@ -17,6 +17,11 @@ In development
   (sources may have different ALT alleles); and sites with a missing ancestral state
   (`.`, `N` or empty) are excluded from both inference and `augment_sites`.
 
+- Sites where the ancestor sources carry genotypes other than the ancestral
+  allele and one derived allele (e.g. multiallelic records, or sources with
+  different derived alleles) are skipped for ancestor generation with a log
+  message, rather than raising an error.
+
 - `tsinfer post-process` requires an `--output` path, rather than overwriting
   the `[match]` output it reads.
 

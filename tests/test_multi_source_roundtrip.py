@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import helpers
 import numpy as np
-import pytest
 import zarr
 
 from tsinfer import config, pipeline
@@ -614,9 +613,11 @@ create_individuals = false
 """
         config_path = _write_toml(tmp_path, toml_content)
         cfg = config.Config.from_toml(config_path)
-        # Combined, the ancestor sources have alleles A/T/G at site 0
-        with pytest.raises(ValueError, match="position 100 "):
-            pipeline.run(cfg)
+        # Combined, the ancestor sources have alleles A/T/G at site 0, so it
+        # is not used for inference.
+        ts = pipeline.run(cfg)
+        np.testing.assert_array_equal(ts.sites_position, _TRI_POSITIONS[1:])
+        assert ts.num_samples == 8
 
     def test_triallelic_ancestors_from_one_source(self, tmp_path):
         """Ancestors from source A only; source B matched against them."""
@@ -812,8 +813,10 @@ class TestMultiAllelicSampleSubset:
         assert {m.derived_state for m in site0.mutations} == {"T", "G"}
 
     def test_ancestor_samples_carry_second_alt_allele(self, tmp_path):
-        # The ancestor samples carry only T, which is listed second (code 2)
+        # The ancestor samples carry only T, which is listed second (code 2),
+        # so site 0 is not used for inference.
         path = _write_subset_vcz(tmp_path, swap_alt_alleles=True)
         cfg = _subset_config(tmp_path, path)
-        with pytest.raises(ValueError, match="position 100 "):
-            pipeline.run(cfg)
+        ts = pipeline.run(cfg)
+        assert 100 not in ts.sites_position
+        assert ts.num_sites > 0

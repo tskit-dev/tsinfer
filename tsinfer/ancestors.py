@@ -79,14 +79,18 @@ def _assign_site_intervals(positions, intervals):
 def _compute_site_stats(genotype_iter, num_sites, num_haplotypes, progress=False):
     """
     Pass 1: iterate over inference-site genotypes, compute derived genotype
-    stats for each site, filter out fixed/all-missing.
+    stats for each site, filter out fixed/all-missing sites and sites with
+    genotypes other than the ancestral allele (0), the first derived allele
+    (1) or missing.
 
-    Returns (keep_mask, times) where:
+    Returns (keep_mask, times, num_multiallelic) where:
     - keep_mask: boolean array of length num_sites
     - times: float64 array of length sum(keep_mask)
+    - num_multiallelic: number of sites dropped for having other genotypes
     """
     keep_mask = np.zeros(num_sites, dtype=bool)
     times_list = []
+    num_multiallelic = 0
 
     site_iter = tqdm_mod.tqdm(
         genotype_iter,
@@ -97,6 +101,9 @@ def _compute_site_stats(genotype_iter, num_sites, num_haplotypes, progress=False
     )
 
     for i, derived_gt in enumerate(site_iter):
+        if np.any(derived_gt > 1):
+            num_multiallelic += 1
+            continue
         derived_count = int(np.sum(derived_gt == 1))
         n_non_missing = int(np.sum(derived_gt >= 0))
 
@@ -111,7 +118,7 @@ def _compute_site_stats(genotype_iter, num_sites, num_haplotypes, progress=False
         if times_list
         else np.zeros(0, dtype=np.float64)
     )
-    return keep_mask, times
+    return keep_mask, times, num_multiallelic
 
 
 # ---------------------------------------------------------------------------
@@ -160,16 +167,22 @@ def _apply_site_stats(genotype_iter, inf_sites, num_haplotypes, progress):
     """
     t0 = time.monotonic()
     logger.info("Pass 1: computing site stats")
-    keep_mask, times = _compute_site_stats(
+    keep_mask, times, num_multiallelic = _compute_site_stats(
         genotype_iter, len(inf_sites.positions), num_haplotypes, progress=progress
     )
+    if num_multiallelic > 0:
+        logger.info(
+            "Skipping %d sites with genotypes other than the ancestral allele "
+            "and one derived allele",
+            num_multiallelic,
+        )
 
     final_positions = inf_sites.positions[keep_mask]
     final_alleles = inf_sites.alleles[keep_mask]
     final_anc_indices = inf_sites.ancestral_allele_index[keep_mask]
 
     num_inf = len(final_positions)
-    num_dropped = len(inf_sites.positions) - num_inf
+    num_dropped = len(inf_sites.positions) - num_inf - num_multiallelic
     elapsed = time.monotonic() - t0
     logger.info(
         "Pass 1 complete: %d sites kept, %d dropped (fixed or all-missing)"
@@ -484,28 +497,16 @@ def infer_ancestors(
     unified_anc_indices = np.zeros(len(unified_positions), dtype=np.int8)
 
     # --- 2. Pass 1: compute site stats ---
-    def _pass1_genotype_iter():
-        for j, var in enumerate(view.iter_genotypes(unified_positions)):
-            if np.any(var.genotypes > 1):
-                site_alleles = [a for a in unified_alleles[j] if a != ""]
-                raise ValueError(
-                    f"Site at position {int(var.position)} has genotypes other "
-                    "than the ancestral allele and one derived allele "
-                    f"(alleles {site_alleles}, ancestral first). Ancestor "
-                    "generation requires every site in the ancestor sources to "
-                    "be biallelic. Exclude multiallelic sites from the ancestor "
-                    "sources (e.g. using the source's exclude or targets "
-                    "filters)."
-                )
-            yield var.genotypes
-
+    # A generator expression over a generator: genotypes are read lazily, one
+    # site at a time, as _compute_site_stats iterates. Nothing is loaded here.
+    pass1_genotypes = (var.genotypes for var in view.iter_genotypes(unified_positions))
     unified_inf_sites = InferenceSites(
         positions=unified_positions,
         alleles=unified_alleles,
         ancestral_allele_index=unified_anc_indices,
     )
     final_positions, final_alleles, final_anc_indices, times = _apply_site_stats(
-        _pass1_genotype_iter(), unified_inf_sites, total_haplotypes, progress
+        pass1_genotypes, unified_inf_sites, total_haplotypes, progress
     )
     num_inf = len(final_positions)
 
