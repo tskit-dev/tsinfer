@@ -649,8 +649,10 @@ class TestRecombinationProbabilities:
         sites = _random_sites(0, 1_000_000)
         rate_map = msprime.RateMap.uniform(1_000_000, rate)
         probs = matching.recombination_probabilities(rate, sites)
+        # The oracle differences cumulative masses of up to ~1, which loses
+        # ~1e-16 in absolute terms, so compare with an absolute tolerance too.
         distance = np.diff(rate_map.get_cumulative_mass(sites))
-        np.testing.assert_allclose(probs[1:], _haldane(distance), rtol=1e-12)
+        np.testing.assert_allclose(probs[1:], _haldane(distance), rtol=1e-12, atol=1e-15)
 
 
 class TestHmmParameters:
