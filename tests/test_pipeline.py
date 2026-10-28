@@ -563,6 +563,70 @@ class TestRun:
         assert out_ts.num_sites == 2
 
 
+class TestRecombinationRate:
+    """Run the pipeline with recombination rates and mismatch set per source."""
+
+    def _run(self, sim_ts, ancestors_source, samples_source):
+        sample_store = helpers.ts_to_sample_vcz(sim_ts)
+        cfg = _make_config_for_run(sample_store)
+        cfg.match.sources["ancestors"] = ancestors_source
+        cfg.match.sources["test"] = samples_source
+        return pipeline.run(cfg)
+
+    def _assert_genotypes_match(self, sim_ts, out_ts):
+        assert out_ts.num_sites > 0
+        for var in out_ts.variants():
+            sim_var = next(sim_ts.variants(left=var.site.position))
+            assert sim_var.site.position == var.site.position
+            out_alleles = np.array(var.alleles)[var.genotypes]
+            sim_alleles = np.array(sim_var.alleles)[sim_var.genotypes]
+            np.testing.assert_array_equal(out_alleles, sim_alleles)
+
+    def test_constant_rate(self):
+        sim_ts = _simulate(num_samples=8, random_seed=23)
+        out_ts = self._run(
+            sim_ts,
+            config.MatchSourceConfig(
+                node_flags=0, create_individuals=False, recombination_rate=1e-8
+            ),
+            config.MatchSourceConfig(recombination_rate=1e-8, mismatch=1e-6),
+        )
+        self._assert_genotypes_match(sim_ts, out_ts)
+
+    def test_genetic_map(self, tmp_path):
+        map_path = tmp_path / "map.txt"
+        map_path.write_text(
+            "Chromosome Position(bp) Rate(cM/Mb) Map(cM)\n"
+            "chr1 0 0.5 0.0\n"
+            "chr1 50000 5.0 0.025\n"
+            "chr1 100000 0.0 0.275\n"
+        )
+        sim_ts = _simulate(num_samples=8, random_seed=24)
+        out_ts = self._run(
+            sim_ts,
+            config.MatchSourceConfig(
+                node_flags=0, create_individuals=False, recombination_rate=map_path
+            ),
+            config.MatchSourceConfig(recombination_rate=str(map_path), mismatch=1e-4),
+        )
+        self._assert_genotypes_match(sim_ts, out_ts)
+
+    def test_high_mismatch_gives_more_mutations(self):
+        sim_ts = _simulate(num_samples=10, random_seed=25)
+        ancestors_source = config.MatchSourceConfig(
+            node_flags=0, create_individuals=False
+        )
+        default_ts = self._run(sim_ts, ancestors_source, config.MatchSourceConfig())
+        mismatch_ts = self._run(
+            sim_ts,
+            ancestors_source,
+            config.MatchSourceConfig(recombination_rate=1e-12, mismatch=0.1),
+        )
+        self._assert_genotypes_match(sim_ts, mismatch_ts)
+        assert mismatch_ts.num_mutations > default_ts.num_mutations
+        assert mismatch_ts.num_edges < default_ts.num_edges
+
+
 # ---------------------------------------------------------------------------
 # TestIsReferenceConfig
 # ---------------------------------------------------------------------------

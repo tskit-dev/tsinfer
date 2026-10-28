@@ -1346,3 +1346,119 @@ cohort = true
         text = cfg.format()
         assert "regions" in text
         assert "targets" in text
+
+
+class TestMatchHmmParameters:
+    def _load(self, tmp_path, ancestors_extra, cohort_extra=""):
+        toml = _STANDARD_TOML.replace(
+            "create_individuals = false\n",
+            "create_individuals = false\n" + ancestors_extra,
+        ).replace(
+            "[match.sources.cohort]\n",
+            "[match.sources.cohort]\n" + cohort_extra,
+        )
+        return config.Config.from_toml(_write_toml(tmp_path, toml))
+
+    def test_defaults(self, tmp_path):
+        cfg = self._load(tmp_path, "")
+        src = cfg.match.sources["cohort"]
+        assert src.recombination is None
+        assert src.recombination_rate is None
+        assert src.mismatch is None
+        assert src.likelihood_threshold is None
+
+    def test_parse_values(self, tmp_path):
+        cfg = self._load(
+            tmp_path,
+            "recombination_rate = 1e-8\nmismatch = 1e-10\n",
+            'recombination_rate = "maps/chr20.txt"\nmismatch = 1e-4\n'
+            "likelihood_threshold = 1e-12\n",
+        )
+        anc = cfg.match.sources["ancestors"]
+        assert anc.recombination_rate == 1e-8
+        assert anc.mismatch == 1e-10
+        assert anc.likelihood_threshold is None
+        cohort = cfg.match.sources["cohort"]
+        assert cohort.recombination_rate == "maps/chr20.txt"
+        assert cohort.mismatch == 1e-4
+        assert cohort.likelihood_threshold == 1e-12
+
+    def test_integer_rate_becomes_float(self, tmp_path):
+        cfg = self._load(tmp_path, "recombination_rate = 0\n")
+        rate = cfg.match.sources["ancestors"].recombination_rate
+        assert isinstance(rate, float)
+        assert rate == 0
+
+    def test_parse_recombination(self, tmp_path):
+        cfg = self._load(tmp_path, "recombination = 0.1\n")
+        assert cfg.match.sources["ancestors"].recombination == 0.1
+
+    def test_recombination_and_rate_exclusive(self, tmp_path):
+        with pytest.raises(ValueError, match="both 'recombination' and"):
+            self._load(tmp_path, "recombination = 0.1\nrecombination_rate = 1e-8\n")
+
+    def test_direct_construction_exclusive(self):
+        with pytest.raises(ValueError, match="both 'recombination' and"):
+            config.MatchSourceConfig(recombination=0.1, recombination_rate=1e-8)
+
+    def test_format(self):
+        sources = {
+            "ancestors": config.MatchSourceConfig(
+                node_flags=0, recombination_rate="map.txt", mismatch=1e-6
+            ),
+            "cohort": config.MatchSourceConfig(
+                recombination=0.01, likelihood_threshold=1e-9
+            ),
+        }
+        text = _minimal_config(match=_minimal_match_cfg(sources=sources)).format()
+        assert "recombination_rate = map.txt" in text
+        assert "mismatch = 1e-06" in text
+        assert "recombination = 0.01" in text
+        assert "likelihood_threshold = 1e-09" in text
+
+    def test_format_omits_unset(self):
+        text = _minimal_config().format()
+        assert "recombination" not in text
+        assert "mismatch" not in text
+
+    def _validate_with_rate(self, tmp_path, rate):
+        vcz_path = _write_sample_vcz(tmp_path)
+        sources = {
+            "ancestors": config.MatchSourceConfig(node_flags=0),
+            "cohort": config.MatchSourceConfig(recombination_rate=rate),
+        }
+        cfg = config.Config(
+            sources={
+                "cohort": config.Source(path=vcz_path, name="cohort"),
+                "ancestors": config.Source(
+                    path=tmp_path / "ancestors.vcz",
+                    name="ancestors",
+                    sample_time="sample_time",
+                ),
+            },
+            ancestors=[
+                config.AncestorsConfig(
+                    name="ancestors",
+                    path=tmp_path / "ancestors.vcz",
+                    sources=["cohort"],
+                )
+            ],
+            match=_minimal_match_cfg(sources=sources),
+            ancestral_state=config.AncestralState(
+                path=vcz_path, field="variant_ancestral_allele"
+            ),
+        )
+        return cfg.validate()
+
+    def test_validate_missing_map(self, tmp_path):
+        errors = self._validate_with_rate(tmp_path, str(tmp_path / "nope.txt"))
+        assert len(errors) == 1
+        assert "recombination_rate path does not exist" in errors[0]
+
+    def test_validate_existing_map(self, tmp_path):
+        map_path = tmp_path / "map.txt"
+        map_path.write_text("header\n")
+        assert self._validate_with_rate(tmp_path, map_path) == []
+
+    def test_validate_float_rate(self, tmp_path):
+        assert self._validate_with_rate(tmp_path, 1e-8) == []

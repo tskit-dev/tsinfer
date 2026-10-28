@@ -437,6 +437,28 @@ def _setup_workdir(workdir, cfg, positions, reference_ts):
     )
 
 
+def _compute_hmm_parameters(
+    cfg: config.Config, positions: np.ndarray
+) -> dict[str, matching.HmmParameters]:
+    """Compute the HMM parameters for each match source."""
+    result = {}
+    for name, src_cfg in cfg.match.sources.items():
+        params = matching.hmm_parameters(src_cfg, positions)
+        recombination = params.recombination[1:]
+        if len(recombination) > 0:
+            logger.info(
+                "HMM parameters for source '%s': recombination min=%.3g "
+                "mean=%.3g max=%.3g, mismatch=%.3g",
+                name,
+                recombination.min(),
+                recombination.mean(),
+                recombination.max(),
+                params.mismatch[0],
+            )
+        result[name] = params
+    return result
+
+
 def _process_group(
     ts: tskit.TreeSequence,
     *,
@@ -450,7 +472,7 @@ def _process_group(
     match_fh,
     config_str: str,
     progress: bool,
-    source_parameters: dict[str, config.MatchSourceConfig] | None = None,
+    hmm_parameters: dict[str, matching.HmmParameters],
 ) -> tskit.TreeSequence:
     """Match one group of haplotypes and return the extended tree sequence."""
     with provenance.TimingAndMemory() as tm:
@@ -458,7 +480,7 @@ def _process_group(
             ts,
             positions,
             allele_mapper=allele_mapper,
-            source_parameters=source_parameters,
+            hmm_parameters=hmm_parameters,
         )
         job_list = [job for _, job in group_jobs]
         match_iter = m.match(job_list, reader, num_threads=num_threads)
@@ -564,6 +586,7 @@ def match(
     reference_ts = _load_reference_ts(cfg, reference_ts)
     sites = _match_sites(cfg, reference_ts)
     positions = sites.positions
+    hmm_parameters = _compute_hmm_parameters(cfg, positions)
 
     # 1. Get ordered MatchJob list (and workdir state if applicable)
     workdir = cfg.match.workdir
@@ -695,7 +718,7 @@ def match(
             match_fh=match_fh,
             config_str=config_str,
             progress=progress,
-            source_parameters=cfg.match.sources,
+            hmm_parameters=hmm_parameters,
         )
         completed_haps += num_in_group
         rss = psutil.Process().memory_info().rss / (1024 * 1024)

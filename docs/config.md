@@ -110,6 +110,40 @@ sequence needs an entry here.
 |-------|------|---------|-------------|
 | `node_flags` | int | 1 | tskit node flags (`1` = `NODE_IS_SAMPLE`, `0` for ancestors) |
 | `create_individuals` | bool | `true` | Group sample nodes into tskit individuals |
+| `recombination_rate` | float or string | — | Recombination rate per bp per generation, or the path to a HapMap genetic map (see below). Cannot be combined with `recombination`. |
+| `recombination` | float | `0.01` | Probability of recombination between each pair of adjacent inference sites |
+| `mismatch` | float | `1e-20` | Probability of a mismatch (an extra mutation) at each inference site |
+| `likelihood_threshold` | float | smallest positive double | Lower bound on the normalised HMM likelihoods. Larger values (e.g. `1e-13`) let more likelihoods be merged, making matching faster at some cost in accuracy |
+
+These are the parameters of the Li & Stephens copying HMM used to match each
+haplotype from the source. The defaults (a high recombination probability and a
+negligible mismatch probability) mean that haplotypes are copied exactly, using
+recombination rather than extra mutations to explain differences.
+
+When `recombination_rate` is given, the genetic distance *d* (in Morgans)
+between adjacent inference sites is converted to a recombination probability
+using Haldane's map function, (1 - exp(-2*d)) / 2. A genetic map file is in
+HapMap format: a single header line followed by whitespace-separated columns
+giving the chromosome, position (bp), rate (cM/Mb) and cumulative map
+position (cM). Only the position and map columns are used. The map is
+linearly interpolated between entries, starts at 0 cM at position 0, and
+has zero recombination rate beyond the last entry.
+
+The mismatch probability is not derived from the recombination rate, so
+setting `recombination_rate` on its own still allows no mismatches; set
+`mismatch` as well to allow them. For example:
+
+```toml
+[match.sources.ancestors]
+node_flags = 0
+create_individuals = false
+recombination_rate = "maps/chr20.txt"
+mismatch = 1e-10
+
+[match.sources.cohort]
+recombination_rate = "maps/chr20.txt"
+mismatch = 1e-4
+```
 
 
 ## `[post_process]`

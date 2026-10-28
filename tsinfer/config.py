@@ -176,7 +176,15 @@ class MatchSourceConfig:
     node_flags: int = DEFAULT_NODE_FLAGS  # tskit.NODE_IS_SAMPLE
     create_individuals: bool = True
     recombination: float | None = None
+    recombination_rate: float | str | pathlib.Path | None = None
     mismatch: float | None = None
+    likelihood_threshold: float | None = None
+
+    def __post_init__(self):
+        if self.recombination is not None and self.recombination_rate is not None:
+            raise ValueError(
+                "Cannot specify both 'recombination' and 'recombination_rate'"
+            )
 
 
 @dataclasses.dataclass
@@ -316,6 +324,15 @@ class Config:
             lines.append(f"  [match.sources.{src_name}]")
             lines.append(f"    node_flags = {src_cfg.node_flags}")
             lines.append(f"    create_individuals = {src_cfg.create_individuals}")
+            for key in [
+                "recombination",
+                "recombination_rate",
+                "mismatch",
+                "likelihood_threshold",
+            ]:
+                value = getattr(src_cfg, key)
+                if value is not None:
+                    lines.append(f"    {key} = {value}")
         lines.append(f"  path_compression = {self.match.path_compression}")
         if self.match.reference_ts is not None:
             lines.append(f"  reference_ts = {self.match.reference_ts}")
@@ -381,6 +398,15 @@ class Config:
                 errors.append(
                     f"Match reference_ts path does not exist: {self.match.reference_ts}"
                 )
+
+        for src_name, src_cfg in self.match.sources.items():
+            rate = src_cfg.recombination_rate
+            if isinstance(rate, (str, pathlib.Path)):
+                if not pathlib.Path(str(rate)).exists():
+                    errors.append(
+                        f"Match source '{src_name}' recombination_rate path does "
+                        f"not exist: {rate}"
+                    )
 
         p = pathlib.Path(str(self.ancestral_state.path))
         if not p.exists():
@@ -462,7 +488,9 @@ _KNOWN_MATCH_SOURCE_KEYS = {
     "node_flags",
     "create_individuals",
     "recombination",
+    "recombination_rate",
     "mismatch",
+    "likelihood_threshold",
 }
 
 _KNOWN_INDIVIDUAL_METADATA_KEYS = {"fields", "population"}
@@ -566,6 +594,19 @@ def _parse_ancestors(raw: dict) -> list[AncestorsConfig]:
     raise ValueError("[ancestors] must be a table or array of tables")
 
 
+def _optional_float(value) -> float | None:
+    if value is None:
+        return None
+    return float(value)
+
+
+def _parse_recombination_rate(value) -> float | str | pathlib.Path | None:
+    """A recombination rate is either a number or the path to a genetic map."""
+    if isinstance(value, str):
+        return _resolve_path(value)
+    return _optional_float(value)
+
+
 def _parse_match(raw: dict) -> MatchConfig:
     entry = raw.get("match")
     if entry is None:
@@ -585,13 +626,17 @@ def _parse_match(raw: dict) -> MatchConfig:
                     src_val,
                     _KNOWN_MATCH_SOURCE_KEYS,
                 )
-                raw_recomb = src_val.get("recombination")
-                raw_mismatch = src_val.get("mismatch")
                 sources[src_name] = MatchSourceConfig(
                     node_flags=int(src_val.get("node_flags", DEFAULT_NODE_FLAGS)),
                     create_individuals=bool(src_val.get("create_individuals", True)),
-                    recombination=float(raw_recomb) if raw_recomb is not None else None,
-                    mismatch=float(raw_mismatch) if raw_mismatch is not None else None,
+                    recombination=_optional_float(src_val.get("recombination")),
+                    recombination_rate=_parse_recombination_rate(
+                        src_val.get("recombination_rate")
+                    ),
+                    mismatch=_optional_float(src_val.get("mismatch")),
+                    likelihood_threshold=_optional_float(
+                        src_val.get("likelihood_threshold")
+                    ),
                 )
             else:
                 sources[src_name] = MatchSourceConfig()

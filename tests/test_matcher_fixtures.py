@@ -65,7 +65,9 @@ def _match(ts, positions, query, allele_mapper):
         ts,
         positions,
         allele_mapper=allele_mapper,
-        source_parameters={"test": config.MatchSourceConfig()},
+        hmm_parameters={
+            "test": matching.hmm_parameters(config.MatchSourceConfig(), positions)
+        },
     )
     results = list(matcher.match([job], _ArrayReader([query])))
     _, r = results[0]
