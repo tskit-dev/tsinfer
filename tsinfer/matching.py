@@ -25,6 +25,7 @@ from __future__ import annotations
 import concurrent.futures as cf
 import dataclasses
 import logging
+import pathlib
 import time as time_
 
 import numpy as np
@@ -62,6 +63,88 @@ class MatchResult:
 
     path: list[PathSegment]
     mutations: list[Mutation]
+
+
+# Defaults used when no recombination or mismatch values are given. A
+# high recombination probability and negligible mismatch probability
+# means that haplotypes are copied with no mismatches.
+DEFAULT_RECOMBINATION = 1e-2
+DEFAULT_MISMATCH = 1e-20
+
+
+@dataclasses.dataclass
+class HmmParameters:
+    """Per-site parameters of the Li & Stephens copying HMM."""
+
+    recombination: np.ndarray  # (num_sites,) float64 probabilities
+    mismatch: np.ndarray  # (num_sites,) float64 probabilities
+    likelihood_threshold: float | None = None
+
+
+def read_genetic_map(path: str | pathlib.Path, positions: np.ndarray) -> np.ndarray:
+    """
+    Read a HapMap-format genetic map and return the genetic position (in
+    Morgans) of each of the specified physical positions.
+
+    The file has a single header line and whitespace-separated columns:
+    chromosome, position (bp), rate (cM/Mb) and cumulative map position (cM).
+    Only the position and map columns are used. Genetic positions are linearly
+    interpolated between map entries, with an implicit entry of 0 cM at
+    position 0. Beyond the last entry the recombination rate is zero. This
+    follows ``msprime.RateMap.read_hapmap``.
+    """
+    map_position, map_cm = np.loadtxt(path, skiprows=1, usecols=(1, 3), unpack=True)
+    map_position = np.atleast_1d(map_position)
+    map_morgans = np.atleast_1d(map_cm) / 100
+    if map_position[0] > 0:
+        map_position = np.insert(map_position, 0, 0)
+        map_morgans = np.insert(map_morgans, 0, 0)
+    return np.interp(positions, map_position, map_morgans)
+
+
+def recombination_probabilities(
+    recombination_rate: float | str | pathlib.Path, positions: np.ndarray
+) -> np.ndarray:
+    """
+    Return the probability of recombination between each inference site and
+    the previous one, given either a constant rate per bp or the path to a
+    HapMap genetic map. The genetic distance d (Morgans) between adjacent sites
+    is converted to the probability of an odd number of crossovers using
+    Haldane's map function, (1 - exp(-2d)) / 2. The first site has probability 0.
+    """
+    positions = np.asarray(positions, dtype=np.float64)
+    if isinstance(recombination_rate, (str, pathlib.Path)):
+        genetic_position = read_genetic_map(recombination_rate, positions)
+        distance = np.diff(genetic_position)
+    else:
+        distance = np.diff(positions) * recombination_rate
+    probability = np.zeros(len(positions))
+    probability[1:] = (1 - np.exp(-2 * distance)) / 2
+    return probability
+
+
+def hmm_parameters(
+    source_config: config.MatchSourceConfig, positions: np.ndarray
+) -> HmmParameters:
+    """Return the HMM parameters to use for haplotypes from a source."""
+    num_sites = len(positions)
+    if source_config.recombination_rate is not None:
+        recombination = recombination_probabilities(
+            source_config.recombination_rate, positions
+        )
+    else:
+        value = DEFAULT_RECOMBINATION
+        if source_config.recombination is not None:
+            value = source_config.recombination
+        recombination = np.full(num_sites, value)
+    mismatch = DEFAULT_MISMATCH
+    if source_config.mismatch is not None:
+        mismatch = source_config.mismatch
+    return HmmParameters(
+        recombination=recombination,
+        mismatch=np.full(num_sites, mismatch),
+        likelihood_threshold=source_config.likelihood_threshold,
+    )
 
 
 def _rss_mib():
@@ -181,12 +264,12 @@ class Matcher:
         ts: tskit.TreeSequence,
         positions: np.ndarray,  # (num_sites,) int32 — inference site positions
         allele_mapper: vcz.AlleleMapper,
-        source_parameters: dict[str, config.MatchSourceConfig] | None = None,
+        hmm_parameters: dict[str, HmmParameters],
     ):
         self._positions = np.asarray(positions, dtype=np.int32)
         self._num_sites = len(positions)
         self._sequence_length = ts.sequence_length
-        self._source_parameters = source_parameters or {}
+        self._hmm_parameters = hmm_parameters
 
         logger.info(
             "Creating Matcher: ts=%d nodes, %d edges, %.1f MiB, RSS=%.1f MiB",
@@ -219,21 +302,16 @@ class Matcher:
         num_sites = self._num_sites
         pos = self._positions.astype(np.float64)
 
-        # Look up per-source recombination/mismatch overrides
-        source = job.source
-        src_cfg = self._source_parameters[source]
-        recombination = 1e-2
-        if src_cfg.recombination is not None:
-            recombination = src_cfg.recombination
-        mismatch = 1e-20
-        if src_cfg.mismatch is not None:
-            mismatch = src_cfg.mismatch
-        rho = np.full(num_sites, recombination)
-        mu = np.full(num_sites, mismatch)
+        params = self._hmm_parameters[job.source]
 
         # Each call gets its own matcher so threads don't share state
         t0 = time_.monotonic()
-        matcher = AncestorMatcher(self._matcher_indexes, rho, mu)
+        matcher = AncestorMatcher(
+            self._matcher_indexes,
+            params.recombination,
+            params.mismatch,
+            likelihood_threshold=params.likelihood_threshold,
+        )
         t_init = time_.monotonic() - t0
 
         t0 = time_.monotonic()

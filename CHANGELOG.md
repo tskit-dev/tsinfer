@@ -4,6 +4,12 @@
 
 In development
 
+- Each `[match.sources.<name>]` section accepts a `recombination_rate`
+  (a constant rate per bp, or a HapMap genetic map file), `mismatch` and
+  `likelihood_threshold`, setting the parameters of the matching HMM.
+  Unlike tsinfer 0.5.1 there is no `mismatch_ratio`: the mismatch
+  probability is set directly.
+
 - Contig metadata is read from `variant_contig`, rather than assuming the first
   contig in the header, and the top-level `contig` config option selects one
   contig from multi-contig VCZ stores.

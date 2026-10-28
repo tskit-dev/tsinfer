@@ -127,7 +127,11 @@ def _make_job(
     )
 
 
-_SOURCE_PARAMS = {"test": config.MatchSourceConfig()}
+def _hmm_params(positions, source_config=None):
+    """HMM parameters for the single "test" source used in these tests."""
+    if source_config is None:
+        source_config = config.MatchSourceConfig()
+    return {"test": matching.hmm_parameters(source_config, positions)}
 
 
 # ---------------------------------------------------------------------------
@@ -289,6 +293,99 @@ class TestPrepareReferenceTs:
 # ---------------------------------------------------------------------------
 
 
+def _write_hapmap(path, positions, rates):
+    """
+    Write a HapMap file with the given entry positions (bp) and rates
+    (cM/Mb) over each interval; the final rate must be zero.
+    """
+    positions = np.asarray(positions)
+    rates = np.asarray(rates, dtype=np.float64)
+    map_cm = np.zeros(len(positions))
+    map_cm[1:] = np.cumsum(rates[:-1] * np.diff(positions) / 1e6)
+    lines = ["Chromosome Position(bp) Rate(cM/Mb) Map(cM)"]
+    for pos, rate, cm in zip(positions, rates, map_cm):
+        lines.append(f"chr1 {pos} {float(rate)!r} {float(cm)!r}")
+    path.write_text("\n".join(lines) + "\n")
+
+
+class TestHmmParameters:
+    """Tests for computing per-site HMM parameters from a MatchSourceConfig."""
+
+    positions = np.array([10, 200, 250, 1000, 5000, 9000], dtype=np.int32)
+
+    def test_defaults(self):
+        params = matching.hmm_parameters(config.MatchSourceConfig(), self.positions)
+        np.testing.assert_array_equal(params.recombination, np.full(6, 1e-2))
+        np.testing.assert_array_equal(params.mismatch, np.full(6, 1e-20))
+        assert params.likelihood_threshold is None
+
+    def test_scalar_overrides(self):
+        source_config = config.MatchSourceConfig(
+            recombination=0.25, mismatch=0.1, likelihood_threshold=1e-6
+        )
+        params = matching.hmm_parameters(source_config, self.positions)
+        np.testing.assert_array_equal(params.recombination, np.full(6, 0.25))
+        np.testing.assert_array_equal(params.mismatch, np.full(6, 0.1))
+        assert params.likelihood_threshold == 1e-6
+
+    def test_constant_rate(self):
+        rate = 1e-5
+        source_config = config.MatchSourceConfig(recombination_rate=rate)
+        params = matching.hmm_parameters(source_config, self.positions)
+        distance = np.diff(self.positions) * rate
+        assert params.recombination[0] == 0
+        np.testing.assert_allclose(
+            params.recombination[1:], (1 - np.exp(-2 * distance)) / 2
+        )
+        np.testing.assert_array_equal(params.mismatch, np.full(6, 1e-20))
+
+    def test_constant_rate_mismatch(self):
+        source_config = config.MatchSourceConfig(recombination_rate=1e-8, mismatch=1e-3)
+        params = matching.hmm_parameters(source_config, self.positions)
+        np.testing.assert_array_equal(params.mismatch, np.full(6, 1e-3))
+
+    def test_probability_at_most_half(self):
+        probs = matching.recombination_probabilities(1.0, self.positions)
+        assert np.all(probs <= 0.5)
+        np.testing.assert_allclose(probs[1:], 0.5)
+
+    def test_single_site(self):
+        probs = matching.recombination_probabilities(1e-8, np.array([100]))
+        np.testing.assert_array_equal(probs, [0])
+
+    @pytest.mark.parametrize(
+        ("map_positions", "rates"),
+        [
+            ([0, 100, 3000, 8000], [1.0, 50.0, 2.0, 0.0]),
+            ([150, 600, 2000, 7000], [10.0, 0.0, 30.0, 0.0]),
+            ([0, 9500], [20.0, 0.0]),
+        ],
+    )
+    def test_genetic_map_matches_msprime(self, tmp_path, map_positions, rates):
+        msprime = pytest.importorskip("msprime")
+        path = tmp_path / "map.txt"
+        _write_hapmap(path, map_positions, rates)
+        rate_map = msprime.RateMap.read_hapmap(path, sequence_length=10_000)
+        expected = np.diff(rate_map.get_cumulative_mass(self.positions))
+
+        genetic_position = matching.read_genetic_map(path, self.positions)
+        np.testing.assert_allclose(np.diff(genetic_position), expected)
+
+        source_config = config.MatchSourceConfig(recombination_rate=str(path))
+        params = matching.hmm_parameters(source_config, self.positions)
+        assert params.recombination[0] == 0
+        np.testing.assert_allclose(
+            params.recombination[1:], (1 - np.exp(-2 * expected)) / 2
+        )
+
+    def test_genetic_map_path_object(self, tmp_path):
+        path = tmp_path / "map.txt"
+        _write_hapmap(path, [0, 10_000], [100.0, 0.0])
+        probs = matching.recombination_probabilities(path, self.positions)
+        distance = np.diff(self.positions) * 1e-6
+        np.testing.assert_allclose(probs[1:], (1 - np.exp(-2 * distance)) / 2)
+
+
 class TestMatcher:
     """Tests for Matcher using a simple known tree sequence."""
 
@@ -325,7 +422,7 @@ class TestMatcher:
             ts,
             self.positions,
             allele_mapper=self.allele_mapper,
-            source_parameters=_SOURCE_PARAMS,
+            hmm_parameters=_hmm_params(self.positions),
         )
         results = list(matcher.match(_jobs(1), _ArrayReader([hap])))
         assert len(results) == 1
@@ -343,7 +440,7 @@ class TestMatcher:
             ts,
             self.positions,
             allele_mapper=self.allele_mapper,
-            source_parameters=_SOURCE_PARAMS,
+            hmm_parameters=_hmm_params(self.positions),
         )
         results = list(matcher.match(_jobs(1), _ArrayReader([query_hap])))
         _, r = results[0]
@@ -360,7 +457,7 @@ class TestMatcher:
             ts,
             self.positions,
             allele_mapper=self.allele_mapper,
-            source_parameters=_SOURCE_PARAMS,
+            hmm_parameters=_hmm_params(self.positions),
         )
         results = list(matcher.match(_jobs(1), _ArrayReader([missing_hap])))
         assert len(results) == 1
@@ -374,7 +471,7 @@ class TestMatcher:
             ts,
             self.positions,
             allele_mapper=self.allele_mapper,
-            source_parameters=_SOURCE_PARAMS,
+            hmm_parameters=_hmm_params(self.positions),
         )
         results = list(matcher.match(_jobs(1), _ArrayReader([query_hap])))
         assert len(results) == 1
@@ -392,7 +489,7 @@ class TestMatcher:
             ts,
             self.positions,
             allele_mapper=self.allele_mapper,
-            source_parameters=_SOURCE_PARAMS,
+            hmm_parameters=_hmm_params(self.positions),
         )
         results = list(matcher.match(_jobs(3), _ArrayReader(haplotypes)))
         assert len(results) == 3
@@ -405,7 +502,7 @@ class TestMatcher:
             ts,
             self.positions,
             allele_mapper=self.allele_mapper,
-            source_parameters=_SOURCE_PARAMS,
+            hmm_parameters=_hmm_params(self.positions),
         )
         results = list(matcher.match(_jobs(1), _ArrayReader([hap])))
         _, r = results[0]
@@ -425,7 +522,7 @@ class TestMatcher:
             ts,
             self.positions,
             allele_mapper=self.allele_mapper,
-            source_parameters=_SOURCE_PARAMS,
+            hmm_parameters=_hmm_params(self.positions),
         )
         results = list(matcher.match(_jobs(1), _ArrayReader([hap])))
         _, r = results[0]
@@ -441,7 +538,7 @@ class TestMatcher:
             ts,
             self.positions,
             allele_mapper=self.allele_mapper,
-            source_parameters=_SOURCE_PARAMS,
+            hmm_parameters=_hmm_params(self.positions),
         )
         results = list(matcher.match(_jobs(1), _ArrayReader([query])))
         _, r = results[0]
@@ -455,19 +552,63 @@ class TestMatcher:
         """Custom per-source recombination/mismatch overrides are used."""
         hap = np.array([0, 1, 0], dtype=np.int8)
         ts = self._make_ts_with_one_ancestor(hap)
-        source_params = {
-            "test": config.MatchSourceConfig(recombination=0.5, mismatch=0.1),
-        }
+        source_config = config.MatchSourceConfig(recombination=0.5, mismatch=0.1)
         matcher = matching.Matcher(
             ts,
             self.positions,
             allele_mapper=self.allele_mapper,
-            source_parameters=source_params,
+            hmm_parameters=_hmm_params(self.positions, source_config),
         )
         results = list(matcher.match(_jobs(1), _ArrayReader([hap])))
         assert len(results) == 1
         _, r = results[0]
         assert len(r.path) > 0
+
+    def _match_recombinant(self, source_config):
+        """Match the recombinant [1, 1, 1] against ancestors [1, 1, 0] and [0, 0, 1]."""
+        # Ancestors A and B both descend from an all-ancestral ultimate
+        # ancestor below the virtual root.
+        ts = _make_simple_ts(
+            self.positions,
+            self.seq_len,
+            node_times=[0.9],
+            haplotypes=[[0, 0, 0]],
+            allele_mapper=self.allele_mapper,
+        )
+        tables = ts.dump_tables()
+        a = tables.nodes.add_row(time=0.8, flags=0, metadata={})
+        b = tables.nodes.add_row(time=0.8, flags=0, metadata={})
+        for child in [a, b]:
+            tables.edges.add_row(left=10, right=self.seq_len, parent=1, child=child)
+        for site, node in [(0, a), (1, a), (2, b)]:
+            tables.mutations.add_row(site=site, node=node, derived_state="T")
+        tables.sort()
+        ts = tables.tree_sequence()
+        matcher = matching.Matcher(
+            ts,
+            self.positions,
+            allele_mapper=self.allele_mapper,
+            hmm_parameters=_hmm_params(self.positions, source_config),
+        )
+        query = np.array([1, 1, 1], dtype=np.int8)
+        _, r = list(matcher.match(_jobs(1), _ArrayReader([query])))[0]
+        return r
+
+    def test_default_parameters_prefer_recombination(self):
+        r = self._match_recombinant(config.MatchSourceConfig())
+        assert len(r.path) == 2
+        assert len(r.mutations) == 0
+
+    def test_low_recombination_rate_prefers_mismatch(self):
+        source_config = config.MatchSourceConfig(recombination_rate=1e-12, mismatch=1e-2)
+        r = self._match_recombinant(source_config)
+        assert len(r.path) == 1
+        assert [m.position for m in r.mutations] == [30.0]
+
+    def test_likelihood_threshold(self):
+        source_config = config.MatchSourceConfig(likelihood_threshold=1e-5)
+        r = self._match_recombinant(source_config)
+        assert len(r.path) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -515,7 +656,7 @@ class TestMatcherMultiallelic:
             ts,
             self.positions,
             allele_mapper=self.allele_mapper,
-            source_parameters=_SOURCE_PARAMS,
+            hmm_parameters=_hmm_params(self.positions),
         )
         jobs = _jobs(len(haplotypes))
         return [r for _, r in matcher.match(jobs, _ArrayReader(haplotypes))]
@@ -564,7 +705,7 @@ class TestMatcherMultiallelic:
                 tables.tree_sequence(),
                 self.positions,
                 allele_mapper=self.allele_mapper,
-                source_parameters=_SOURCE_PARAMS,
+                hmm_parameters=_hmm_params(self.positions),
             )
 
 
@@ -897,7 +1038,7 @@ class TestMatcherExtendCycle:
             ts,
             self.positions,
             allele_mapper=self.allele_mapper,
-            source_parameters=_SOURCE_PARAMS,
+            hmm_parameters=_hmm_params(self.positions),
         )
         results = list(matcher.match(_jobs(len(haplotypes)), _ArrayReader(haplotypes)))
         return results
@@ -934,7 +1075,7 @@ class TestMatcherExtendCycle:
             ts2,
             self.positions,
             allele_mapper=self.allele_mapper,
-            source_parameters=_SOURCE_PARAMS,
+            hmm_parameters=_hmm_params(self.positions),
         )
         results2 = list(matcher2.match(_jobs(1), _ArrayReader([sample_hap])))
         _, r = results2[0]
