@@ -93,9 +93,16 @@ def read_genetic_map(path: str | pathlib.Path, positions: np.ndarray) -> np.ndar
     position 0. Beyond the last entry the recombination rate is zero. This
     follows ``msprime.RateMap.read_hapmap``.
     """
-    map_position, map_cm = np.loadtxt(path, skiprows=1, usecols=(1, 3), unpack=True)
-    map_position = np.atleast_1d(map_position)
-    map_morgans = np.atleast_1d(map_cm) / 100
+    map_position, map_cm = np.loadtxt(
+        path, skiprows=1, usecols=(1, 3), unpack=True, ndmin=2
+    )
+    if len(map_position) == 0:
+        raise ValueError(f"Genetic map {path} is empty")
+    if np.any(np.diff(map_position) <= 0):
+        raise ValueError(f"Genetic map {path} positions are not strictly increasing")
+    if np.any(np.diff(map_cm) < 0):
+        raise ValueError(f"Genetic map {path} map positions (cM) decrease")
+    map_morgans = map_cm / 100
     if map_position[0] > 0:
         map_position = np.insert(map_position, 0, 0)
         map_morgans = np.insert(map_morgans, 0, 0)
@@ -117,6 +124,8 @@ def recombination_probabilities(
         genetic_position = read_genetic_map(recombination_rate, positions)
         distance = np.diff(genetic_position)
     else:
+        if recombination_rate < 0:
+            raise ValueError("Recombination rate must be non-negative")
         distance = np.diff(positions) * recombination_rate
     probability = np.zeros(len(positions))
     probability[1:] = (1 - np.exp(-2 * distance)) / 2
