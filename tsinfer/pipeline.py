@@ -473,6 +473,7 @@ def _process_group(
     config_str: str,
     progress: bool,
     hmm_parameters: dict[str, matching.HmmParameters],
+    engine: str,
 ) -> tskit.TreeSequence:
     """Match one group of haplotypes and return the extended tree sequence."""
     with provenance.TimingAndMemory() as tm:
@@ -481,6 +482,7 @@ def _process_group(
             positions,
             allele_mapper=allele_mapper,
             hmm_parameters=hmm_parameters,
+            engine=engine,
         )
         job_list = [job for _, job in group_jobs]
         match_iter = m.match(job_list, reader, num_threads=num_threads)
@@ -668,10 +670,11 @@ def match(
         )
 
     logger.info(
-        "Match: %d haplotypes, %d sites, seq_len=%.0f",
+        "Match: %d haplotypes, %d sites, seq_len=%.0f, engine=%s",
         len(jobs),
         len(positions),
         seq_len,
+        cfg.match.engine,
     )
 
     # 6. Match loop — process groups in order
@@ -719,6 +722,7 @@ def match(
             config_str=config_str,
             progress=progress,
             hmm_parameters=hmm_parameters,
+            engine=cfg.match.engine,
         )
         completed_haps += num_in_group
         rss = psutil.Process().memory_info().rss / (1024 * 1024)

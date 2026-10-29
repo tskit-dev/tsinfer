@@ -1462,3 +1462,32 @@ class TestMatchHmmParameters:
 
     def test_validate_float_rate(self, tmp_path):
         assert self._validate_with_rate(tmp_path, 1e-8) == []
+
+
+class TestMatchEngineConfig:
+    def _toml(self, engine_line):
+        return _MINIMAL_TOML.replace(
+            'output             = "out.trees"',
+            f'output             = "out.trees"\n{engine_line}',
+        )
+
+    def test_default_engine(self, tmp_path):
+        cfg = config.Config.from_toml(_write_toml(tmp_path, _MINIMAL_TOML))
+        assert cfg.match.engine == "tsinfer"
+        assert "engine" not in cfg.format()
+
+    @pytest.mark.parametrize("engine", ["tsinfer", "tsls"])
+    def test_engine_parsed_from_toml(self, tmp_path, engine):
+        toml = self._toml(f'engine = "{engine}"')
+        cfg = config.Config.from_toml(_write_toml(tmp_path, toml))
+        assert cfg.match.engine == engine
+
+    def test_non_default_engine_formatted(self, tmp_path):
+        toml = self._toml('engine = "tsls"')
+        cfg = config.Config.from_toml(_write_toml(tmp_path, toml))
+        assert "engine = tsls" in cfg.format()
+
+    def test_unknown_engine_rejected(self, tmp_path):
+        toml = self._toml('engine = "magic"')
+        with pytest.raises(ValueError, match="Unknown match engine 'magic'"):
+            config.Config.from_toml(_write_toml(tmp_path, toml))

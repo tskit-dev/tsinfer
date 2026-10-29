@@ -36,6 +36,11 @@ import _tsinfer
 
 from . import arg_ops, config, vcz
 
+try:
+    import tsls
+except ImportError:
+    tsls = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -260,34 +265,56 @@ def prepare_reference_ts(
     return tables.tree_sequence()
 
 
-class Matcher:
+def tsls_allele_codes(
+    ts: tskit.TreeSequence, allele_mapper: vcz.AlleleMapper
+) -> tuple[np.ndarray, np.ndarray]:
     """
-    Matches haplotypes against a fixed reference tree sequence using the C engine.
+    Return the (to_tsls, from_tsls) tables that translate between the allele
+    codes of *allele_mapper* and those used by tsls for *ts*. Both are
+    (num_sites, max_alleles) int8 arrays indexed by site and code.
 
-    Uses AncestorMatcher/MatcherIndexes. A fresh Matcher is instantiated for
-    each group's tree sequence; no state is maintained between groups.
+    tsls numbers the alleles at each site itself: the ancestral state is 0,
+    and derived states are numbered from 1 in order of their first
+    appearance in the mutation table. Codes for alleles that are not in *ts*
+    at a site translate to -1 (missing).
+    """
+    num_sites = ts.num_sites
+    max_alleles = allele_mapper.forward_map().shape[1]
+    mutation_code = allele_mapper.encode_mutations(
+        ts.mutations_site, ts.mutations_derived_state
+    ).astype(np.int64)
+    if np.any(mutation_code < 0):
+        raise ValueError("Tree sequence has a derived state not in the allele table")
+    # Mutations back to the ancestral state have code 0 in both numberings.
+    is_derived = mutation_code > 0
+    derived_site = ts.mutations_site[is_derived].astype(np.int64)
+    derived_code = mutation_code[is_derived]
+    key = derived_site * max_alleles + derived_code
+    unique_key, first_index = np.unique(key, return_index=True)
+    allele_site = unique_key // max_alleles
+    allele_code = unique_key % max_alleles
+    # Order the distinct alleles by site, then by first appearance.
+    order = np.lexsort((first_index, allele_site))
+    allele_site = allele_site[order]
+    allele_code = allele_code[order]
+    site_start = np.searchsorted(allele_site, allele_site, side="left")
+    tsls_code = np.arange(len(allele_site)) - site_start + 1
+
+    to_tsls = np.full((num_sites, max_alleles), -1, dtype=np.int8)
+    to_tsls[:, 0] = 0
+    to_tsls[allele_site, allele_code] = tsls_code
+    from_tsls = np.full((num_sites, max_alleles), -1, dtype=np.int8)
+    from_tsls[:, 0] = 0
+    from_tsls[allele_site, tsls_code] = allele_code
+    return to_tsls, from_tsls
+
+
+class TsinferEngine:
+    """
+    The built-in Li & Stephens HMM (``_tsinfer.AncestorMatcher``).
     """
 
-    def __init__(
-        self,
-        ts: tskit.TreeSequence,
-        positions: np.ndarray,  # (num_sites,) int32 — inference site positions
-        allele_mapper: vcz.AlleleMapper,
-        hmm_parameters: dict[str, HmmParameters],
-    ):
-        self._positions = np.asarray(positions, dtype=np.int32)
-        self._num_sites = len(positions)
-        self._sequence_length = ts.sequence_length
-        self._hmm_parameters = hmm_parameters
-
-        logger.info(
-            "Creating Matcher: ts=%d nodes, %d edges, %.1f MiB, RSS=%.1f MiB",
-            ts.num_nodes,
-            ts.num_edges,
-            ts.nbytes / (1024 * 1024),
-            _rss_mib(),
-        )
-        t0 = time_.monotonic()
+    def __init__(self, ts: tskit.TreeSequence, allele_mapper: vcz.AlleleMapper):
         # Sites in ts correspond one-to-one with the allele mapper's sites,
         # and their ancestral states are allele code 0.
         num_alleles = allele_mapper.num_alleles_array()
@@ -300,6 +327,128 @@ class Matcher:
             num_alleles=num_alleles,
             derived_state=derived_state,
         )
+
+    def find_path(self, h, start, end, params: HmmParameters):
+        """
+        Return the (left, right, parent, match, matcher) for haplotype *h*
+        over sites [start, end). The matcher is returned for its statistics.
+        """
+        matcher = AncestorMatcher(
+            self._matcher_indexes,
+            params.recombination,
+            params.mismatch,
+            likelihood_threshold=params.likelihood_threshold,
+        )
+        match = np.zeros(len(h), dtype=np.int8)
+        left, right, parent = matcher.find_path(h, start, end, match)
+        return left, right, parent, match, matcher
+
+
+class TslsEngine:
+    """
+    The Li & Stephens HMM from the tsls package.
+
+    tsls can copy any node in the tree, but tsinfer never copies its
+    ultimate root, node 0. Node 0's only child is node 1 and neither has
+    mutations, so both have the ancestral state everywhere: we copy node 1
+    wherever tsls copies node 0.
+    """
+
+    def __init__(self, ts: tskit.TreeSequence, allele_mapper: vcz.AlleleMapper):
+        if tsls is None:
+            raise ImportError(
+                "The tsls engine requires the tsls package: "
+                "install it with 'uv sync --extra tsls'"
+            )
+        node0_children = ts.edges_child[ts.edges_parent == 0]
+        if (
+            np.any(node0_children != 1)
+            or np.any(ts.edges_child == 0)
+            or np.any(ts.mutations_node <= 1)
+        ):
+            raise ValueError(
+                "The tsls engine requires node 0 to be the ultimate root, with "
+                "node 1 as its only child, and no mutations on either node"
+            )
+        self._ts = tsls.TreeSequence(ts)
+        self._to_tsls, self._from_tsls = tsls_allele_codes(ts, allele_mapper)
+
+    def find_path(self, h, start, end, params: HmmParameters):
+        """
+        Return the (left, right, parent, match, matcher) for haplotype *h*
+        over sites [start, end). The matcher is returned for its statistics.
+        """
+        hmm = tsls.Hmm(
+            self._ts,
+            params.recombination,
+            params.mismatch,
+            likelihood_threshold=params.likelihood_threshold,
+        )
+        observed_sites = np.where(h >= 0)[0]
+        h_tsls = np.full(len(h), -1, dtype=np.int8)
+        h_tsls[observed_sites] = self._to_tsls[observed_sites, h[observed_sites]]
+        match_tsls = np.zeros(len(h), dtype=np.int8)
+        left, right, parent = hmm.find_path(h_tsls, start, end, match_tsls)
+
+        # tsls only sets the matched alleles in [start, end).
+        match = np.zeros(len(h), dtype=np.int8)
+        sites = np.arange(start, end)
+        match[start:end] = self._from_tsls[sites, match_tsls[start:end]]
+
+        left, right, parent = copy_node1_for_node0(left, right, parent)
+        return left, right, parent, match, hmm
+
+
+def copy_node1_for_node0(left, right, parent):
+    """
+    Return the copying path (left, right, parent), in right-to-left order,
+    with node 1 copied wherever node 0 is, merging adjacent segments that
+    then have the same parent.
+    """
+    parent = np.where(parent == 0, 1, parent)
+    is_run_start = np.ones(len(parent), dtype=bool)
+    is_run_start[1:] = parent[1:] != parent[:-1]
+    is_run_end = np.ones(len(parent), dtype=bool)
+    is_run_end[:-1] = parent[:-1] != parent[1:]
+    return left[is_run_end], right[is_run_start], parent[is_run_start]
+
+
+ENGINES = {"tsinfer": TsinferEngine, "tsls": TslsEngine}
+
+
+class Matcher:
+    """
+    Matches haplotypes against a fixed reference tree sequence using the
+    specified HMM engine ("tsinfer" for the built-in engine, or "tsls").
+
+    A fresh Matcher is instantiated for each group's tree sequence; no state
+    is maintained between groups.
+    """
+
+    def __init__(
+        self,
+        ts: tskit.TreeSequence,
+        positions: np.ndarray,  # (num_sites,) int32 — inference site positions
+        allele_mapper: vcz.AlleleMapper,
+        hmm_parameters: dict[str, HmmParameters],
+        engine: str = "tsinfer",
+    ):
+        self._positions = np.asarray(positions, dtype=np.int32)
+        self._num_sites = len(positions)
+        self._sequence_length = ts.sequence_length
+        self._hmm_parameters = hmm_parameters
+
+        logger.info(
+            "Creating Matcher (%s engine): ts=%d nodes, %d edges, %.1f MiB, "
+            "RSS=%.1f MiB",
+            engine,
+            ts.num_nodes,
+            ts.num_edges,
+            ts.nbytes / (1024 * 1024),
+            _rss_mib(),
+        )
+        t0 = time_.monotonic()
+        self._engine = ENGINES[engine](ts, allele_mapper)
         logger.info(
             "Matcher ready in %.3fs, RSS=%.1f MiB",
             time_.monotonic() - t0,
@@ -313,21 +462,10 @@ class Matcher:
 
         params = self._hmm_parameters[job.source]
 
-        # Each call gets its own matcher so threads don't share state
-        t0 = time_.monotonic()
-        matcher = AncestorMatcher(
-            self._matcher_indexes,
-            params.recombination,
-            params.mismatch,
-            likelihood_threshold=params.likelihood_threshold,
-        )
-        t_init = time_.monotonic() - t0
-
         t0 = time_.monotonic()
         h = np.asarray(reader.read_haplotype(job), dtype=np.int8)
         t_read = time_.monotonic() - t0
 
-        match_out = np.zeros(num_sites, dtype=np.int8)
         non_missing = np.where(h >= 0)[0]
         if len(non_missing) == 0:
             start, end = 0, num_sites
@@ -335,8 +473,11 @@ class Matcher:
             start = int(non_missing[0])
             end = int(non_missing[-1]) + 1
 
+        # Each call gets its own matcher so threads don't share state
         t1 = time_.monotonic()
-        left, right, parent = matcher.find_path(h, start, end, match_out)
+        left, right, parent, match_out, matcher = self._engine.find_path(
+            h, start, end, params
+        )
         t_match = time_.monotonic() - t1
 
         # Build PathSegments from genomic-position edges
@@ -355,11 +496,10 @@ class Matcher:
         ]
 
         logger.debug(
-            "Matched job %s: init=%.4fs read=%.4fs match=%.4fs "
+            "Matched job %s: read=%.4fs match=%.4fs "
             "edges=%d mutations=%d sites=%d..%d "
             "matcher_mem=%.1fMiB mean_tb=%.1f",
             getattr(job, "haplotype_index", "?"),
-            t_init,
             t_read,
             t_match,
             len(path),
