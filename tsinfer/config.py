@@ -50,6 +50,8 @@ DEFAULT_NODE_FLAGS = 1  # tskit.NODE_IS_SAMPLE
 DEFAULT_NUM_THREADS = 0
 DEFAULT_WRITE_THREADS = 2
 DEFAULT_ANCESTOR_WRITE_THREADS = 4
+DEFAULT_MATCH_ENGINE = "tsinfer"
+MATCH_ENGINES = ("tsinfer", "tsls")
 DEFAULT_CACHE_SIZE = 256  # MiB
 DEFAULT_CLI_THREADS = 1
 
@@ -215,6 +217,13 @@ class MatchConfig:
     reference_ts: str | pathlib.Path | None = None
     workdir: str | pathlib.Path | None = None
     keep_intermediates: bool = False
+    engine: str = DEFAULT_MATCH_ENGINE
+
+    def __post_init__(self):
+        if self.engine not in MATCH_ENGINES:
+            raise ValueError(
+                f"Unknown match engine {self.engine!r}: must be one of {MATCH_ENGINES}"
+            )
 
 
 @dataclasses.dataclass
@@ -340,6 +349,8 @@ class Config:
             lines.append(f"  workdir = {self.match.workdir}")
         if self.match.keep_intermediates:
             lines.append(f"  keep_intermediates = {self.match.keep_intermediates}")
+        if self.match.engine != DEFAULT_MATCH_ENGINE:
+            lines.append(f"  engine = {self.match.engine}")
         lines.append("")
 
         if self.post_process is not None:
@@ -482,6 +493,7 @@ _KNOWN_MATCH_KEYS = {
     "reference_ts",
     "workdir",
     "keep_intermediates",
+    "engine",
 }
 
 _KNOWN_MATCH_SOURCE_KEYS = {
@@ -647,6 +659,7 @@ def _parse_match(raw: dict) -> MatchConfig:
             reference_ts=_resolve_path(entry.get("reference_ts")),
             workdir=_resolve_path(entry.get("workdir")),
             keep_intermediates=bool(entry.get("keep_intermediates", False)),
+            engine=entry.get("engine", DEFAULT_MATCH_ENGINE),
         )
     except KeyError as e:
         raise ValueError(f"[match] missing required key: {e}") from e

@@ -60,6 +60,10 @@ dependencies = [
     "vcztools>=0.2",
 ]
 
+[project.optional-dependencies]
+# Experimental alternative HMM engine; see MatchConfig.engine.
+tsls = ["tsls"]
+
 [project.urls]
 Homepage = "https://tskit.dev/tsinfer"
 Documentation = "https://tskit.dev/tsinfer/docs/stable"
@@ -117,6 +121,10 @@ dev = [
     {include-group = "test"},
     {include-group = "packaging"},
 ]
+
+[tool.uv.sources]
+# Build tsls from a fixed commit of the local checkout until it is released.
+tsls = { git = "file:///home/ubuntu/agents-work/tskit-dev/tsls", rev = "d557198", subdirectory = "tsls" }
 
 [tool.setuptools]
 packages = ["tsinfer"]
