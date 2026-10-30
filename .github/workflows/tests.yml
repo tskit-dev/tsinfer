@@ -38,7 +38,6 @@ jobs:
       os: ${{ matrix.os }}
       python-version: ${{ matrix.python }}
       coverage-directory: tsinfer
-      fix-lwt-symlink: "true"
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     strategy:

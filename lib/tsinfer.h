@@ -41,28 +41,12 @@
 /* TODO remove this when we update tskit version. */
 #define TSK_MISSING_DATA (-1)
 
-/* NULL_LIKELIHOOD represents a compressed path and NONZERO_ROOT_LIKELIHOOD
- * marks a node that is not in the current tree. */
-#define NULL_LIKELIHOOD         (-1)
-#define NONZERO_ROOT_LIKELIHOOD (-2)
-
-#define NULL_NODE   (-1)
-#define CACHE_UNSET (-1)
-
-#define TSI_EXTENDED_CHECKS     1
-#define TSI_DISABLE_WEIGHT_BY_N 2
-
 #define TSI_GENOTYPE_ENCODING_ONE_BIT 1
 
 typedef int8_t allele_t;
-/* TODO should probably change to uint32 when we have removed the old code.*/
-typedef tsk_id_t coordinate_t;
 
-/* Allow the CPython accessor AncestorMatcher.total_memory to read the
- * current allocator usage accurately while other threads may be allocating.
- * Allocation semantics remain identical to tsk_blkalloc; only total_size is
- * atomic so it can be observed safely from the getter without data races.
- * See https://github.com/tskit-dev/tsinfer/commit/57f9209d for context. */
+/* A block allocator, as tsk_blkalloc, with total_size atomic so that it can
+ * be read safely while other threads may be allocating. */
 typedef struct {
     size_t chunk_size; /* number of bytes per chunk */
     size_t top;        /* the offset of the next available byte in the current chunk */
@@ -80,30 +64,10 @@ extern void *tsi_blkalloc_get(tsi_blkalloc_t *self, size_t size);
 extern void tsi_blkalloc_free(tsi_blkalloc_t *self);
 
 typedef struct {
-    coordinate_t left;
-    coordinate_t right;
-    tsk_id_t parent;
-    tsk_id_t child;
-} edge_t;
-
-typedef struct _node_segment_list_node_t {
-    tsk_id_t start;
-    tsk_id_t end;
-    struct _node_segment_list_node_t *next;
-} node_segment_list_node_t;
-
-typedef struct {
     double time;
     uint8_t *encoded_genotypes;
     tsk_size_t derived_count;
 } site_t;
-
-typedef struct {
-    tsk_id_t *start;
-    tsk_id_t *end;
-    size_t num_segments;
-    double position;
-} site_state_t;
 
 typedef struct _site_list_t {
     tsk_id_t site;
@@ -152,67 +116,6 @@ typedef struct {
     size_t mmap_size;
 } ancestor_builder_t;
 
-typedef struct _mutation_list_node_t {
-    tsk_id_t node;
-    allele_t derived_state;
-    struct _mutation_list_node_t *next;
-} mutation_list_node_t;
-
-typedef struct {
-    int32_t size;
-    tsk_id_t *node;
-    int8_t *recombination_required;
-} node_state_list_t;
-
-typedef struct {
-    tsk_flags_t flags;
-    size_t num_sites;
-    size_t num_nodes;
-    size_t num_mutations;
-    size_t num_edges;
-    struct {
-        coordinate_t *position;
-        mutation_list_node_t **mutations;
-        tsk_size_t *num_alleles;
-        allele_t *ancestral_state;
-    } sites;
-    edge_t *left_index_edges;
-    edge_t *right_index_edges;
-    tsi_blkalloc_t allocator;
-} matcher_indexes_t;
-
-typedef struct {
-    int flags;
-    const matcher_indexes_t *matcher_indexes;
-    size_t num_nodes;
-    size_t num_sites;
-    /* Input LS model rates */
-    double likelihood_threshold;
-    double *recombination_rate;
-    double *mismatch_rate;
-    /* The quintuply linked tree */
-    tsk_id_t *parent;
-    tsk_id_t *left_child;
-    tsk_id_t *right_child;
-    tsk_id_t *left_sib;
-    tsk_id_t *right_sib;
-    double *likelihood;
-    double *likelihood_cache;
-    allele_t *allelic_state;
-    int num_likelihood_nodes;
-    /* At each site, record a node with the maximum likelihood. */
-    tsk_id_t *max_likelihood_node;
-    /* Used during traceback to map nodes where recombination is required. */
-    int8_t *recombination_required;
-    tsk_id_t *likelihood_nodes_tmp;
-    tsk_id_t *likelihood_nodes;
-    node_state_list_t *traceback;
-    tsi_blkalloc_t traceback_allocator;
-    size_t total_traceback_size;
-    size_t traceback_block_size;
-    size_t traceback_realloc_size;
-} ancestor_matcher_t;
-
 int ancestor_builder_alloc(ancestor_builder_t *self, size_t num_samples,
     size_t num_sites, int mmap_fd, int flags);
 int ancestor_builder_free(ancestor_builder_t *self);
@@ -224,23 +127,6 @@ int ancestor_builder_make_ancestor(const ancestor_builder_t *self,
     size_t num_focal_sites, const tsk_id_t *focal_sites, tsk_id_t *start, tsk_id_t *end,
     allele_t *haplotype);
 size_t ancestor_builder_get_memsize(const ancestor_builder_t *self);
-
-int matcher_indexes_alloc(matcher_indexes_t *self, const tsk_table_collection_t *tables,
-    const tsk_size_t *num_alleles, const allele_t *ancestral_state,
-    const allele_t *derived_state, tsk_flags_t options);
-int matcher_indexes_print_state(const matcher_indexes_t *self, FILE *out);
-int matcher_indexes_free(matcher_indexes_t *self);
-
-int ancestor_matcher_alloc(ancestor_matcher_t *self,
-    const matcher_indexes_t *matcher_indexes, double *recombination_rate,
-    double *mismatch_rate, double likelihood_threshold, int flags);
-int ancestor_matcher_free(ancestor_matcher_t *self);
-int ancestor_matcher_find_path(ancestor_matcher_t *self, tsk_id_t start, tsk_id_t end,
-    const allele_t *haplotype, allele_t *matched_haplotype, size_t *path_length,
-    tsk_id_t *path_left, tsk_id_t *path_right, tsk_id_t *path_parent);
-int ancestor_matcher_print_state(ancestor_matcher_t *self, FILE *out);
-double ancestor_matcher_get_mean_traceback_size(ancestor_matcher_t *self);
-size_t ancestor_matcher_get_total_memory(ancestor_matcher_t *self);
 
 int packbits(const allele_t *restrict source, size_t len, uint8_t *restrict dest);
 void unpackbits(const uint8_t *restrict source, size_t len, allele_t *restrict dest);
