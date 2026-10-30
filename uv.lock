@@ -2867,13 +2867,9 @@ dependencies = [
     { name = "psutil" },
     { name = "tqdm" },
     { name = "tskit" },
+    { name = "tsls" },
     { name = "vcztools" },
     { name = "zarr" },
-]
-
-[package.optional-dependencies]
-tsls = [
-    { name = "tsls" },
 ]
 
 [package.dev-dependencies]
@@ -2946,11 +2942,10 @@ requires-dist = [
     { name = "psutil" },
     { name = "tqdm" },
     { name = "tskit", specifier = ">=1.0.0" },
-    { name = "tsls", marker = "extra == 'tsls'", git = "file:///home/ubuntu/agents-work/tskit-dev/tsls?subdirectory=tsls&rev=d557198" },
+    { name = "tsls", git = "https://github.com/tskit-dev/tsls" },
     { name = "vcztools", specifier = ">=0.2" },
     { name = "zarr", specifier = ">=3" },
 ]
-provides-extras = ["tsls"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -3042,8 +3037,8 @@ wheels = [
 
 [[package]]
 name = "tsls"
-version = "0.0.1.dev0"
-source = { git = "file:///home/ubuntu/agents-work/tskit-dev/tsls?subdirectory=tsls&rev=d557198#d5571986ad4fc7e6b8a0ca4af921a9fad7728a23" }
+version = "0.1.dev117"
+source = { git = "https://github.com/tskit-dev/tsls#a32ce0681f9bf5c46f9caf784ea0427241515ac0" }
 dependencies = [
     { name = "numpy" },
     { name = "tskit" },
