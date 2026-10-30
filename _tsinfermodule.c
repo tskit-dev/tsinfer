@@ -33,33 +33,6 @@ handle_library_error(int err)
     }
 }
 
-static FILE *
-make_file(PyObject *fileobj, const char *mode)
-{
-    FILE *ret = NULL;
-    FILE *file = NULL;
-    int fileobj_fd, new_fd;
-
-    fileobj_fd = PyObject_AsFileDescriptor(fileobj);
-    if (fileobj_fd == -1) {
-        goto out;
-    }
-    new_fd = dup(fileobj_fd);
-    if (new_fd == -1) {
-        PyErr_SetFromErrno(PyExc_OSError);
-        goto out;
-    }
-    file = fdopen(new_fd, mode);
-    if (file == NULL) {
-        (void) close(new_fd);
-        PyErr_SetFromErrno(PyExc_OSError);
-        goto out;
-    }
-    ret = file;
-out:
-    return ret;
-}
-
 /*===================================================================
  * AncestorBuilder
  *===================================================================
