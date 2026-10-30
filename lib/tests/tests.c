@@ -425,6 +425,118 @@ test_ancestor_builder_mmap(void)
 }
 
 static void
+test_ancestor_builder_between_focal_sites(void)
+{
+    /*
+     * One ancestor with focal sites 0 and 3 (the same pattern at time 2).
+     * Between them, the older site 1 is ancestral in every carrier, and the
+     * older site 2 is missing in every carrier, so neither breaks the
+     * ancestor: it is 0 at site 1 and missing at site 2.
+     */
+    int ret = 0;
+    ancestor_builder_t ab;
+    allele_t g0[6] = { 1, 1, 1, 0, 0, 0 };
+    allele_t g1[6] = { 0, 0, 0, 1, 1, 1 };
+    allele_t g2[6] = { -1, -1, -1, 1, 1, 0 };
+    allele_t g3[6] = { 1, 1, 1, 0, 0, 0 };
+    allele_t ancestor[4];
+    tsk_id_t start, end;
+    size_t j;
+    bool found = false;
+
+    ret = ancestor_builder_alloc(&ab, 6, 4, -1, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = ancestor_builder_add_site(&ab, 2.0, g0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = ancestor_builder_add_site(&ab, 3.0, g1);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = ancestor_builder_add_site(&ab, 3.0, g2);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = ancestor_builder_add_site(&ab, 2.0, g3);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = ancestor_builder_finalise(&ab);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    for (j = 0; j < ab.num_ancestors; j++) {
+        if (ab.descriptors[j].time == 2.0) {
+            found = true;
+            CU_ASSERT_EQUAL_FATAL(ab.descriptors[j].num_focal_sites, 2);
+            CU_ASSERT_EQUAL(ab.descriptors[j].focal_sites[0], 0);
+            CU_ASSERT_EQUAL(ab.descriptors[j].focal_sites[1], 3);
+            ret = ancestor_builder_make_ancestor(
+                &ab, 2, ab.descriptors[j].focal_sites, &start, &end, ancestor);
+            CU_ASSERT_EQUAL_FATAL(ret, 0);
+            CU_ASSERT_EQUAL(start, 0);
+            CU_ASSERT_EQUAL(end, 4);
+            CU_ASSERT_EQUAL(ancestor[0], 1);
+            CU_ASSERT_EQUAL(ancestor[1], 0);
+            CU_ASSERT_EQUAL(ancestor[2], TSK_MISSING_DATA);
+            CU_ASSERT_EQUAL(ancestor[3], 1);
+        }
+    }
+    CU_ASSERT_TRUE(found);
+    ancestor_builder_free(&ab);
+}
+
+static void
+test_ancestor_builder_one_bit_non_binary(void)
+{
+    int ret = 0;
+    ancestor_builder_t ab;
+    allele_t genotypes[4] = { 0, 1, 2, 0 };
+
+    ret = ancestor_builder_alloc(&ab, 4, 2, -1, TSI_GENOTYPE_ENCODING_ONE_BIT);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = ancestor_builder_add_site(&ab, 1.0, genotypes);
+    CU_ASSERT_EQUAL(ret, TSI_ERR_ONE_BIT_NON_BINARY);
+    ancestor_builder_free(&ab);
+}
+
+static void
+test_blkalloc(void)
+{
+    int ret;
+    int j;
+    tsi_blkalloc_t alloc;
+    char *p;
+    char *first[10];
+
+    ret = tsi_blkalloc_init(&alloc, 0);
+    CU_ASSERT_EQUAL(ret, TSK_ERR_BAD_PARAM_VALUE);
+    tsi_blkalloc_free(&alloc);
+
+    ret = tsi_blkalloc_init(&alloc, 64);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    /* Larger than a chunk */
+    CU_ASSERT_PTR_NULL(tsi_blkalloc_get(&alloc, 65));
+    /* Each block of 40 bytes needs a new chunk */
+    for (j = 0; j < 10; j++) {
+        p = tsi_blkalloc_get(&alloc, 40);
+        CU_ASSERT_PTR_NOT_NULL_FATAL(p);
+        memset(p, j, 40);
+        first[j] = p;
+    }
+    CU_ASSERT_EQUAL(alloc.num_chunks, 10);
+    CU_ASSERT_EQUAL(alloc.total_allocated, 400);
+    CU_ASSERT_EQUAL(alloc.total_size, 10 * (64 + sizeof(void *)));
+    for (j = 0; j < 10; j++) {
+        CU_ASSERT_EQUAL(first[j][39], j);
+    }
+    tsi_blkalloc_print_state(&alloc, _devnull);
+
+    /* After a reset, the chunks are reused */
+    ret = tsi_blkalloc_reset(&alloc);
+    CU_ASSERT_EQUAL(ret, 0);
+    CU_ASSERT_EQUAL(alloc.total_allocated, 0);
+    for (j = 0; j < 10; j++) {
+        p = tsi_blkalloc_get(&alloc, 40);
+        CU_ASSERT_EQUAL(p, first[j]);
+    }
+    CU_ASSERT_EQUAL(alloc.num_chunks, 10);
+    tsi_blkalloc_free(&alloc);
+}
+
+static void
 test_packbits_1(void)
 {
     int ret = 0;
@@ -583,6 +695,11 @@ main(int argc, char **argv)
         { "test_ancestor_builder_one_bit_encoding",
             test_ancestor_builder_one_bit_encoding },
         { "test_ancestor_builder_mmap", test_ancestor_builder_mmap },
+        { "test_ancestor_builder_between_focal_sites",
+            test_ancestor_builder_between_focal_sites },
+        { "test_ancestor_builder_one_bit_non_binary",
+            test_ancestor_builder_one_bit_non_binary },
+        { "test_blkalloc", test_blkalloc },
 
         { "test_packbits_1", test_packbits_1 },
         { "test_packbits_2", test_packbits_2 },
