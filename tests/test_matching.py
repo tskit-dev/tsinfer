@@ -27,7 +27,6 @@ import numpy as np
 import pytest
 import tskit
 
-import _tsinfer
 from tsinfer import config, matching, vcz
 
 # ---------------------------------------------------------------------------
@@ -38,8 +37,10 @@ from tsinfer import config, matching, vcz
 def _make_simple_ts(positions, sequence_length, node_times, haplotypes, allele_mapper):
     """
     Build a minimal tree sequence with one node per haplotype, connected to a
-    virtual root (node 0, time=1.0) via edges spanning all sites, with
-    mutations where the haplotype has value 1.
+    virtual root (node 1, time=1.0) via edges spanning all sites, with
+    mutations where the haplotype has value 1. As in tsinfer, node 0 is the
+    ultimate root (time=2.0), whose only child is the virtual root, so the
+    haplotype nodes are numbered from 2.
 
     positions: (num_sites,) int array
     node_times: (n_nodes,) float array (excluding root)
@@ -53,15 +54,19 @@ def _make_simple_ts(positions, sequence_length, node_times, haplotypes, allele_m
     ancestral = allele_mapper.ancestral_alleles()
     for i, pos in enumerate(positions):
         tables.sites.add_row(position=float(pos), ancestral_state=str(ancestral[i]))
-    # node 0 = virtual root
+    # node 0 = ultimate root, node 1 = virtual root
+    tables.nodes.add_row(time=2.0, flags=0, metadata={})
     tables.nodes.add_row(time=1.0, flags=0, metadata={})
+    tables.edges.add_row(
+        left=float(positions[0]), right=float(sequence_length), parent=0, child=1
+    )
     for time, hap in zip(node_times, haplotypes):
         node_id = tables.nodes.add_row(time=float(time), flags=0, metadata={})
         # single edge spanning full sequence
         tables.edges.add_row(
             left=float(positions[0]),
             right=float(sequence_length),
-            parent=0,
+            parent=1,
             child=node_id,
         )
         # mutations where hap == 1
@@ -894,7 +899,7 @@ class TestMatcher:
         a = tables.nodes.add_row(time=0.8, flags=0, metadata={})
         b = tables.nodes.add_row(time=0.8, flags=0, metadata={})
         for child in [a, b]:
-            tables.edges.add_row(left=10, right=self.seq_len, parent=1, child=child)
+            tables.edges.add_row(left=10, right=self.seq_len, parent=2, child=child)
         for site, node in [(0, a), (1, a), (2, b)]:
             tables.mutations.add_row(site=site, node=node, derived_state="T")
         tables.sort()
@@ -1015,7 +1020,7 @@ class TestMatcherMultiallelic:
     def test_unknown_derived_state(self):
         tables = self._make_ts([[0, 0, 0]]).dump_tables()
         tables.mutations.add_row(site=1, node=2, derived_state="X")
-        with pytest.raises(_tsinfer.LibraryError, match="derived state"):
+        with pytest.raises(ValueError, match="not in its site's list of alleles"):
             matching.Matcher(
                 tables.tree_sequence(),
                 self.positions,
@@ -1444,26 +1449,3 @@ class TestMatcherExtendCycle:
         )
         assert "sequence_intervals" in ts2.metadata
         assert ts2.metadata["sequence_intervals"] == [[10, 51]]
-
-
-# ---------------------------------------------------------------------------
-# TestAncestorMatcherWrapper
-# ---------------------------------------------------------------------------
-
-
-class TestAncestorMatcherWrapper:
-    def test_optional_kwargs(self):
-        ts = tskit.Tree.generate_balanced(4).tree_sequence
-        tables = ts.dump_tables()
-        tables.sequence_length = 2
-        tables.edges.right = np.full(len(tables.edges), 2, dtype=np.float64)
-        tables.sites.add_row(position=1, ancestral_state="A")
-        tables.mutations.add_row(site=0, node=1, derived_state="T")
-        ts = tables.tree_sequence()
-        mi = matching.MatcherIndexes(ts)
-        r = np.full(ts.num_sites, 1e-9)
-        m = np.full(ts.num_sites, 0.0)
-        am = matching.AncestorMatcher(
-            mi, r, m, likelihood_threshold=1e-10, weight_by_n=False
-        )
-        assert am is not None

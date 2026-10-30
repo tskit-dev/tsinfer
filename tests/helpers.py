@@ -65,21 +65,12 @@ import io
 import pathlib
 
 import numpy as np
-import pytest
 import vcztools
 import zarr
 from zarr.core.dtype.npy.string import VariableLengthUTF8
 
-from tsinfer import matching
-
 _VLEN_STR = VariableLengthUTF8()
 _ZARR_FORMAT = 2
-
-requires_tsls = pytest.mark.skipif(
-    matching.tsls is None, reason="the tsls package is not installed"
-)
-# The match engines, for parametrising tests.
-MATCH_ENGINES = ["tsinfer", pytest.param("tsls", marks=requires_tsls)]
 
 
 def _open_memory_group() -> zarr.Group:

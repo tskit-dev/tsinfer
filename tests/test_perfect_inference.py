@@ -38,7 +38,6 @@ import pathlib
 
 import helpers
 import numpy as np
-import pytest
 import tskit
 
 from tsinfer import config, pipeline
@@ -270,7 +269,6 @@ def _make_config(
     sample_store,
     ancestor_store,
     path_compression=False,
-    engine="tsinfer",
 ):
     src = config.Source(path=sample_store, name="test")
     anc_src = config.Source(
@@ -292,7 +290,6 @@ def _make_config(
             },
             output="output.trees",
             path_compression=path_compression,
-            engine=engine,
         ),
         ancestral_state=_anc_state(sample_store),
     )
@@ -374,11 +371,10 @@ def assert_edges_equal(original_ts, inferred_ts):
 #   → 15 trees, 16 samples, 142 sites
 
 
-@pytest.mark.parametrize("engine", helpers.MATCH_ENGINES)
 class TestPerfectInference:
-    def _run_perfect_inference(self, ts, engine):
+    def _run_perfect_inference(self, ts):
         sample_vcz, ancestor_vcz = build_perfect_ancestors(ts)
-        cfg = _make_config(sample_vcz, ancestor_vcz, engine=engine)
+        cfg = _make_config(sample_vcz, ancestor_vcz)
         inferred_ts = pipeline.match(cfg)
         assert_edges_equal(ts, inferred_ts)
         # Verify node flags: ancestor nodes have flags=0, sample nodes flags=1
@@ -394,17 +390,17 @@ class TestPerfectInference:
                         f"Sample node {node.id} has flags={node.flags}"
                     )
 
-    def test_single_tree(self, engine):
+    def test_single_tree(self):
         ts = tskit.load(DATA_DIR / "single_tree.trees")
         assert ts.num_trees == 1
-        self._run_perfect_inference(ts, engine)
+        self._run_perfect_inference(ts)
 
-    def test_small_smc(self, engine):
+    def test_small_smc(self):
         ts = tskit.load(DATA_DIR / "small_smc.trees")
         assert ts.num_trees > 1
-        self._run_perfect_inference(ts, engine)
+        self._run_perfect_inference(ts)
 
-    def test_larger_smc(self, engine):
+    def test_larger_smc(self):
         ts = tskit.load(DATA_DIR / "larger_smc.trees")
         assert ts.num_trees > 1
-        self._run_perfect_inference(ts, engine)
+        self._run_perfect_inference(ts)
