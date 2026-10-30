@@ -11,11 +11,14 @@ permissions:
 
 jobs:
 
-  packaging:
-    name: Python packaging
-    uses: tskit-dev/.github/.github/workflows/python-packaging.yml@v22
-    with:
-      cli-test-cmd: tsinfer --help
+  # Disabled until tsls is released on PyPI: the packaging check installs the
+  # built wheel, which can't resolve the tsls dependency (it's only available
+  # from GitHub for now). Turn this back on when there's a tsls package.
+  # packaging:
+  #   name: Python packaging
+  #   uses: tskit-dev/.github/.github/workflows/python-packaging.yml@v22
+  #   with:
+  #     cli-test-cmd: tsinfer --help
 
   test-c:
     name: C tests
