@@ -333,24 +333,6 @@ class Matcher:
             _rss_mib(),
         )
 
-    def _find_path(self, h, start, end, params: HmmParameters):
-        """
-        Return the (left, right, parent, match, hmm) for haplotype *h* over
-        sites [start, end), with the path in right-to-left order. The HMM is
-        returned for its statistics.
-        """
-        # Each call gets its own HMM so threads don't share state
-        hmm = tsls.Hmm(
-            self._ts,
-            params.recombination,
-            params.mismatch,
-            likelihood_threshold=params.likelihood_threshold,
-        )
-        match = np.zeros(len(h), dtype=np.int8)
-        left, right, parent = hmm.find_path(h, start, end, match)
-        left, right, parent = copy_node1_for_node0(left, right, parent)
-        return left, right, parent, match, hmm
-
     def _match_one(self, job, reader) -> tuple:
         """Match a single haplotype: read, run HMM, convert to result."""
         num_sites = self._num_sites
@@ -358,10 +340,21 @@ class Matcher:
 
         params = self._hmm_parameters[job.source]
 
+        # Each call gets its own HMM so threads don't share state
+        t0 = time_.monotonic()
+        hmm = tsls.Hmm(
+            self._ts,
+            params.recombination,
+            params.mismatch,
+            likelihood_threshold=params.likelihood_threshold,
+        )
+        t_init = time_.monotonic() - t0
+
         t0 = time_.monotonic()
         h = np.asarray(reader.read_haplotype(job), dtype=np.int8)
         t_read = time_.monotonic() - t0
 
+        match_out = np.zeros(num_sites, dtype=np.int8)
         non_missing = np.where(h >= 0)[0]
         if len(non_missing) == 0:
             start, end = 0, num_sites
@@ -370,7 +363,8 @@ class Matcher:
             end = int(non_missing[-1]) + 1
 
         t1 = time_.monotonic()
-        left, right, parent, match_out, hmm = self._find_path(h, start, end, params)
+        left, right, parent = hmm.find_path(h, start, end, match_out)
+        left, right, parent = copy_node1_for_node0(left, right, parent)
         t_match = time_.monotonic() - t1
 
         # Build PathSegments from genomic-position edges
@@ -389,10 +383,11 @@ class Matcher:
         ]
 
         logger.debug(
-            "Matched job %s: read=%.4fs match=%.4fs "
+            "Matched job %s: init=%.4fs read=%.4fs match=%.4fs "
             "edges=%d mutations=%d sites=%d..%d "
             "hmm_mem=%.1fMiB mean_tb=%.1f",
             getattr(job, "haplotype_index", "?"),
+            t_init,
             t_read,
             t_match,
             len(path),

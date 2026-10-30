@@ -22,6 +22,9 @@ Tests for tsinfer.matching: make_root_ts, Matcher, extend_ts.
 
 from __future__ import annotations
 
+import logging
+import re
+
 import msprime
 import numpy as np
 import pytest
@@ -867,6 +870,20 @@ class TestMatcher:
             assert isinstance(m, matching.Mutation)
             assert isinstance(m.position, float)
             assert isinstance(m.derived_state, int)
+
+    def test_debug_log_timings(self, caplog):
+        """Each match logs the time to create the HMM, read and match."""
+        hap = np.array([0, 1, 0], dtype=np.int8)
+        ts = self._make_ts_with_one_ancestor(hap)
+        matcher = matching.Matcher(
+            ts,
+            self.positions,
+            allele_mapper=self.allele_mapper,
+            hmm_parameters=_hmm_params(self.positions),
+        )
+        with caplog.at_level(logging.DEBUG, logger="tsinfer.matching"):
+            list(matcher.match(_jobs(1), _ArrayReader([hap])))
+        assert re.search(r"Matched job 0: init=\S+s read=\S+s match=\S+s", caplog.text)
 
     def test_match_with_custom_recombination_and_mismatch(self):
         """Custom per-source recombination/mismatch overrides are used."""
