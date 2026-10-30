@@ -58,7 +58,7 @@ The public API is in `tsinfer/__init__.py`, exposing three main functions from `
 
 1. **`infer_ancestors`** (`ancestors.py`) — Generates ancestral haplotypes from sample genotypes. Two-pass chunk-aware approach: first computes per-site statistics, then builds ancestors using the C `_tsinfer.AncestorBuilder`. Output is an ancestor VCZ store.
 
-2. **`match`** (`pipeline.py` → `matching.py`) — Matches ancestors against each other, then matches samples against the ancestor tree sequence. Uses the C `_tsinfer.AncestorMatcher` (Li & Stephens HMM) and `_tsinfer.TreeSequenceBuilder`. Ancestors are grouped for parallel matching via `grouping.py`.
+2. **`match`** (`pipeline.py` → `matching.py`) — Matches ancestors against each other, then matches samples against the ancestor tree sequence. Uses the Li & Stephens HMM from the [tsls](https://github.com/tskit-dev/tsls) package, and extends the tree sequence group by group with tskit tables (`extend_ts`). Ancestors are grouped for parallel matching via `grouping.py`.
 
 3. **`post_process`** (`pipeline.py`) — Cleans up the raw inferred tree sequence (edge extension, parsimony-based refinement).
 
@@ -69,15 +69,16 @@ The public API is in `tsinfer/__init__.py`, exposing three main functions from `
 - **`config.py`** — Dataclass-based configuration (`Config`, `AncestorsConfig`, `MatchConfig`, `PostProcessConfig`, `Source`)
 - **`vcz.py`** — VCZ/Zarr I/O layer; chunk-aware genotype loading (`get_genotypes_for_sites`)
 - **`grouping.py`** — Ancestor grouping and match job computation for parallel processing
-- **`matching.py`** — Core matching logic; `_ts_from_tsb` converts `TreeSequenceBuilder` to tskit tree sequence
+- **`matching.py`** — Core matching logic: `Matcher` runs tsls for each haplotype, and `extend_ts` adds the results to the tree sequence
 - **`ancestors.py`** — Ancestor generation with `InferenceSites` and `AncestorWriter`
-- **`tests/algorithm.py`** — Pure Python reference implementations of `AncestorBuilder`, `AncestorMatcher`, `TreeSequenceBuilder` (used for testing correctness against C)
+- **`tests/test_tsls_contract.py`** — Pins the properties of tsls that tsinfer relies on, so changes in tsls that would break tsinfer are caught
 
 ### C extension (`_tsinfer`)
 
-Source in `lib/`. Three main classes exposed to Python:
+Source in `lib/`. One class is exposed to Python:
 - `AncestorBuilder` — builds inferred ancestors from genotype data
-- `AncestorMatcher` — Li & Stephens HMM matching algorithm
+
+Matching uses the separate tsls package.
 
 When changes are made to the C library, ensure that the ``_tsinfer`` module is rebuilt
 before running Python tests. 
@@ -135,7 +136,6 @@ Sample VCZ → `infer_ancestors` → Ancestor VCZ → `match` → raw `tskit.Tre
 
 - Organise tests in classes, not flat functions. Use pytest fixtures for setup.
 - Test helpers are in `tests/helpers.py` (e.g., `make_sample_vcz`, `make_ancestor_vcz`)
-- `tests/algorithm.py` contains Python reference implementations used to verify C code
 - `msprime` is used to simulate test data
 - Run the test suite with coverage before committing to ensure that new code is
   fully covered by tests.

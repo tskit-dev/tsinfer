@@ -174,8 +174,7 @@ def make_root_ts(
 
     Creates two nodes — an ultimate root and a virtual root — connected by
     an edge spanning ``[positions[0], sequence_length)``.  This gives
-    ``AncestorMatcher`` a valid tree to copy from when matching the first
-    ancestor.
+    the HMM a valid tree to copy from when matching the first ancestor.
 
     The virtual root is placed at ``max_time + 1`` and the ultimate root at
     ``max_time + 2``, ensuring both are strictly older than any ancestor.

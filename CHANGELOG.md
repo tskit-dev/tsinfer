@@ -4,6 +4,11 @@
 
 In development
 
+- Matching uses the Li & Stephens HMM from the
+  [tsls](https://github.com/tskit-dev/tsls) package, which replaces
+  tsinfer's built-in engine. Paths are the same apart from ties between
+  equally likely paths.
+
 - Each `[match.sources.<name>]` section accepts a `recombination_rate`
   (a constant rate per bp, or a HapMap genetic map file), `mismatch` and
   `likelihood_threshold`, setting the parameters of the matching HMM.
