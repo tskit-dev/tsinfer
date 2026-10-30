@@ -54,15 +54,12 @@ dependencies = [
     "humanize",
     "daiquiri",
     "tskit>=1.0.0",
+    "tsls",
     "zarr>=3",
     "bio2zarr",
     "click",
     "vcztools>=0.2",
 ]
-
-[project.optional-dependencies]
-# Experimental alternative HMM engine; see MatchConfig.engine.
-tsls = ["tsls"]
 
 [project.urls]
 Homepage = "https://tskit.dev/tsinfer"
@@ -123,8 +120,8 @@ dev = [
 ]
 
 [tool.uv.sources]
-# Build tsls from a fixed commit of the local checkout until it is released.
-tsls = { git = "file:///home/ubuntu/agents-work/tskit-dev/tsls", rev = "d557198", subdirectory = "tsls" }
+# tsls isn't on PyPI yet, so build it from GitHub.
+tsls = { git = "https://github.com/tskit-dev/tsls" }
 
 [tool.setuptools]
 packages = ["tsinfer"]

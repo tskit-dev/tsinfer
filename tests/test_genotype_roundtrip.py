@@ -50,7 +50,7 @@ def _ancestor_data_sources(sample_store, ancestor_store):
     return {"ancestor_data": src}, ["ancestor_data"]
 
 
-def _run_pipeline(sample_store, sample_time=None, ancestor_store=None, engine="tsinfer"):
+def _run_pipeline(sample_store, sample_time=None, ancestor_store=None):
     """Build config, run full pipeline, return output tree sequence.
 
     Uses ``is_reference=True`` so the REF allele (variant_allele[:, 0])
@@ -58,7 +58,6 @@ def _run_pipeline(sample_store, sample_time=None, ancestor_store=None, engine="t
     data originates from a tree sequence. *sample_time* is passed through
     as the sample source's ``sample_time`` field spec. If *ancestor_store*
     is given, ancestors are generated from it instead of *sample_store*.
-    *engine* is the match engine.
     """
     src = config.Source(path=sample_store, name="test", sample_time=sample_time)
     anc_src = config.Source(path=None, name="ancestors", sample_time="sample_time")
@@ -76,7 +75,6 @@ def _run_pipeline(sample_store, sample_time=None, ancestor_store=None, engine="t
                 "test": config.MatchSourceConfig(),
             },
             output="output.trees",
-            engine=engine,
         ),
         post_process=config.PostProcessConfig(),
         ancestral_state=config.AncestralState(path=sample_store, is_reference=True),
@@ -363,9 +361,8 @@ class TestGenotypeRoundtrip:
         output_pos = set(int(s.position) for s in ts.sites())
         assert input_pos == output_pos
 
-    @pytest.mark.parametrize("engine", helpers.MATCH_ENGINES)
     @pytest.mark.parametrize("seed", [10, 20, 30, 40, 50])
-    def test_multiple_seeds(self, seed, engine):
+    def test_multiple_seeds(self, seed):
         """Parametrized over seeds to catch edge cases in tree topologies."""
         sim_ts = _simulate(
             num_samples=6,
@@ -376,7 +373,7 @@ class TestGenotypeRoundtrip:
         if sim_ts.num_sites == 0:
             pytest.skip("Simulation produced no sites with this seed")
         store = helpers.ts_to_sample_vcz(sim_ts)
-        ts = _run_pipeline(store, engine=engine)
+        ts = _run_pipeline(store)
         _check_genotypes(store, ts, ploidy=1)
 
 
@@ -433,19 +430,17 @@ class TestMultiallelicRoundtrip:
         num_mutations = np.bincount(ts.mutations_site, minlength=ts.num_sites)
         assert np.any(num_mutations[is_inference] > 1)
 
-    @pytest.mark.parametrize("engine", helpers.MATCH_ENGINES)
     @pytest.mark.parametrize("seed", [1, 2, 4, 5])
-    def test_simulated_jc69(self, seed, engine):
+    def test_simulated_jc69(self, seed):
         store, ancestor_store = self.simulate(seed)
-        ts = _run_pipeline(store, ancestor_store=ancestor_store, engine=engine)
+        ts = _run_pipeline(store, ancestor_store=ancestor_store)
         _check_genotypes(
             store, ts, ploidy=1, positions=_inference_positions(ancestor_store)
         )
         self.check_multiallelic_inference_sites(ts, ancestor_store)
 
-    @pytest.mark.parametrize("engine", helpers.MATCH_ENGINES)
     @pytest.mark.parametrize("seed", [1, 2, 4, 5])
-    def test_simulated_jc69_two_sample_groups(self, seed, engine):
+    def test_simulated_jc69_two_sample_groups(self, seed):
         """
         Half of the samples are slightly older, so they are matched in an
         earlier group and their mutations (to any derived allele) are in
@@ -456,10 +451,7 @@ class TestMultiallelicRoundtrip:
         sample_time[::2] = 1e-6
         helpers._arr(store, "sample_time", sample_time, ["samples"])
         ts = _run_pipeline(
-            store,
-            sample_time="sample_time",
-            ancestor_store=ancestor_store,
-            engine=engine,
+            store, sample_time="sample_time", ancestor_store=ancestor_store
         )
         _check_genotypes(
             store, ts, ploidy=1, positions=_inference_positions(ancestor_store)

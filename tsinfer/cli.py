@@ -233,12 +233,6 @@ def infer_ancestors_cmd(
     default=None,
     help="Write per-haplotype match results as JSON lines to this file.",
 )
-@click.option(
-    "--engine",
-    type=click.Choice(config.MATCH_ENGINES),
-    default=None,
-    help="HMM engine for matching; overrides the [match] engine config key.",
-)
 @_add_options(_runtime_options)
 def match_cmd(
     config_path,
@@ -248,7 +242,6 @@ def match_cmd(
     group_stop,
     read_workers,
     match_file,
-    engine,
     threads,
     force,
     progress,
@@ -258,8 +251,6 @@ def match_cmd(
     """Run the unified match loop (ancestors + samples)."""
     _setup_logging(verbose, log_file=log_file)
     cfg = config.Config.from_toml(config_path)
-    if engine is not None:
-        cfg.match.engine = engine
     if workdir is not None:
         cfg.match.workdir = workdir
     if keep_intermediates:
@@ -386,12 +377,6 @@ def augment_sites_cmd(
     default=None,
     help="Write per-haplotype match results as JSON lines to this file.",
 )
-@click.option(
-    "--engine",
-    type=click.Choice(config.MATCH_ENGINES),
-    default=None,
-    help="HMM engine for matching; overrides the [match] engine config key.",
-)
 @_add_options(_runtime_options)
 def run_cmd(
     config_path,
@@ -399,7 +384,6 @@ def run_cmd(
     genotype_encoding,
     read_workers,
     match_file,
-    engine,
     threads,
     force,
     progress,
@@ -409,8 +393,6 @@ def run_cmd(
     """Run the full pipeline: infer-ancestors, match, post-process, augment-sites."""
     _setup_logging(verbose, log_file=log_file)
     cfg = config.Config.from_toml(config_path)
-    if engine is not None:
-        cfg.match.engine = engine
     _check_output(cfg.match.output, force)
     logger.info("Running full pipeline")
     ts = pipeline.run(

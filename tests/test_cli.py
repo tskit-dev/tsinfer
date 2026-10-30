@@ -34,7 +34,7 @@ import tskit
 import zarr
 from click.testing import CliRunner
 
-from tsinfer import cli, pipeline
+from tsinfer import cli
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -781,60 +781,6 @@ class TestShortOptions:
         long_p = self._parse(cli.run_cmd, ["--verbose"], tmp_path)
         short_p = self._parse(cli.run_cmd, ["-v"], tmp_path)
         assert long_p == short_p
-
-
-class TestEngineOption:
-    """--engine overrides the [match] engine config key."""
-
-    @pytest.fixture
-    def captured(self, monkeypatch):
-        """Replace the pipeline entry points by stubs recording the config."""
-        configs = []
-
-        def stub(cfg, **kwargs):
-            configs.append(cfg)
-            return tskit.TableCollection(1).tree_sequence()
-
-        monkeypatch.setattr(pipeline, "match", stub)
-        monkeypatch.setattr(pipeline, "run", stub)
-        return configs
-
-    @pytest.mark.parametrize("command", ["match", "run"])
-    def test_engine_overrides_config(self, captured, command):
-        runner = CliRunner()
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            sample_path = _write_sample_vcz_to_disk(tmp_dir)
-            config_path = _write_run_config(tmp_dir, sample_path)
-            result = runner.invoke(cli.main, [command, config_path, "--engine", "tsls"])
-            assert result.exit_code == 0, result.output
-        assert captured[0].match.engine == "tsls"
-
-    @pytest.mark.parametrize("command", ["match", "run"])
-    def test_config_engine_kept_without_option(self, captured, command):
-        runner = CliRunner()
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            sample_path = _write_sample_vcz_to_disk(tmp_dir)
-            config_path = _write_run_config(tmp_dir, sample_path)
-            result = runner.invoke(cli.main, [command, config_path])
-            assert result.exit_code == 0, result.output
-        assert captured[0].match.engine == "tsinfer"
-
-    def test_unknown_engine_rejected(self):
-        runner = CliRunner()
-        result = runner.invoke(cli.main, ["match", "x.toml", "--engine", "magic"])
-        assert result.exit_code != 0
-        assert "magic" in result.output
-
-    @helpers.requires_tsls
-    def test_run_with_tsls(self):
-        runner = CliRunner()
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            sample_path = _write_sample_vcz_to_disk(tmp_dir)
-            config_path = _write_run_config(tmp_dir, sample_path)
-            result = runner.invoke(cli.main, ["run", config_path, "--engine", "tsls"])
-            assert result.exit_code == 0, result.output
-            ts = tskit.load(os.path.join(tmp_dir, "out.trees"))
-            assert ts.num_samples > 0
 
 
 class TestShowMatchJobs:
