@@ -115,6 +115,16 @@ class TestAncestorBuilder:
             ab.make_ancestor([0], np.array(["type"]))
         with pytest.raises(ValueError, match="wrong size"):
             ab.make_ancestor([0], np.zeros(100, dtype=np.int8))
+        with pytest.raises(ValueError, match="Dim != 1"):
+            ab.make_ancestor([0], np.zeros((1, 1), dtype=np.int8))
+
+    def test_make_ancestor_no_derived_samples(self):
+        # A focal site must have samples carrying the derived allele.
+        ab = _tsinfer.AncestorBuilder(num_samples=2, max_sites=1)
+        ab.add_site(time=1, genotypes=[0, 0])
+        a = np.zeros(1, dtype=np.int8)
+        with pytest.raises(_tsinfer.LibraryError, match="Bad focal site"):
+            ab.make_ancestor([0], a)
 
 
 class TestUninitialised:
