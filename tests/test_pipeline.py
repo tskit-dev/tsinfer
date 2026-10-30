@@ -875,6 +875,75 @@ class TestPipelineProgress:
         assert out_ts.num_nodes > 0
 
 
+class TestMatchOptions:
+    def _setup(self, random_seed=34):
+        sim_ts = _simulate(num_samples=6, random_seed=random_seed)
+        sample_store = helpers.ts_to_sample_vcz(sim_ts)
+        anc_cfg = config.AncestorsConfig(name="ancestors", path=None, sources=["test"])
+        ancestor_store = ancestors.infer_ancestors(
+            config.Source(path=sample_store, name="test"),
+            anc_cfg,
+            _anc_state(sample_store),
+        )
+        return _make_config(sample_store, ancestor_store)
+
+    def test_match_file(self, tmp_path):
+        """match_file has a JSON line for each haplotype, with its path."""
+        cfg = self._setup()
+        path = tmp_path / "matches.jsonl"
+        out_ts = pipeline.match(cfg, match_file=path)
+        with open(path) as f:
+            docs = [json.loads(line) for line in f]
+        # Every node apart from the two roots is a matched haplotype
+        assert len(docs) == out_ts.num_nodes - 2
+        assert {doc["source"] for doc in docs} == {"ancestors", "test"}
+        positions = set(out_ts.sites_position)
+        for doc in docs:
+            path_segments = doc["path"]
+            assert len(path_segments) > 0
+            for seg in path_segments:
+                assert seg["left"] < seg["right"]
+                assert 0 < seg["parent"] < out_ts.num_nodes
+            for mut in doc["mutations"]:
+                assert mut["position"] in positions
+        # The sample haplotypes' paths are the edges of their nodes
+        node_of = {}
+        for node in out_ts.nodes():
+            md = node.metadata
+            if md.get("source") == "test":
+                node_of[(md["sample_id"], md["ploidy_index"])] = node.id
+        sample_docs = [doc for doc in docs if doc["source"] == "test"]
+        assert len(sample_docs) == len(node_of)
+        edges = out_ts.tables.edges
+        for doc in sample_docs:
+            node = node_of[(doc["sample_id"], doc["ploidy_index"])]
+            child_edges = edges[edges.child == node]
+            parents = sorted(int(p) for p in child_edges.parent)
+            assert parents == sorted(seg["parent"] for seg in doc["path"])
+
+    def test_path_compression(self):
+        """Path compression gives the same sample genotypes."""
+        cfg = self._setup()
+        plain_ts = pipeline.match(cfg)
+        compressed_ts = pipeline.match(self._setup(), path_compression=True)
+        np.testing.assert_array_equal(
+            plain_ts.genotype_matrix(samples=plain_ts.samples()),
+            compressed_ts.genotype_matrix(samples=compressed_ts.samples()),
+        )
+
+    def test_negative_group_stop(self):
+        cfg = self._setup()
+        with pytest.raises(ValueError, match="group_stop must be non-negative"):
+            pipeline.match(cfg, group_stop=-1)
+
+    def test_group_stop_without_workdir(self, caplog):
+        cfg = self._setup()
+        assert cfg.match.workdir is None
+        with caplog.at_level(logging.WARNING, logger="tsinfer.pipeline"):
+            pipeline.match(cfg, group_stop=1)
+        assert "partial result cannot be resumed" in caplog.text
+
+
 # ---------------------------------------------------------------------------
 # TestComputeGroupsJson
 # ---------------------------------------------------------------------------
@@ -1767,6 +1836,43 @@ class TestAugmentSites:
         # Position 200 should now be present
         aug_positions = set(aug_ts.sites_position)
         assert 200.0 in aug_positions
+
+    def _augment_config(self, main_store, sing_store, ann_store):
+        return config.Config(
+            sources={
+                "test": config.Source(path=main_store, name="test"),
+                "singletons": config.Source(path=sing_store, name="singletons"),
+            },
+            ancestors=[],
+            match=config.MatchConfig(
+                sources={}, output="output.trees", reference_ts="ref.trees"
+            ),
+            augment_sites=config.AugmentSitesConfig(sources=["singletons"]),
+            ancestral_state=_anc_state(ann_store),
+        )
+
+    def test_progress(self):
+        main_store, sing_store, ann_store = self._make_hand_constructed_stores()
+        ts, _ = _run_pipeline_no_augment(main_store)
+        cfg = self._augment_config(main_store, sing_store, ann_store)
+        aug_ts = pipeline.augment_sites(ts, cfg, progress=True)
+        assert 200.0 in set(aug_ts.sites_position)
+
+    def test_skips_all_missing_site(self):
+        """A site where every genotype is missing is not added."""
+        main_store, _, ann_store = self._make_hand_constructed_stores()
+        ts, _ = _run_pipeline_no_augment(main_store)
+        sing_store = helpers.make_sample_vcz(
+            genotypes=np.array([[[-1], [-1], [-1]]], dtype=np.int8),
+            positions=np.array([200], dtype=np.int32),
+            alleles=np.array([["A", "G"]]),
+            ancestral_state=np.array(["A"]),
+            sequence_length=1000,
+        )
+        cfg = self._augment_config(main_store, sing_store, ann_store)
+        aug_ts = pipeline.augment_sites(ts, cfg)
+        assert aug_ts.num_sites == ts.num_sites
+        assert 200.0 not in set(aug_ts.sites_position)
 
     @pytest.mark.parametrize("ancestral", [".", "N", "", "C"])
     def test_skips_unknown_ancestral(self, ancestral, caplog):

@@ -526,6 +526,38 @@ class TestGroupAncestorsLinesweep:
             grouping.find_groups(children_data, children_indices, incoming_edge_count)
 
 
+class TestLinesweepPython:
+    """
+    run_linesweep and find_groups are compiled with numba, which coverage
+    can't see into, so we also run their Python versions and check they give
+    the same groups.
+    """
+
+    @pytest.mark.parametrize("seed", range(5))
+    def test_same_as_compiled(self, seed, monkeypatch):
+        rng = np.random.RandomState(seed)
+        n = 50
+        start = rng.randint(0, 200, size=n)
+        end = start + rng.randint(1, 100, size=n)
+        time = rng.randint(0, 20, size=n)
+        compiled = grouping.group_haplotypes_by_linesweep(start, end, time)
+        monkeypatch.setattr(grouping, "run_linesweep", grouping.run_linesweep.py_func)
+        monkeypatch.setattr(grouping, "find_groups", grouping.find_groups.py_func)
+        python = grouping.group_haplotypes_by_linesweep(start, end, time)
+        assert compiled.keys() == python.keys()
+        for group in compiled:
+            assert list(compiled[group]) == list(python[group])
+
+    def test_find_groups_cycle(self):
+        children_data = np.array([1, 0], dtype=np.int32)
+        children_indices = np.array([0, 1, 2], dtype=np.int32)
+        incoming_edge_count = np.array([1, 1], dtype=np.int32)
+        with pytest.raises(ValueError, match="Erroneous cycle"):
+            grouping.find_groups.py_func(
+                children_data, children_indices, incoming_edge_count
+            )
+
+
 # ---------------------------------------------------------------------------
 # TestComputeGroupsFromGrouping
 # ---------------------------------------------------------------------------
