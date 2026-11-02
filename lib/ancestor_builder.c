@@ -478,7 +478,7 @@ ancestor_builder_compute_ancestral_states(const ancestor_builder_t *self, int di
         }
 
         derived_count = sites[l].derived_count;
-        if ((site_time > focal_site_time) || (derived_count > ones)) {
+        if ((site_time > focal_site_time) || (ones > 0 && derived_count > ones)) {
             if (ones + zeros > 0) {
                 /* printf("\t:ones=%d, consensus=%d\n", (int) ones, consensus); */
                 /* fflush(stdout); */

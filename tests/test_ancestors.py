@@ -242,7 +242,9 @@ class AncestorBuilder:
                 else:
                     a[site_index] = consensus
 
-            if ((site_time > focal_time) or (derived_count > ones)) and ones + zeros > 0:
+            if ((site_time > focal_time) or (ones > 0 and derived_count > ones)) and (
+                ones + zeros > 0
+            ):
                 for j, u in enumerate(sample_set):
                     if (
                         disagree[u]
